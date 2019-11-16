@@ -83,13 +83,13 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
 // ===== Function to calculate face relative permeability =====
 double relativePerm(double h, double hP, Config *setting)
 {
-  double n, ahc, ahp, KrC, KrP;
+  double n, ah, ahp, Kr;
   ah = setting->a2 * (h + hP) * 0.5;
   n = setting->a1;
   // calculate Kr on both sides and choose the larger one
   Kr = pow(1 - pow(ah,n-1)/pow(1+pow(ah,n), 1-1/n), 2) / pow(1+pow(ah,n), (1-1/n)/2);
-  if (KrC > 1.0)   {KrC = 1.0;}
-  if (KrC < 0.1)   {KrC = 0.1;}
+  if (Kr > 1.0)   {Kr = 1.0;}
+  if (Kr < 0.1)   {Kr = 0.1;}
   return Kr;
 }
 
@@ -201,7 +201,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             {
                 Sw = updateSaturation((*ground)->h[ii], setting);
                 dSdh = updateDSDH((*ground)->h[ii], setting);
-                (*ground)->GnCt[ii] = (*ground)->GnCt[ii] * Sw + dSdh * setting->porosity
+                (*ground)->GnCt[ii] = (*ground)->GnCt[ii] * Sw + dSdh * setting->porosity;
             }
             // XP
             if ((*ground)->Cx[ii] > 0.0)
@@ -273,7 +273,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             // evaporation
             if (setting->useEvap == 1 & gmap->kk[ii] < setting->kkext & gmap->actv[ii] == 1)
             {
-                Ve = setting->qe * setting->dtg / gmap->dz3d[ii]
+                Ve = setting->qe * setting->dtg / gmap->dz3d[ii];
                 // here 2.0 is only a safety factor
                 if ((*ground)->V[ii] > 2.0 * Ve & (*data)->depth[gmap->top2D[ii]] <= 0.0)
                 {(*ground)->B[ii] -= Ve;}
