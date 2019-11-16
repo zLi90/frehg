@@ -84,18 +84,13 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
 double relativePerm(double h, double hP, Config *setting)
 {
   double n, ahc, ahp, KrC, KrP;
-  ahc = setting->a2 * h;
-  ahp = setting->a2 * hP;
+  ah = setting->a2 * (h + hP) * 0.5;
   n = setting->a1;
   // calculate Kr on both sides and choose the larger one
-  KrC = pow(1 - pow(ahc,n-1)/pow(1+pow(ahc,n), 1-1/n), 2) / pow(1+pow(ahc,n), (1-1/n)/2);
+  Kr = pow(1 - pow(ah,n-1)/pow(1+pow(ah,n), 1-1/n), 2) / pow(1+pow(ah,n), (1-1/n)/2);
   if (KrC > 1.0)   {KrC = 1.0;}
   if (KrC < 0.1)   {KrC = 0.1;}
-  KrP = pow(1 - pow(ahp,n-1)/pow(1+pow(ahp,n), 1-1/n), 2) / pow(1+pow(ahp,n), (1-1/n)/2);
-  if (KrP > 1.0)   {KrP = 1.0;}
-  if (KrP < 0.1)   {KrP = 0.1;}
-  if (KrC > KrP)  {return KrC;}
-  else  {return KrP;}
+  return Kr;
 }
 
 
@@ -114,87 +109,24 @@ void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // ===== Cx =====
-        // Case 1 - both cells are active
-        if (gmap->actv[ii] == 1 & gmap->actv[gmap->iPjckc[ii]] == 1)
-        {
-            // Case 1.1 - their face areas are same
-            if (gmap->dz3d[ii] == gmap->dz3d[gmap->iPjckc[ii]])
-            {(*ground)->Cx[ii] = coef * setting->dy * gmap->dz3d[ii] * (*ground)->Kx[ii] / setting->dx;}
-            // Case 1.2 - their face areas are different
-            else
-            {
-                dzavg = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->iPjckc[ii]]);
-                (*ground)->Cx[ii] = coef * setting->dy * dzavg * (*ground)->Kx[ii] / setting->dx;
-            }
-        }
-        // Case 2 - one of the cells is not active
-        else
-        {
-            // Case 2.1 - iP cell is not active
-            if (gmap->actv[ii] == 1 & gmap->actv[gmap->iPjckc[ii]] == 0)
-            {(*ground)->Cx[ii] = 0.5 * coef * setting->dy * \
-                gmap->dz3d[ii] * (*ground)->Kx[ii] / setting->dx;}
-            // Case 2.2 - iP cell is active
-            else if (gmap->actv[ii] == 0 & gmap->actv[gmap->iPjckc[ii]] == 1)
-            {(*ground)->Cx[ii] = 0.5 * coef * setting->dy * \
-                gmap->dz3d[gmap->iPjckc[ii]] * (*ground)->Kx[ii] / setting->dx;}
-            else
-            {(*ground)->Cx[ii] = 0.0;}
-        }
+        (*ground)->Cx[ii] = setting->dtg * (*ground)->Kx[ii] / (setting->dx * setting->dx);
+        if (gmap->iMjckc[ii] >= setting->N3ci)
+        {(*ground)->Cx[gmap->iMjckc[ii]] = setting->dtg * (*ground)->Kx[gmap->iMjckc[ii]] / (setting->dx * setting->dx);}
         // ===== Cy =====
-        if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 1)
-        {
-            // Case 1.1 - their face areas are same
-            if (gmap->dz3d[ii] == gmap->dz3d[gmap->icjPkc[ii]])
-            {(*ground)->Cy[ii] = coef * setting->dx * gmap->dz3d[ii] * (*ground)->Ky[ii] / setting->dy;}
-            // Case 1.2 - their face areas are different
-            else
-            {
-                dzavg = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjPkc[ii]]);
-                (*ground)->Cy[ii] = coef * setting->dx * dzavg * (*ground)->Ky[ii] / setting->dy;
-            }
-        }
-        // Case 2 - one of the cells is not active
-        else
-        {
-            // Case 2.1 - iP cell is not active
-            if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 0)
-            {(*ground)->Cy[ii] = 0.5 * coef * setting->dx * \
-                gmap->dz3d[ii] * (*ground)->Ky[ii] / setting->dy;}
-            // Case 2.2 - iP cell is active
-            else if (gmap->actv[ii] == 0 & gmap->actv[gmap->icjPkc[ii]] == 1)
-            {(*ground)->Cy[ii] = 0.5 * coef * setting->dx * \
-                gmap->dz3d[gmap->icjPkc[ii]] * (*ground)->Ky[ii] / setting->dy;}
-            else
-            {(*ground)->Cy[ii] = 0.0;}
-        }
+        (*ground)->Cy[ii] = setting->dtg * (*ground)->Ky[ii] / (setting->dy * setting->dy);
+        if (gmap->icjMkc[ii] >= setting->N3ci)
+        {(*ground)->Cy[gmap->icjMkc[ii]] = setting->dtg * (*ground)->Ky[gmap->icjMkc[ii]] / (setting->dy * setting->dy);}
         // ===== Cz ======
+        // NOTE: Unlike Cx and Cy, Cz[ii] is its kM face (upward face)
         if (gmap->actv[ii] == 1)
         {
             if (gmap->istop[ii] == 1)
-            {
-                (*ground)->Cz[ii] = 2.0 * coef * (*ground)->Kz[ii] * setting->dx * setting->dy / gmap->dz3d[ii];
-            }
-            else if (gmap->istop[ii] == 2)
-            {
-                dzavg = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
-                (*ground)->Cz[ii] = coef * (*ground)->Kz[ii] * setting->dx * setting->dy / dzavg;
-            }
+            {(*ground)->Cz[ii] = setting->dtg * (*ground)->Kz[ii] / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);}
             else
-            {(*ground)->Cz[ii] = coef * (*ground)->Kz[ii] * setting->dx * setting->dy / gmap->dz3d[ii];}
+            {(*ground)->Cz[ii] = setting->dtg * (*ground)->Kz[ii] / (gmap->dz3d[ii] * 0.5*(gmap->dz3d[ii]+gmap->dz3d[gmap->icjckM[ii]]));}
         }
         else
         {(*ground)->Cz[ii] = 0.0;}
-        // ===== Conductance on boundaries =====
-        // iM boundary
-        if (gmap->actv[ii] == 1 & gmap->iMjckc[ii] > setting->N3ci)
-        {(*ground)->Cx[gmap->iMjckc[ii]] = coef * setting->dy * gmap->dz3d[ii] * (*ground)->Kx[ii] / setting->dx;}
-        // jM boundary
-        if (gmap->actv[ii] == 1 & gmap->icjMkc[ii] > setting->N3ci)
-        {(*ground)->Cy[gmap->icjMkc[ii]] = coef * setting->dx * gmap->dz3d[ii] * (*ground)->Ky[ii] / setting->dy;}
-        // surface-subsurface interface
-//        if (gmap->actv[ii] == 1 & gmap->istop[ii] == 1)
-//        {(*ground)->Cz[gmap->icjckM[ii]] = 0.5 * coef * (*ground)->Kz[ii] * setting->dx * setting->dy / gmap->dz3d[ii];}
         // ===== cell volume =====
         (*ground)->V[ii] = setting->dx * setting->dy * setting->porosity * gmap->dz3d[ii];
 
@@ -204,15 +136,24 @@ void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank
     {
         for (ii = 0; ii < setting->N3ci; ii++)
         {
-            Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->iPjckc[ii]], setting);
-            (*ground)->Cx[ii] = (*ground)->Cx[ii] * Kr;
-            Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjPkc[ii]], setting);
-            (*ground)->Cy[ii] = (*ground)->Cy[ii] * Kr;
-            if (gmap->icjckP[ii] >=0 & gmap->icjckP[ii] < setting->N3ci)
-            {Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjckP[ii]], setting);}
-            else
-            {Kr = 1.0;}
-            (*ground)->Cz[ii] = (*ground)->Cz[ii] * Kr;
+            if ((*ground)->Cx[ii] > 0.0)
+            {
+                Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->iPjckc[ii]], setting);
+                (*ground)->Cx[ii] = (*ground)->Cx[ii] * Kr;
+            }
+            if ((*ground)->Cy[ii] > 0.0)
+            {
+                Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjPkc[ii]], setting);
+                (*ground)->Cy[ii] = (*ground)->Cy[ii] * Kr;
+            }
+            if ((*ground)->Cz[ii] > 0.0)
+            {
+                if (gmap->istop[ii] == 1)
+                {Kr = relativePerm((*ground)->h[ii], (*ground)->h[ii], setting);}
+                else
+                {Kr = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjckM[ii]], setting);}
+                (*ground)->Cz[ii] = (*ground)->Cz[ii] * Kr;
+            }
             (*ground)->V[ii] = (*ground)->V[ii] * (*ground)->Sw[ii];
         }
     }
@@ -242,7 +183,7 @@ double updateDSDH(double h, Config *setting)
     double dSdh, S1, S2, dh=0.001;
     S1 = updateSaturation(h, setting);
     S2 = updateSaturation(h+dh, setting);
-    dSdh = setting->porosity * (S2 - S1) / dh;
+    dSdh = (S2 - S1) / dh;
     return dSdh;
 }
 
@@ -250,67 +191,47 @@ double updateDSDH(double h, Config *setting)
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
     int ii,jj;
-    double coefx, coefy, cm, depth, dSdh, Ve, Sw;
+    double depth, dSdh, Ve, Sw, Krp, Krm;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         if (gmap->actv[ii] == 1)
         {
-            (*ground)->GnCt[ii] = (*ground)->V[ii] * (*ground)->SS;
+            (*ground)->GnCt[ii] = (*ground)->SS;
             if (setting->useUnSat == 1)
             {
                 Sw = updateSaturation((*ground)->h[ii], setting);
                 dSdh = updateDSDH((*ground)->h[ii], setting);
-                (*ground)->GnCt[ii] = (*ground)->GnCt[ii] * Sw + dSdh * (*ground)->V[ii];
+                (*ground)->GnCt[ii] = (*ground)->GnCt[ii] * Sw + dSdh * setting->porosity
             }
             // XP
-            if (gmap->actv[gmap->iPjckc[ii]] == 1)
+            if ((*ground)->Cx[ii] > 0.0)
             {
-                if (gmap->iPjckc[ii] >= 0 & gmap->iPjckc[ii] < setting->N3ci)
-                {
-                    (*ground)->GnXP[ii] = (*ground)->Cx[ii];
-                    (*ground)->GnCt[ii] += (*ground)->GnXP[ii];
-                }
-                else
-                {(*ground)->GnXP[ii] = 0.0;}
+                (*ground)->GnXP[ii] = (*ground)->Cx[ii];
+                (*ground)->GnCt[ii] += (*ground)->GnXP[ii];
             }
             else
             {(*ground)->GnXP[ii] = 0.0;}
             // XM
-            if (gmap->actv[gmap->iMjckc[ii]] == 1)
+            if ((*ground)->Cx[gmap->iMjckc[ii]] > 0.0)
             {
-                if (gmap->iMjckc[ii] >= 0 & gmap->iMjckc[ii] < setting->N3ci)
-                {
-                    (*ground)->GnXM[ii] = (*ground)->Cx[gmap->iMjckc[ii]];
-                    (*ground)->GnCt[ii] += (*ground)->GnXM[ii];
-                }
-                else
-                {(*ground)->GnXM[ii] = 0.0;}
+                (*ground)->GnXM[ii] = (*ground)->Cx[gmap->iMjckc[ii]];
+                (*ground)->GnCt[ii] += (*ground)->GnXM[ii];
             }
             else
             {(*ground)->GnXM[ii] = 0.0;}
             // YP
-            if (gmap->actv[gmap->icjPkc[ii]] == 1)
+            if ((*ground)->Cy[ii] > 0.0)
             {
-                if (gmap->icjPkc[ii] >= 0 & gmap->icjPkc[ii] < setting->N3ci)
-                {
-                    (*ground)->GnYP[ii] = (*ground)->Cy[ii];
-                    (*ground)->GnCt[ii] += (*ground)->GnYP[ii];
-                }
-                else
-                {(*ground)->GnYP[ii] = 0.0;}
+                (*ground)->GnYP[ii] = (*ground)->Cy[ii];
+                (*ground)->GnCt[ii] += (*ground)->GnYP[ii];
             }
             else
             {(*ground)->GnYP[ii] = 0.0;}
             // YM
-            if (gmap->actv[gmap->icjMkc[ii]] == 1)
+            if ((*ground)->Cy[gmap->icjMkc[ii]] > 0.0)
             {
-                if (gmap->icjMkc[ii] >= 0 & gmap->icjMkc[ii] < setting->N3ci)
-                {
-                    (*ground)->GnYM[ii] = (*ground)->Cy[gmap->icjMkc[ii]];
-                    (*ground)->GnCt[ii] += (*ground)->GnYM[ii];
-                }
-                else
-                {(*ground)->GnYM[ii] = 0.0;}
+                (*ground)->GnYM[ii] = (*ground)->Cy[gmap->icjMkc[ii]];
+                (*ground)->GnCt[ii] += (*ground)->GnYM[ii];
             }
             else
             {(*ground)->GnYM[ii] = 0.0;}
@@ -333,7 +254,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         }
         else
         {
-            (*ground)->GnCt[ii] = (*ground)->V[ii] * (*ground)->SS;
+            (*ground)->GnCt[ii] = (*ground)->SS;
             (*ground)->GnXP[ii] = 0.0;
             (*ground)->GnXM[ii] = 0.0;
             (*ground)->GnYP[ii] = 0.0;
@@ -342,72 +263,58 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             (*ground)->GnZM[ii] = 0.0;
         }
         // Source term B
-        (*ground)->B[ii] = (*ground)->h[ii] * (*ground)->V[ii] * (*ground)->SS;
+        (*ground)->B[ii] = (*ground)->h[ii] * (*ground)->SS;
         // Unsaturated zone
         if (setting->useUnSat == 1)
         {
             Sw = updateSaturation((*ground)->h[ii], setting);
             dSdh = updateDSDH((*ground)->h[ii], setting);
-            (*ground)->B[ii] = (*ground)->B[ii] * Sw + dSdh * (*ground)->h[ii] * (*ground)->V[ii];
+            (*ground)->B[ii] = (*ground)->B[ii] * Sw + dSdh * setting->porosity * (*ground)->h[ii];
             // evaporation
-            if (setting->useEvap == 1 & gmap->kk[ii] < setting->kkext)
+            if (setting->useEvap == 1 & gmap->kk[ii] < setting->kkext & gmap->actv[ii] == 1)
             {
-                Ve = setting->qe * setting->dtg * setting->dx * setting->dy;
+                Ve = setting->qe * setting->dtg / gmap->dz3d[ii]
                 // here 2.0 is only a safety factor
                 if ((*ground)->V[ii] > 2.0 * Ve & (*data)->depth[gmap->top2D[ii]] <= 0.0)
-                {
-                  // if (Ve > 0.0)
-                  // {printf("B, Ve = %f,%f\n",1e8*(*ground)->B[ii],1e8*Ve);}
-                  (*ground)->B[ii] -= Ve;
-                }
+                {(*ground)->B[ii] -= Ve;}
             }
         }
+        // Gravity term
+        if (gmap->actv[ii] == 1)
+        {
+            if ((*ground)->Cz[ii] > 0.0)
+            {
+                if (gmap->istop[ii] == 1)
+                {Krm = relativePerm((*ground)->h[ii], (*ground)->h[ii], setting);}
+                else
+                {Krm = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjckM[ii]], setting);}
+            }
+            else
+            {Krm = 0.0;}
+            if ((*ground)->Cz[gmap->icjckP[ii]] > 0.0)
+            {Krp = relativePerm((*ground)->h[ii], (*ground)->h[gmap->icjckP[ii]], setting);}
+            else
+            {Krp = 0.0;}
+            if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci)
+            {(*ground)->B[ii] += (setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm);}
+            else
+            {(*ground)->B[ii] -= (setting->dtg/gmap->dz3d[ii]) * (*ground)->Kz[ii]*Krm;}
+        }
         // Add surface flow BC to B
-        if (gmap->istop[ii] == 1)
-        {(*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
-        // Add lateral exchange to B
-        // cm = gmap->bot3d[ii] + 0.5 * gmap->dz3d[ii];
-        // if (gmap->actv[ii] == 1 & gmap->actv[gmap->iPjckc[ii]] == 0)
-        // {
-        //     depth = (*data)->surf[gmap->top2D[gmap->iPjckc[ii]]] - cm;
-        //     if (depth < 0)  {depth = 0.0;}
-        //     (*ground)->B[ii] += (*ground)->Cx[ii] * depth;
-        // }
-        // if (gmap->actv[ii] == 1 & gmap->actv[gmap->iMjckc[ii]] == 0)
-        // {
-        //     depth = (*data)->surf[gmap->top2D[gmap->iMjckc[ii]]] - cm;
-        //     if (depth < 0)  {depth = 0.0;}
-        //     (*ground)->B[ii] += (*ground)->Cx[gmap->iMjckc[ii]] * depth;
-        // }
-        // if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 0)
-        // {
-        //     depth = (*data)->surf[gmap->top2D[gmap->icjPkc[ii]]] - cm;
-        //     if (depth < 0)  {depth = 0.0;}
-        //     (*ground)->B[ii] += (*ground)->Cy[ii] * depth;
-        // }
-        // if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjMkc[ii]] == 0)
-        // {
-        //     depth = (*data)->surf[gmap->top2D[gmap->icjMkc[ii]]] - cm;
-        //     if (depth < 0)  {depth = 0.0;}
-        //     (*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * depth;
-        // }
-		// Add side BC to B
-    // if (gmap->ii[ii] == 5 & gmap->istop[ii] == 1)
-    // {
-    //   // printf("jj,Ct,Yp,Ym,Zp,Zm,B=%d,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii],\
-    //       (*ground)->GnCt[ii],(*ground)->GnYP[ii],(*ground)->GnYM[ii],\
-    //       (*ground)->GnZP[ii],(*ground)->GnZM[ii],(*ground)->B[ii]);
-    //   printf("layer,depth,Cz,istop,topH = %d,%f,%f,%d,%f\n",gmap->kk[ii],gmap->dz3d[ii], \
-    //       (*ground)->Cz[ii],gmap->istop[ii],(*data)->depth[gmap->top2D[ii]]);
-    // }
-		if (gmap->ii[ii] == 0 & gmap->iMjckc[ii] != -1)
-		{(*ground)->B[ii] += (*ground)->Cx[gmap->iMjckc[ii]] * (*ground)->h[gmap->iMjckc[ii]];}
-		if (gmap->ii[ii] == setting->nx-1 & gmap->iPjckc[ii] != -1)
-		{(*ground)->B[ii] += (*ground)->Cx[ii] * (*ground)->h[gmap->iPjckc[ii]];}
-		if (gmap->jj[ii] == 0 & gmap->icjMkc[ii] != -1)
-		{(*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * (*ground)->h[gmap->icjMkc[ii]];}
-		if (gmap->jj[ii] == setting->ny-1 & gmap->icjPkc[ii] != -1)
-		{(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
+        if (gmap->actv[ii] == 1)
+        {
+            if (gmap->istop[ii] == 1)
+            {(*ground)->B[ii] -= (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
+        }
+        // Dirichlet BC along side boundaries
+		// if (gmap->ii[ii] == 0 & gmap->iMjckc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cx[gmap->iMjckc[ii]] * (*ground)->h[gmap->iMjckc[ii]];}
+		// if (gmap->ii[ii] == setting->nx-1 & gmap->iPjckc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cx[ii] * (*ground)->h[gmap->iPjckc[ii]];}
+		// if (gmap->jj[ii] == 0 & gmap->icjMkc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * (*ground)->h[gmap->icjMkc[ii]];}
+		// if (gmap->jj[ii] == setting->ny-1 & gmap->icjPkc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
     }
 
 

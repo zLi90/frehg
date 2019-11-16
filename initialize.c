@@ -585,8 +585,24 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
     {
         (*ground)->Cx[ii] = 0.0;
         (*ground)->Cy[ii] = 0.0;
-        (*ground)->Kx[ii] = setting->Kxx;
-        (*ground)->Ky[ii] = setting->Kyy;
+        // Kx
+        if (gmap->iMjckc[ii] >= setting->N3ci)
+        {(*ground)->Kx[gmap->iMjckc[ii]] = 0.0;}
+        if (gmap->iPjckc[ii] >= setting->N3ci)
+        {(*ground)->Kx[ii] = 0.0;}
+        else if (gmap->actv[ii] == 0 | gmap->actv[gmap->iPjckc[ii]] == 0)
+        {(*ground)->Kx[ii] = 0.0;}
+        else
+        {(*ground)->Kx[ii] = setting->Kxx;}
+        // Ky
+        if (gmap->icjMkc[ii] >= setting->N3ci)
+        {(*ground)->Ky[gmap->icjMkc[ii]] = 0.0;}
+        if (gmap->icjPkc[ii] >= setting->N3ci)
+        {(*ground)->Ky[ii] = 0.0;}
+        else if (gmap->actv[ii] == 0 | gmap->actv[gmap->icjPkc[ii]] == 0)
+        {(*ground)->Ky[ii] = 0.0;}
+        else
+        {(*ground)->Ky[ii] = setting->Kyy;}
         (*ground)->Quu[ii] = 0.0;
         (*ground)->Qvv[ii] = 0.0;
         (*ground)->Qww[ii] = 0.0;
@@ -594,7 +610,11 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         (*ground)->Cz[ii] = 0.0;
-        (*ground)->Kz[ii] = setting->Kzz;
+        // NOTE: Unlike Kx and Ky, Kz[ii] is its kM face (upward face)
+        if (gmap->actv[ii] == 1)
+        {(*ground)->Kz[ii] = setting->Kzz;}
+        else
+        {(*ground)->Kz[ii] = 0.0;}
         (*ground)->V[ii] = 0.0;
         (*ground)->B[ii] = 0.0;
     }
