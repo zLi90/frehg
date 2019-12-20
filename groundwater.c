@@ -54,45 +54,27 @@ double relativePerm(double h, double hP, Config *setting);
 // =========== Top-level groundwater exchange ==========
 void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank)
 {
-    int ii, count, maxCount;
-    double eps;
-    count = 0;
-    eps = 1;
-    maxCount = 50;
-    for (ii = 0; ii < setting->N3ci; ii++)  {(*ground)->hOld[ii] = (*ground)->h[ii];}
-    while (eps > 1e-5 & count < maxCount)
-    {
-        for (ii = 0; ii < setting->N3ci; ii++)  {(*ground)->hm[ii] = (*ground)->h[ii];}
-        QMatrix AA;
-        Q_Constr(&AA, "A", setting->N3ci, False, Rowws, Normal, True);
-        Vector zz;
-        V_Constr(&zz, "z", setting->N3ci, Normal, True);
-        Vector xx;
-        V_Constr(&xx, "x", setting->N3ci, Normal, True);
-        computeConductance(ground, gmap, setting, irank, nrank);
-        groundMatrixCoeff(ground, data, gmap, setting);
-        setupGroundMatrix(*ground, gmap, setting, AA);
-        solveGroundMatrix(*ground, gmap, setting, AA, xx, zz);
-        getHead(ground, map, setting, xx);
-        enforceSidewallBC(ground, gmap, setting);
-        Q_Destr(&AA);
-        V_Destr(&xx);
-        V_Destr(&zz);
-        if (setting->useUnSat == 0)
-        {eps = 1.0;}
-        else
-        {
-            count += 1;
-            eps = residualPicard(*ground, setting);
-            for (ii = 0; ii < setting->N3ci; ii++)  {(*ground)->hm[ii] = (*ground)->h[ii];}
-            printf(">>>>> Picard iteration %d has been executed, residual = %f\n",count, eps);
-        }
-    }
+
+    QMatrix AA;
+    Q_Constr(&AA, "A", setting->N3ci, False, Rowws, Normal, True);
+    Vector zz;
+    V_Constr(&zz, "z", setting->N3ci, Normal, True);
+    Vector xx;
+    V_Constr(&xx, "x", setting->N3ci, Normal, True);
+    computeConductance(ground, gmap, setting, irank, nrank);
+    groundMatrixCoeff(ground, data, gmap, setting);
+    setupGroundMatrix(*ground, gmap, setting, AA);
+    solveGroundMatrix(*ground, gmap, setting, AA, xx, zz);
+    getHead(ground, map, setting, xx);
+    enforceSidewallBC(ground, gmap, setting);
+    Q_Destr(&AA);
+    V_Destr(&xx);
+    V_Destr(&zz);
+
     if (setting->useMPI == 1)
     {mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);}
     computeSeepage(data, ground, map, gmap, setting);
     computeFlowRate(ground, *data, gmap, setting);
-
 }
 
 // ===== Function to calculate face relative permeability =====
@@ -293,48 +275,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         }
         // Source term B
         (*ground)->B[ii] = (*ground)->hOld[ii] * (*ground)->SS;
-
-        // Gravity term
-       if (gmap->actv[ii] == 1 & (*ground)->Sw[ii] < 1)
-       {
-           if ((*ground)->Cz[ii] > 0.0)
-           {
-               if (gmap->istop[ii] == 1)
-               {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
-               else
-               {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[gmap->icjckM[ii]], setting);}
-           }
-           else
-           {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
-           if ((*ground)->Cz[gmap->icjckP[ii]] > 0.0)
-           {Krp = relativePerm((*ground)->hm[ii], (*ground)->hm[gmap->icjckP[ii]], setting);}
-           else
-           {Krp = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
-
-           if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci)
-           {(*ground)->B[ii] -= (setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm);}
-       }
-        // Add surface flow BC to B
-        if (gmap->actv[ii] == 1)
-        {
-            if (gmap->istop[ii] == 1)
-            {(*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
-        }
-        // Dirichlet BC along side boundaries
-		// if (gmap->ii[ii] == 0 & gmap->iMjckc[ii] != -1)
-		// {(*ground)->B[ii] += (*ground)->Cx[gmap->iMjckc[ii]] * (*ground)->h[gmap->iMjckc[ii]];}
-		// if (gmap->ii[ii] == setting->nx-1 & gmap->iPjckc[ii] != -1)
-		// {(*ground)->B[ii] += (*ground)->Cx[ii] * (*ground)->h[gmap->iPjckc[ii]];}
-		// if (gmap->jj[ii] == 0 & gmap->icjMkc[ii] != -1)
-		// {(*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * (*ground)->h[gmap->icjMkc[ii]];}
-		// if (gmap->jj[ii] == setting->ny-1 & gmap->icjPkc[ii] != -1)
-		// {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
-
-    }
-
-    // Unsaturated zone
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
+        // Unsaturated zone
         if (setting->useUnSat == 1)
         {
             Sw = updateSaturation((*ground)->hm[ii], setting);
@@ -363,7 +304,46 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                 }
             }
         }
+
+        // // Gravity term
+       if (gmap->actv[ii] == 1 & (*ground)->Sw[ii] < 1)
+       {
+           if ((*ground)->Cz[ii] > 0.0)
+           {
+               if (gmap->istop[ii] == 1)
+               {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
+               else
+               {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[gmap->icjckM[ii]], setting);}
+           }
+           else
+           {Krm = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
+           if ((*ground)->Cz[gmap->icjckP[ii]] > 0.0)
+           {Krp = relativePerm((*ground)->hm[ii], (*ground)->hm[gmap->icjckP[ii]], setting);}
+           else
+           {Krp = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
+
+           if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci)
+           {(*ground)->B[ii] += (setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm);}
+       }
+        // Add surface flow BC to B
+        if (gmap->actv[ii] == 1)
+        {
+            if (gmap->istop[ii] == 1)
+            {(*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
+        }
+        // Dirichlet BC along side boundaries
+		// if (gmap->ii[ii] == 0 & gmap->iMjckc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cx[gmap->iMjckc[ii]] * (*ground)->h[gmap->iMjckc[ii]];}
+		// if (gmap->ii[ii] == setting->nx-1 & gmap->iPjckc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cx[ii] * (*ground)->h[gmap->iPjckc[ii]];}
+		// if (gmap->jj[ii] == 0 & gmap->icjMkc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * (*ground)->h[gmap->icjMkc[ii]];}
+		// if (gmap->jj[ii] == setting->ny-1 & gmap->icjPkc[ii] != -1)
+		// {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
+
     }
+
+
 
 
 }

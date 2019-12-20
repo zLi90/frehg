@@ -59,6 +59,7 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   {printf("Ready for time stepping ...\n");}
   for (tt = 1; tt <= setting->Nt; tt++)
   {
+      // setting->OutItvl = 1;
       // if (tt > 238)
       // {setting->OutItvl = 1;}
 
@@ -113,16 +114,62 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
 void oneCompleteStep(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, BC *bc, Bath *bath, Config *setting, int tt, \
   QMatrix A, Vector x, Vector z, int irank, int nrank)
 {
-    double tNum;
+    int ii, iter = 0, substep = 1, bflag = 0;
+    double tNum, eps = 1, eps0 = 1, dt0 = setting->dtg, tstep = 0.0;
     tNum = tt * setting->dt;
+    // Surface solver
   solveSourceTerm(data, *sub, map, bc, bath, setting, tt, irank, nrank);
   solveFreeSurface(data, *sub, map, bc, bath, setting, tt, A, x, z, irank, nrank);
   updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);
+  // Subsurface solver
   if (setting->useSubsurface == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
   {
-      groundwaterExchange(data, ground, map, gmap, setting, irank, nrank);
+      if (setting->useUnSat == 0)
+      {groundwaterExchange(data, ground, map, gmap, setting, irank, nrank);}
+      else
+      {
+          // Picard iteration
+          while (tstep < dt0)
+          {
+              bflag = 0;
+              for (ii = 0; ii < setting->N3ci; ii++)
+              {(*ground)->hOld[ii] = (*ground)->h[ii];  (*ground)->hm[ii] = (*ground)->h[ii];}
+              while (eps > 1e-5 & iter < 50)
+              {
+                  iter += 1;
+                  groundwaterExchange(data, ground, map, gmap, setting, irank, nrank);
+                  eps = residualPicard(*ground, setting);
+                  for (ii = 0; ii < setting->N3ci; ii++)  {(*ground)->hm[ii] = (*ground)->h[ii];}
+                  printf(">>>>> Picard iteration %d has been executed, residual = %f \n",iter, eps);
+                  if (fabs(eps-eps0) < 1e-6)
+                  {
+                      setting->dtg = 0.5 * setting->dtg;
+                      if (setting->dtg >= setting->dt)
+                      {
+                          printf(">>>>> Not converging! New time step = %f...\n", setting->dtg);
+                          for (ii = 0; ii < setting->N3ci; ii++)
+                          {(*ground)->hm[ii] = (*ground)->hOld[ii]; (*ground)->h[ii] = (*ground)->hOld[ii];}
+                          bflag = 1;
+                          break;
+                      }
+                      else
+                      {
+                          setting->dtg = setting->dtg * 2.0;
+                          printf(">>>>> Time step dtg < dt! Should consider changing simulation configuration! \n");
+                      }
+                  }
+                  eps0 = eps;
+              }
+              iter = 0;
+              eps = 1;
+              eps0 = 1;
+              if (bflag == 0)   {tstep += setting->dtg;}
+          }
+          setting->dtg = dt0;
+      }
       printf("=====> Subsurface step executed!\n");
   }
+  // Scalar transport
   if (setting->useScalar == 1)
   {scalarTransport(data, map, bath, bc, *sub, setting, tt, irank, nrank);}
   if (setting->useSubscalar == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
