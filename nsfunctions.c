@@ -791,28 +791,28 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
     }
   }
   // surface-subsurface exchange, ZhiLi 20190109
-    if (setting->useSubsurface == 1)
-    {
-        for (jj = 0; jj < setting->N2ci; jj++)
-        {
-            ii = map->trps[jj];
-            //if (ii == 284)
-            //{printf("before-seepage,z = %f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj]);}
-            if ((*data)->Qseep[ii] > 0)
-            {(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];}
-            else
-            {
-                if ((*data)->Qseep[ii] * setting->dt > (*data)->cellV[ii])
-                {(*data)->z[jj] = (*data)->z[jj] - (*data)->cellV[ii]/(setting->dx*setting->dy);}
-                else
-                {
-					(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];
-                }
-            }
-            //if (ii == 284)
-            //{printf("after-seepage,z,surf = %f,%f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj],(*data)->surf[ii]);}
-        }
-    }
+    // if (setting->useSubsurface == 1)
+    // {
+    //     for (jj = 0; jj < setting->N2ci; jj++)
+    //     {
+    //         ii = map->trps[jj];
+    //         //if (ii == 284)
+    //         //{printf("before-seepage,z = %f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj]);}
+    //         if ((*data)->Qseep[ii] > 0)
+    //         {(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];}
+    //         else
+    //         {
+    //             if ((*data)->Qseep[ii] * setting->dt > (*data)->cellV[ii])
+    //             {(*data)->z[jj] = (*data)->z[jj] - (*data)->cellV[ii]/(setting->dx*setting->dy);}
+    //             else
+    //             {
+	// 				(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];
+    //             }
+    //         }
+    //         //if (ii == 284)
+    //         //{printf("after-seepage,z,surf = %f,%f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj],(*data)->surf[ii]);}
+    //     }
+    // }
 }
 
 // ===== find the location to add inflow in the transposed array =====
@@ -1026,12 +1026,12 @@ void setupMatrix(Data *data, Maps *map, Config *setting, QMatrix A)
   Q_SetEntry(&A, setting->N2ci, 0, setting->N2ci-setting->ny, -data->GnXM[setting->N2ci-1]);
   Q_SetEntry(&A, setting->N2ci, 1, setting->N2ci-1, -data->GnYM[setting->N2ci-1]);
   Q_SetEntry(&A, setting->N2ci, 2, setting->N2ci, data->GnCt[setting->N2ci-1]);
+
 }
 
 // =============== Solve the linear system Ax = z ===============
 void solveMatrix(Data *data, Config *setting, QMatrix A, Vector x, Vector z)
 {
-
   size_t ii;
   // create the z Vector
   for (ii = 1; ii <= setting->N2ci; ii++)
@@ -1057,8 +1057,8 @@ void getFreeSurface(Data **data, Maps *map, Config *setting, Vector x)
     ii = map->trps[kk];
     (*data)->surf[ii] = V_GetCmp(&x, kk+1);
   }
-  //printf("281,Xm,Ym,Ct,Yp,Xp,z,surf=%f,%f,%f,%f,%f,%f,%f\n",(*data)->GnXM[281],(*data)->GnYM[281],(*data)->GnCt[281],(*data)->GnYP[281],(*data)->GnXP[281],(*data)->z[map->sprt[281]],(*data)->surf[281]);
-  //printf("284,Xm,Ym,Ct,Yp,Xp,z,surf=%f,%f,%f,%f,%f,%f,%f\n",(*data)->GnXM[284],(*data)->GnYM[284],(*data)->GnCt[284],(*data)->GnYP[284],(*data)->GnXP[284],(*data)->z[map->sprt[284]],(*data)->surf[284]);
+  // printf("281,Xm,Ym,Ct,Yp,Xp,z,surf=%f,%f,%f,%f,%f,%f,%f\n",(*data)->GnXM[281],(*data)->GnYM[281],(*data)->GnCt[281],(*data)->GnYP[281],(*data)->GnXP[281],(*data)->z[map->sprt[281]],(*data)->surf[281]);
+  // printf("284,Xm,Ym,Ct,Yp,Xp,z,surf=%f,%f,%f,%f,%f,%f,%f\n",(*data)->GnXM[284],(*data)->GnYM[284],(*data)->GnCt[284],(*data)->GnYP[284],(*data)->GnXP[284],(*data)->z[map->sprt[284]],(*data)->surf[284]);
 }
 
 // ===================== Adjust tidal boundary velocity ====================

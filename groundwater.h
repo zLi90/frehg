@@ -6,6 +6,7 @@
 #include "laspack/qmatrix.h"
 
 void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank);
+double residualPicard(Ground *ground, Config *setting);
 void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank, int nrank);
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting);
 void setupGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A);

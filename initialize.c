@@ -536,6 +536,7 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
     (*ground)->allh = malloc(setting->N3CI*sizeof(double));
     (*ground)->allSw = malloc(setting->N3CI*sizeof(double));
     (*ground)->h = malloc(setting->N3cf*sizeof(double));
+    (*ground)->hm = malloc(setting->N3cf*sizeof(double));
     (*ground)->hOld = malloc(setting->N3cf*sizeof(double));
     (*ground)->Sw = malloc(setting->N3cf*sizeof(double));
     (*ground)->Cx = malloc(setting->N3ct*sizeof(double));
@@ -566,49 +567,56 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
       (*ground)->h[ii] = 0.0;
       (*ground)->Sw[ii] = updateSaturation((*ground)->h[ii], setting);
     }
-    n = setting->a1;
-    Sres = setting->Sres;
-    a = setting->a2;
-    for (ii = 0; ii < setting->N3ci; ii++)
+    if (setting->useUnSat == 1)
     {
-        if (gmap->actv[ii] == 1 & gmap->bot3d[ii] >= setting->H0)
+        n = setting->a1;
+        Sres = setting->Sres;
+        a = setting->a2;
+        for (ii = 0; ii < setting->N3ci; ii++)
         {
-            htop = bath->bottomZ[gmap->top2D[ii]];
-            (*ground)->Sw[ii] = 1.0 - (1.0-Sres)*(gmap->bot3d[ii]-setting->H0)/(htop-setting->H0);
-            if ((*ground)->Sw[ii] > 0.999999)  {(*ground)->Sw[ii] = 1.0;}
-            if ((*ground)->Sw[ii] < Sres+0.005)  {(*ground)->Sw[ii] = Sres+0.005;}
-            (*ground)->h[ii] = -(1.0/a) * pow((pow((1-Sres)/((*ground)->Sw[ii]-Sres),(n/(n-1.0)))-1.0),(1.0/n));
+            if (gmap->actv[ii] == 1 & gmap->bot3d[ii] >= setting->H0 & gmap->istop[ii] != 1)
+            {
+                htop = bath->bottomZ[gmap->top2D[ii]];
+                (*ground)->Sw[ii] = 1.0 - (1.0-Sres)*(gmap->bot3d[ii]-setting->H0)/(htop-setting->H0);
+                if ((*ground)->Sw[ii] > 0.999999)  {(*ground)->Sw[ii] = 1.0;}
+                if ((*ground)->Sw[ii] < Sres+0.005)  {(*ground)->Sw[ii] = Sres+0.005;}
+                (*ground)->h[ii] = -(1.0/a) * pow((pow((1-Sres)/((*ground)->Sw[ii]-Sres),(n/(n-1.0)))-1.0),(1.0/n));
+            }
         }
     }
+
     // initialize
     for (ii = 0; ii < setting->N3ct; ii++)
     {
         (*ground)->Cx[ii] = 0.0;
         (*ground)->Cy[ii] = 0.0;
         // Kx
-        if (gmap->iMjckc[ii] >= setting->N3ci)
-        {(*ground)->Kx[gmap->iMjckc[ii]] = 0.0;}
         if (gmap->iPjckc[ii] >= setting->N3ci)
         {(*ground)->Kx[ii] = 0.0;}
         else if (gmap->actv[ii] == 0 | gmap->actv[gmap->iPjckc[ii]] == 0)
         {(*ground)->Kx[ii] = 0.0;}
         else
         {(*ground)->Kx[ii] = setting->Kxx;}
+
         // Ky
-        if (gmap->icjMkc[ii] >= setting->N3ci)
-        {(*ground)->Ky[gmap->icjMkc[ii]] = 0.0;}
         if (gmap->icjPkc[ii] >= setting->N3ci)
         {(*ground)->Ky[ii] = 0.0;}
         else if (gmap->actv[ii] == 0 | gmap->actv[gmap->icjPkc[ii]] == 0)
         {(*ground)->Ky[ii] = 0.0;}
         else
         {(*ground)->Ky[ii] = setting->Kyy;}
+
         (*ground)->Quu[ii] = 0.0;
         (*ground)->Qvv[ii] = 0.0;
         (*ground)->Qww[ii] = 0.0;
     }
+
     for (ii = 0; ii < setting->N3ci; ii++)
     {
+      if (gmap->iMjckc[ii] >= setting->N3ci)
+      {(*ground)->Kx[gmap->iMjckc[ii]] = 0.0;}
+      if (gmap->icjMkc[ii] >= setting->N3ci)
+      {(*ground)->Ky[gmap->icjMkc[ii]] = 0.0;}
         (*ground)->Cz[ii] = 0.0;
         // NOTE: Unlike Kx and Ky, Kz[ii] is its kM face (upward face)
         if (gmap->actv[ii] == 1)
@@ -622,6 +630,7 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
 	{
 		// (*ground)->h[ii] = setting->H0;
 		(*ground)->hOld[ii] = (*ground)->h[ii];
+        (*ground)->hm[ii] = (*ground)->h[ii];
 		(*ground)->S[ii] = setting->subS0;
         (*ground)->Sm[ii] = 0.0;
 	}
