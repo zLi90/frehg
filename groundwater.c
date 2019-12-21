@@ -81,10 +81,14 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
 double relativePerm(double h, double hP, Config *setting)
 {
   double n, ah, ahp, Kr;
-  ah = setting->a2 * (h + hP) * 0.5;
-  n = setting->a1;
-  // calculate Kr on both sides and choose the larger one
-  Kr = pow(1 - pow(ah,n-1)/pow(1+pow(ah,n), 1-1/n), 2) / pow(1+pow(ah,n), (1-1/n)/2);
+  if (h + hP >= 0.0)    {Kr = 1.0;}
+  else
+  {
+      ah = -setting->a2 * (h + hP) * 0.5;
+      n = setting->a1;
+      // calculate Kr on both sides and choose the larger one
+      Kr = pow(1 - pow(ah,n-1)/pow(1+pow(ah,n), 1-1/n), 2) / pow(1+pow(ah,n), (1-1/n)/2);
+  }
   if (Kr > 1.0)   {Kr = 1.0;}
   if (Kr < 0.1)   {Kr = 0.1;}
   return Kr;
@@ -323,7 +327,13 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
            {Krp = relativePerm((*ground)->hm[ii], (*ground)->hm[ii], setting);}
 
            if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci)
-           {(*ground)->B[ii] += (setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm);}
+           {
+               (*ground)->B[ii] += (setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm);
+               // if (gmap->ii[ii] == 1)
+               // {
+               //     printf("jj,kk,Krp,Krm,gravity = %d,%d,%f,%f,%f\n",gmap->jj[ii],gmap->kk[ii],Krp,Krm,(setting->dtg/gmap->dz3d[ii]) * ((*ground)->Kz[gmap->icjckP[ii]]*Krp - (*ground)->Kz[ii]*Krm));
+               // }
+           }
        }
         // Add surface flow BC to B
         if (gmap->actv[ii] == 1)
@@ -342,10 +352,6 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
 		// {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
 
     }
-
-
-
-
 }
 
 // =============== Generate Matrix A and z ===============
@@ -436,9 +442,12 @@ void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, 
 
      // for (ii = 0; ii < setting->N3ci; ii++)
      // {
-     //     printf("ii,Gc,xp,xm,yp,ym,zp,zm,B = %zu,%f,%f,%f,%f,%f,%f,%f,%f\n",ii,ground->GnCt[ii], \
+     //     if (gmap->ii[ii] == 1){
+     //     printf("jj,kk,actv,Gc,xp,xm,yp,ym,zp,zm,B = %d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii], \
+     //            gmap->kk[ii],gmap->actv[ii],ground->GnCt[ii], \
      //            ground->GnXP[ii],ground->GnXM[ii],ground->GnYP[ii],ground->GnYM[ii], \
-     //            ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);
+     //            ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);}
+     //     if (gmap->kk[ii] == 6) {printf("-------------------- \n");}
      // }
     // initialize x
     V_SetAllCmp(&x, 0.0);

@@ -576,6 +576,7 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
         {
             if (gmap->actv[ii] == 1 & gmap->bot3d[ii] >= setting->H0 & gmap->istop[ii] != 1)
             {
+                // (*ground)->h[ii] = -1.0;
                 htop = bath->bottomZ[gmap->top2D[ii]];
                 (*ground)->Sw[ii] = 1.0 - (1.0-Sres)*(gmap->bot3d[ii]-setting->H0)/(htop-setting->H0);
                 if ((*ground)->Sw[ii] > 0.999999)  {(*ground)->Sw[ii] = 1.0;}
