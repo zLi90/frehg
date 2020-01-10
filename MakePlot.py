@@ -4,9 +4,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-Nx = 11
-Ny = 80
-Nz = 41
+Nx = 3
+Ny = 4
+Nz = 7
 
 dx = 10.0
 dy = 10.0
@@ -19,7 +19,7 @@ fhead = fdir+'/head_'
 fsurf = fdir+'/surfaceZ_'
 fdept = fdir+'/depth_'
 fsatu = fdir+'/satu_'
-ind = [0,720]
+ind = [0,10]
 
 def extractData3(fdir, ind):
     Nt = len(ind)

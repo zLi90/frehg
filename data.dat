@@ -7,8 +7,8 @@ subdata/;                                   # Subgrid folder
 # =========================== Domain ===========================
 10.0;                                        # dx(m)
 10.0;                                        # dy(m)
-11;                                         # NX
-80;                                         # NY
+3;                                         # NX
+4;                                         # NY
 30.0;                                        # dt(s)
 1.0;                                        # NT(days)
 0;                                          # If use cell edge
@@ -101,7 +101,7 @@ subdata/;                                   # Subgrid folder
 10000000;                                   # Maximum CG iteration
 # ========================== Groundwater ==========================
 1;                                          # Activate groundwater model
--20.0;                                      # Bottom of domain (m)
+-3.0;                                      # Bottom of domain (m)
 0.5;                                        # Layer thickness (m)
 300.0;					                      # Subsurface dt (sec)
 0.4;                                        # Porosity
@@ -110,14 +110,14 @@ subdata/;                                   # Subgrid folder
 0.000001;                                     # Hydraulic conductivity in x
 0.000001;                                     # Hydraulic conductivity in y
 0.0000001;                                     # Hydraulic conductivity in z
--5.0;                                         # Initial head (m) / Initial water table
+-1.0;                                         # Initial head (m) / Initial water table
 1;                                          # Activate groundwater scalar model
 10.0;                                        # Initial scalar concentration
 0.000000001;								# Molecular diffusivity in x
 0.000000001;								# Molecular diffusivity in y
 0.000000001;								# Molecular diffusivity in z
 2.0;                                        # coefficient a1, which equals n in ParFlow
-0.005;                                      # coefficient a2, which equals alpha in ParFlow
+0.5;                                      # coefficient a2, which equals alpha in ParFlow
 0.08;                                       # residual water content
 1;                                          # Use unsaturated zone
 # ======================== Evap/Rain ==========================

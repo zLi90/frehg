@@ -103,7 +103,7 @@ void DataOutput(Data **data, Ground **ground, Bath *bath, Config *setting, int t
     if (setting->useSubsurface == 1)
 	{
     combineSerial((*ground)->allh, (*ground)->h, setting, setting->N3ci);
-    combineSerial((*ground)->allSw, (*ground)->Sw, setting, setting->N3ci);
+    combineSerial((*ground)->allwc, (*ground)->wc, setting, setting->N3ci);
   }
     if (setting->useSubscalar == 1)
 	{combineSerial((*ground)->allS, (*ground)->S, setting, setting->N3ci);}
@@ -132,7 +132,7 @@ void DataOutput(Data **data, Ground **ground, Bath *bath, Config *setting, int t
     if (setting->useSubsurface == 1)
     {
         WriteFile((*ground)->allh, "head", setting, tt, setting->N3CI);
-        WriteFile((*ground)->allSw, "satu", setting, tt, setting->N3CI);
+        WriteFile((*ground)->allwc, "satu", setting, tt, setting->N3CI);
         //WriteFile((*ground)->Quu, "Quu", setting, tt, setting->N3ci);
         //WriteFile((*ground)->Qvv, "Qvv", setting, tt, setting->N3ci);
         //WriteFile((*ground)->Qww, "Qww", setting, tt, setting->N3ci);
