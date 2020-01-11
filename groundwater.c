@@ -35,11 +35,11 @@
 #include "laspack/copyrght.h"
 
 void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank);
-void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank, int nrank);
+void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank);
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting);
 void setupGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A);
 void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, Vector x, Vector z);
-void getHead(Ground **ground, Maps *map, Config *setting, Vector x);
+void getHead(Ground **ground, Gmaps *gmap, Config *setting, Vector x);
 void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting);
 void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting);
 void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
@@ -62,11 +62,11 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
     V_Constr(&zz, "z", setting->N3ci, Normal, True);
     Vector xx;
     V_Constr(&xx, "x", setting->N3ci, Normal, True);
-    computeConductance(ground, gmap, setting, irank, nrank);
+    computeConductance(ground, *data, gmap, setting, irank, nrank);
     groundMatrixCoeff(ground, data, gmap, setting);
     setupGroundMatrix(*ground, gmap, setting, AA);
     solveGroundMatrix(*ground, gmap, setting, AA, xx, zz);
-    getHead(ground, map, setting, xx);
+    getHead(ground, gmap, setting, xx);
     enforceSidewallBC(ground, gmap, setting);
     Q_Destr(&AA);
     V_Destr(&xx);
@@ -82,14 +82,16 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
 // ===== Function --- Calculate conductivity =====
 double hydraulicCond(double h, double Ks, Config *setting)
 {
-  double n, m, ah, K, S;
+  double n, m, ah, K, S, Kr;
   n = setting->a1;
   m = 1.0 - 1.0 / n;
   ah = fabs(setting->a2 * h);
   S = pow(1 + pow(ah,n), -m);
-  K = Ks * pow(S,0.5) * pow(1-pow(1-pow(S,1.0/m),m), 2.0);
-  if (K > 1.0)  {K = 1.0;}
-  if (K < 0.01)   {K = 0.01;}
+  Kr = pow(S,0.5) * pow(1-pow(1-pow(S,1.0/m),m), 2.0);
+  if (Kr > 1.0)  {Kr = 1.0;}
+  if (Kr < 0.01)   {Kr = 0.0;}
+  K = Ks * Kr;
+  if (Ks == 0.0)    {K = 0.0;}
   return K;
 }
 
@@ -127,7 +129,7 @@ double updateDSDH(double h, Config *setting)
 }
 
 // =============== Compute conductance ===============
-void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank, int nrank)
+void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank)
 {
     int ii;
     double coef, dzavg, ah, n, Kc, Kp, Km;
@@ -163,10 +165,17 @@ void computeConductance(Ground **ground, Gmaps *gmap, Config *setting, int irank
         // NOTE: Unlike Cx and Cy, Cz[ii] is its kM face (upward face)
         if (gmap->actv[ii] == 1)
         {
+            // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 0)
+            // {
+            //     printf("ii,h = %d,%f\n",ii,(*ground)->h[ii]);
+            // }
             Kc = hydraulicCond((*ground)->h[ii], setting->Kzz, setting);
             if (gmap->istop[ii] == 1)
             {
-                (*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);
+                if (data->depth[ii] > 0.0)
+                {(*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);}
+                else
+                {(*ground)->Cz[ii] = 0.0;}
             }
             else
             {
@@ -315,9 +324,10 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                 }
             }
         }
+
         // Gravity terms and surface/subsurface interface BC
         Kc = hydraulicCond((*ground)->h[ii], setting->Kzz, setting);
-        if (gmap->icjckP[ii] < setting->N3ci)
+        if (gmap->icjckP[ii] < setting->N3ci & gmap->icjckP[ii] >= 0)
         {
             Kp = hydraulicCond((*ground)->h[gmap->icjckP[ii]], setting->Kzz, setting);
             Kpf = faceCond(Kc,Kp);
@@ -342,6 +352,9 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             else
             {(*ground)->B[ii] -= setting->dtg * Kmf / gmap->dz3d[ii];}
         }
+
+        if (gmap->actv[ii] == 0)
+        {(*ground)->B[ii] = (*ground)->SS;}
 
     }
 }
@@ -439,7 +452,7 @@ void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, 
      //            gmap->kk[ii],gmap->actv[ii],ground->GnCt[ii], \
      //            ground->GnXP[ii],ground->GnXM[ii],ground->GnYP[ii],ground->GnYM[ii], \
      //            ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);}
-     //     if (gmap->kk[ii] == 6) {printf("-------------------- \n");}
+     //     if (gmap->kk[ii] == 5) {printf("-------------------- \n");}
      // }
     // initialize x
     V_SetAllCmp(&x, 0.0);
@@ -451,11 +464,18 @@ void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, 
 }
 
 // =============== Assign x back to head ===============
-void getHead(Ground **ground, Maps *map, Config *setting, Vector x)
+void getHead(Ground **ground, Gmaps *gmap, Config *setting, Vector x)
 {
     size_t ii;
     for (ii = 0; ii < setting->N3ci; ii++)
     {(*ground)->h[ii] = V_GetCmp(&x, ii+1);}
+    // for (ii = 0; ii < setting->N3ci; ii++)
+    // {
+    //     if (gmap->ii[ii] == 1){
+    //     printf("ii,jj,kk,actv,h = %zu,%d,%d,%d,%f\n",ii,gmap->jj[ii], \
+    //            gmap->kk[ii],gmap->actv[ii],(*ground)->h[ii]);}
+    //     if (gmap->kk[ii] == 5) {printf("-------------------- \n");}
+    // }
 
 }
 
@@ -551,7 +571,11 @@ void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
             if ((*ground)->wc[ii] >= wcs)
             {(*ground)->wc[ii] = wcs;}
             else
-            {(*ground)->h[ii] = -(1.0/a) * pow((pow((wcs-wcr)/((*ground)->wc[ii]-wcr),1.0/m) - 1.0),1.0/n);}
+            {
+                if ((*ground)->wc[ii] < wcr+0.01)
+                {(*ground)->wc[ii] = wcr+0.01;}
+                (*ground)->h[ii] = -(1.0/a) * pow((pow((wcs-wcr)/((*ground)->wc[ii]-wcr),1.0/m) - 1.0),1.0/n);
+            }
         }
     }
 }

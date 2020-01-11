@@ -13,7 +13,7 @@ subdata/;                                   # Subgrid folder
 1.0;                                        # NT(days)
 0;                                          # If use cell edge
 # =========================== Output ===========================
-2.0;                                        # Output interval(h)
+1.0;                                        # Output interval(h)
 1;                                          # If save surface elevation
 1;                                          # If save u velocity
 1;                                          # If save v velocity
@@ -107,10 +107,10 @@ subdata/;                                   # Subgrid folder
 0.4;                                        # Porosity
 0.0000001;                                   # Soil compressibility
 0.0000000005;                                # Water compressibility
-0.000001;                                     # Hydraulic conductivity in x
-0.000001;                                     # Hydraulic conductivity in y
-0.0000001;                                     # Hydraulic conductivity in z
--1.0;                                         # Initial head (m) / Initial water table
+0.00000;                                     # Hydraulic conductivity in x
+0.00000;                                     # Hydraulic conductivity in y
+0.000001;                                     # Hydraulic conductivity in z
+0.0;                                         # Initial head (m) / Initial water table
 1;                                          # Activate groundwater scalar model
 10.0;                                        # Initial scalar concentration
 0.000000001;								# Molecular diffusivity in x
