@@ -564,7 +564,7 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
     for (ii = 0; ii < setting->N3cf; ii++)
     {
       (*ground)->h[ii] = setting->H0;
-      (*ground)->wc[ii] = updateSaturation((*ground)->h[ii], setting);
+      (*ground)->wc[ii] = waterContent((*ground)->h[ii], setting);
     }
 
     // initialize

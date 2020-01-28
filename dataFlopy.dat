@@ -10,7 +10,7 @@ subdata/;                                   # Subgrid folder
 11;                                         # NX
 80;                                         # NY
 60.0;                                        # dt(s)
-5.0;                                        # NT(days)
+1.0;                                        # NT(days)
 0;                                          # If use cell edge
 # =========================== Output ===========================
 4.0;                                        # Output interval(h)
@@ -101,7 +101,7 @@ subdata/;                                   # Subgrid folder
 10000000;                                   # Maximum CG iteration
 # ========================== Groundwater ==========================
 1;                                          # Activate groundwater model
--20.0;                                      # Bottom of domain (m)
+-10.0;                                      # Bottom of domain (m)
 0.5;                                        # Layer thickness (m)
 300.0;					                      # Subsurface dt (sec)
 0.4;                                        # Porosity

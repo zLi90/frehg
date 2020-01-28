@@ -4,13 +4,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-Nx = 3
-Ny = 4
-Nz = 7
+Nx = 11
+Ny = 80
+Nz = 41
 
 dx = 10.0
 dy = 10.0
-dz = 1.0
+dz = 0.5
 
 domain = 'subsurf'
 fdir = 'outputFlopy'
@@ -19,7 +19,7 @@ fhead = fdir+'/head_'
 fsurf = fdir+'/surfaceZ_'
 fdept = fdir+'/depth_'
 fsatu = fdir+'/satu_'
-ind = [0,10]
+ind = [1440, 7200]
 
 def extractData3(fdir, ind):
     Nt = len(ind)
@@ -64,11 +64,23 @@ if domain == 'subsurf':
     # fig = plt.imshow(diff,cmap='jet',vmin=-1.0,vmax=2.0)
     # plt.colorbar()
     for ff in range(0,len(ind)):
-        plt.subplot(1,len(ind),ifig)
+        if Ny < Nz:
+            plt.subplot(1,len(ind),ifig)
+        else:
+            plt.subplot(len(ind),1,ifig)
         slice = head[1,:,:,ff]
-        fig = plt.imshow(np.transpose(slice),cmap='jet',vmin=-1.0,vmax=1.0)
-        plt.colorbar()
+        fig = plt.imshow(np.transpose(slice),cmap='jet',vmin=-1.25,vmax=1.25)
+        # plt.colorbar()
         ifig += 1
+
+    # plt.figure()
+    # ifig = 1
+    # for ff in range(0,len(ind)):
+    #     plt.subplot(len(ind),1,ifig)
+    #     slice = satu[1,:,:,ff]
+    #     fig = plt.imshow(np.transpose(slice),cmap='jet',vmin=0.25,vmax=0.4)
+    #     # plt.colorbar()
+    #     ifig += 1
 
 elif domain == 'surf':
     for ff in range(0,len(ind)):
