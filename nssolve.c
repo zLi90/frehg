@@ -57,7 +57,8 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   // begin time stepping
   if (irank == 0)
   {printf("Ready for time stepping ...\n");}
-  // setting->Nt = 21;
+  setting->Nt = 4500;
+  setting->OutItvl = 45;
   for (tt = 1; tt <= setting->Nt; tt++)
   {
       // setting->OutItvl = 10;
@@ -65,11 +66,13 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
       // {setting->OutItvl = 1;}
 
 //    bc->inflow[tt] = 2.0 * bc->inflow[tt];
-      bc->tideP[tt] = 0.0;
+      bc->tideP[tt] = 0.1;
       // bc->tideP[tt] = 0.3 * sin(3.14159/(3.0*3600.0/setting->dt) * tt + (6.0*3600.0/setting->dt)/4.0) + 0.3;
       // printf("tideP, inflow are %lf, %lf\n",bc->tideP[tt],bc->inflow[tt]);
       // bc->tideM[tt] = 0.0;
       bc->inflow[tt] = 0.0;
+      // For Maxwell2014 only!
+      if (tt > 3000)  {bc->rain[tt] = 0.0;}
 
     writeInd = tt;
     QMatrix A;
@@ -119,20 +122,22 @@ void oneCompleteStep(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *
     double tNum, eps = 1, eps0 = 1, dt0 = setting->dtg, tstep = 0.0;
     tNum = tt * setting->dt;
     // Surface solver
-  solveSourceTerm(data, *sub, map, bc, bath, setting, tt, irank, nrank);
-  solveFreeSurface(data, *sub, map, bc, bath, setting, tt, A, x, z, irank, nrank);
-  updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);
-  // Subsurface solver
-  if (setting->useSubsurface == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
-  {
+    solveSourceTerm(data, *sub, map, bc, bath, setting, tt, irank, nrank);
+    solveFreeSurface(data, *sub, map, bc, bath, setting, tt, A, x, z, irank, nrank);
+    // Subsurface solver
+    if (setting->useSubsurface == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
+    {
       groundwaterExchange(data, ground, map, gmap, setting, irank, nrank);
       printf("=====> Subsurface step executed!\n");
-  }
-  // Scalar transport
-  if (setting->useScalar == 1)
-  {scalarTransport(data, map, bath, bc, *sub, setting, tt, irank, nrank);}
-  if (setting->useSubscalar == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
-  {groundScalarTransport(ground, data, gmap, map, setting, irank, nrank);}
+    }
+    infiltration(data, bath, map, setting);
+    // Update velocity
+    updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);
+    // Scalar transport
+    if (setting->useScalar == 1)
+    {scalarTransport(data, map, bath, bc, *sub, setting, tt, irank, nrank);}
+    if (setting->useSubscalar == 1 & floor(tNum/setting->dtg) == ceil(tNum/setting->dtg))
+    {groundScalarTransport(ground, data, gmap, map, setting, irank, nrank);}
 }
 
 // ========== Compute the explicit source term ==========
@@ -185,16 +190,11 @@ void solveFreeSurface(Data **data, Sub *sub, Maps *map, BC *bc, Bath *bath, Conf
   solveMatrix(*data, setting, A, x, z);
   getFreeSurface(data, map, setting, x);
   // rainfall / evaporation, ZhiLi20190305
-  computeEvapRain(data, bath, bc, setting, tt);
   zeroNegSurf(data, bath, setting, tt);
+  // computeEvapRain(data, bath, map, bc, setting, tt);
   enforceFreeSurfaceBC(data, map, setting);
   enforceTidalBC(data, bath, bc, setting, tt, irank, nrank);
-}
 
-// =============== Update depth and velocity ===============
-void updateData(Data **data, Sub **sub, Maps *map, BC *bc, Bath *bath, Config *setting, int tt, \
-  int irank, int nrank)
-{
   // ----- remove high velocity or small depth cells -----
   limiterCFL(data, bath, map, setting);
   if (setting->useMPI == 1)
@@ -202,39 +202,45 @@ void updateData(Data **data, Sub **sub, Maps *map, BC *bc, Bath *bath, Config *s
     mpiexchange((*data)->surf, map, setting, irank, nrank);
   }
   // ----- compute grid cell volume and scalar mass -----
-  if (setting->useSubgrid != 0)
-  {
-    computeVolumeSub(data, *sub, setting);
-    // here is where the subgrid variables are updated
-    computeSubArea(sub, *data, bath, map, setting);
-    if (setting->useMPI == 1)
-    {
-      mpiexchangeInt((*sub)->ind, map, setting, irank, nrank);
-      mpiexchange((*sub)->Op, map, setting, irank, nrank);
-      mpiexchange((*sub)->Om, map, setting, irank, nrank);
-      mpiexchange((*sub)->Vyp, map, setting, irank, nrank);
-      mpiexchange((*sub)->Vym, map, setting, irank, nrank);
-    }
-    combineSubArea(sub, *data, bath, map, setting, irank, nrank);
-    if (setting->useMPI == 1)
-    {
-      mpiexchange((*sub)->Nx, map, setting, irank, nrank);
-      mpiexchange((*sub)->Oy, map, setting, irank, nrank);
-      mpiexchange((*sub)->V, map, setting, irank, nrank);
-      mpiexchange((*sub)->Z, map, setting, irank, nrank);
-      mpiexchange((*sub)->Vx, map, setting, irank, nrank);
-      mpiexchange((*sub)->Vy, map, setting, irank, nrank);
-    }
-    updateDepth(data, map, bath, setting);
-    //updateAllFaceDepthSub(data, *sub, map, setting, irank, nrank);
-    updateAllFaceDepth(data, bath, map, setting, irank, nrank);
-  }
-  else
-  {
+  // if (setting->useSubgrid != 0)
+  // {
+  //   computeVolumeSub(data, *sub, setting);
+  //   // here is where the subgrid variables are updated
+  //   computeSubArea(sub, *data, bath, map, setting);
+  //   if (setting->useMPI == 1)
+  //   {
+  //     mpiexchangeInt((*sub)->ind, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Op, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Om, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Vyp, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Vym, map, setting, irank, nrank);
+  //   }
+  //   combineSubArea(sub, *data, bath, map, setting, irank, nrank);
+  //   if (setting->useMPI == 1)
+  //   {
+  //     mpiexchange((*sub)->Nx, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Oy, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->V, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Z, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Vx, map, setting, irank, nrank);
+  //     mpiexchange((*sub)->Vy, map, setting, irank, nrank);
+  //   }
+  //   updateDepth(data, map, bath, setting);
+  //   //updateAllFaceDepthSub(data, *sub, map, setting, irank, nrank);
+  //   updateAllFaceDepth(data, bath, map, setting, irank, nrank);
+  // }
+  // else
+  // {
     computeVolume(data, setting);
     updateDepth(data, map, bath, setting);
     updateAllFaceDepth(data, bath, map, setting, irank, nrank);
-  }
+  // }
+}
+
+// =============== Update depth and velocity ===============
+void updateData(Data **data, Sub **sub, Maps *map, BC *bc, Bath *bath, Config *setting, int tt, \
+  int irank, int nrank)
+{
   if (setting->useMPI == 1)
   {
     mpiexchange((*data)->depthXP, map, setting, irank, nrank);

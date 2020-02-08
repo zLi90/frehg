@@ -41,4 +41,5 @@ void detectWaterfallLocation(Data **data, Bath *bath, Maps *map, Config *setting
 void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting);
 void updateCD(Data **data, Config *setting);
 void monitorCFL(Data **data, Bath *bath, int irank, Config *setting, int tt, int root);
-void computeEvapRain(Data **data, Bath *bath, BC *bc, Config *setting, int tt);
+void computeEvapRain(Data **data, Bath *bath, Maps *map, BC *bc, Config *setting, int tt);
+void infiltration(Data **data, Bath *bath, Maps *map, Config *setting);

@@ -35,7 +35,7 @@ void readIC(IC **ic, Bath *bath, Config *setting);
 void readBC(BC **bc, Config *setting, int irank);
 //void readRestartFile(IC **ic, Config **setting);
 void readOneBC(double *arr, char filename[], Config *setting, int N);
-void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting);
+void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting);
 
 
 // =============== Top level code for initialization ===============
@@ -53,9 +53,6 @@ void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **
   if (irank == 0)
   {printf("Initializing data arrays ...\n");}
   initDataArrays(data, setting);
-  // allocate memory for groundwater model
-  if (setting->useSubsurface == 1)
-  {initGroundArrays(ground, *gmap, bath, setting);}
   // read initial conditions
   if (irank == 0)
   {printf("Setting up initial conditions ...\n");}
@@ -96,6 +93,9 @@ void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **
     mpiexchange((*data)->depthXP, *map, setting, irank, nrank);
     mpiexchange((*data)->depthYP, *map, setting, irank, nrank);
   }
+  // allocate memory for groundwater model
+  if (setting->useSubsurface == 1)
+  {initGroundArrays(ground, *data, *gmap, bath, setting);}
   // initialize subgrid
   if (setting->useSubgrid == 1 || setting->CDnotN == 2)
   {initAllSubVar(sub, bath, setting, irank);}
@@ -528,10 +528,12 @@ void readOneBC(double *arr, char filename[], Config *setting, int N)
 }
 
 // =============== allocate memory for groundwater ===============
-void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
+void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting)
 {
-    double Sres, a, n, htop;
+    double a, n, htop, wcs, wcr;
     int ii;
+    wcs = setting->porosity;
+    wcr = setting->Sres * setting->porosity;
     *ground = malloc(sizeof(Ground));
     (*ground)->allh = malloc(setting->N3CI*sizeof(double));
     (*ground)->allwc = malloc(setting->N3CI*sizeof(double));
@@ -560,11 +562,49 @@ void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting)
     (*ground)->S = malloc(setting->N3cf*sizeof(double));
     (*ground)->Sm = malloc(setting->N3cf*sizeof(double));
     (*ground)->allS = malloc(setting->N3CI*sizeof(double));
-    // get initial head from water table
+
     for (ii = 0; ii < setting->N3cf; ii++)
     {
       (*ground)->h[ii] = setting->H0;
       (*ground)->wc[ii] = waterContent((*ground)->h[ii], setting);
+    }
+    if (setting->H0 > 0.0)
+    {
+        // get hydrostatic initial head (assume fully saturated)
+        for (ii = 0; ii < setting->N3ci; ii++)
+        {
+            (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii]);
+            (*ground)->wc[ii] = setting->porosity;
+        }
+    }
+    else
+    {
+        // use hydrostatic initial head below water table
+        for (ii = 0; ii < setting->N3ci; ii++)
+        {
+            if (gmap->bot3d[ii] < setting->H0)
+            {
+                if (bath->bottomZ[ii] > setting->H0)
+                {(*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];}
+                else
+                {(*ground)->h[ii] = fabs(bath->bottomZ[ii] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii]);}
+                (*ground)->wc[ii] = setting->porosity;
+            }
+            else
+            {
+                // (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
+                    (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
+                // (*ground)->wc[ii] = ((wcs-wcr) / setting->H0) * gmap->bot3d[ii] + wcr;
+                if (data->depth[gmap->top2D[ii]] > 0.0)
+                {(*ground)->wc[ii] = wcs;}
+                else
+                {(*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
+                    (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;}
+                if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
+                if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
+                (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+            }
+        }
     }
 
     // initialize

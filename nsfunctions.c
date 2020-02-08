@@ -69,7 +69,8 @@ void detectWaterfallLocation(Data **data, Bath *bath, Maps *map, Config *setting
 void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting);
 void updateCD(Data **data, Config *setting);
 void monitorCFL(Data **data, Bath *bath, int irank, Config *setting, int tt, int root);
-void computeEvapRain(Data **data, Bath *bath, BC *bc, Config *setting, int tt);
+void computeEvapRain(Data **data, Bath *bath, Maps *map, BC *bc, Config *setting, int tt);
+void infiltration(Data **data, Bath *bath, Maps *map, Config *setting);
 
 
 // =========== Compute cell edge elevation from center elevation ===========
@@ -447,7 +448,6 @@ void zeroNegSurf(Data **data, Bath *bath, Config *setting, int tt)
     {
       diff = bath->bottomZ[ii] - (*data)->surf[ii];
       (*data)->surf[ii] = bath->bottomZ[ii];
-      if (tt > 1) {(*data)->Vloss3[0] -= diff * setting->dx * setting->dy;}
     }
   }
 }
@@ -459,26 +459,29 @@ void limiterCFL(Data **data, Bath *bath, Maps *map, Config *setting)
   double diff, surf, bott;
   bool iP = 0, iM = 0, jP = 0, jM = 0;
   // restrict wetting within 1 cell
-  for (ii = 0; ii < setting->N2ci; ii++)
+  if (setting->useRain == 0)
   {
-    diff = (*data)->surf[ii] - bath->bottomZ[ii];
-    if ((*data)->depth[ii] <= 0 & diff > 0)
-    {
-      surf = (*data)->surfOld[ii];
-      bott = bath->bottomZ[ii];
-      iP = (*data)->surfOld[map->iPjc[ii]] <= surf+setting->minDepth | (*data)->depth[map->iPjc[ii]] <= 0;
-      iM = (*data)->surfOld[map->iMjc[ii]] <= surf+setting->minDepth | (*data)->depth[map->iMjc[ii]] <= 0;
-      jP = (*data)->surfOld[map->icjP[ii]] <= surf+setting->minDepth | (*data)->depth[map->icjP[ii]] <= 0;
-      jM = (*data)->surfOld[map->icjM[ii]] <= surf+setting->minDepth | (*data)->depth[map->icjM[ii]] <= 0;
-      if (iP & iM & jP & jM)
+      for (ii = 0; ii < setting->N2ci; ii++)
       {
-        // does not account for tidal boundary volume loss
-        if (ii < setting->N2ci-setting->dx)
-        {(*data)->Vloss1[0] += diff * setting->dx * setting->dy;}
-        (*data)->surf[ii] = bott;
-        (*data)->rmvCFL[ii] = 1;
+        diff = (*data)->surf[ii] - bath->bottomZ[ii];
+        if ((*data)->depth[ii] <= 0 & diff > 0)
+        {
+          surf = (*data)->surfOld[ii];
+          bott = bath->bottomZ[ii];
+          iP = (*data)->surfOld[map->iPjc[ii]] <= surf+setting->minDepth | (*data)->depth[map->iPjc[ii]] <= 0;
+          iM = (*data)->surfOld[map->iMjc[ii]] <= surf+setting->minDepth | (*data)->depth[map->iMjc[ii]] <= 0;
+          jP = (*data)->surfOld[map->icjP[ii]] <= surf+setting->minDepth | (*data)->depth[map->icjP[ii]] <= 0;
+          jM = (*data)->surfOld[map->icjM[ii]] <= surf+setting->minDepth | (*data)->depth[map->icjM[ii]] <= 0;
+          if (iP & iM & jP & jM)
+          {
+            // does not account for tidal boundary volume loss
+            if (ii < setting->N2ci-setting->dx)
+            {(*data)->Vloss1[0] += diff * setting->dx * setting->dy;}
+            (*data)->surf[ii] = bott;
+            (*data)->rmvCFL[ii] = 1;
+          }
+        }
       }
-    }
   }
   // remove shallow depth
   for (ii = 0; ii < setting->N2ci; ii++)
@@ -790,29 +793,17 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
         (setting->dt/(setting->dx*setting->dy)) * (bc->inflow[tt] / setting->inflowLocLength);
     }
   }
-  // surface-subsurface exchange, ZhiLi 20190109
-    // if (setting->useSubsurface == 1)
-    // {
-    //     for (jj = 0; jj < setting->N2ci; jj++)
-    //     {
-    //         ii = map->trps[jj];
-    //         //if (ii == 284)
-    //         //{printf("before-seepage,z = %f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj]);}
-    //         if ((*data)->Qseep[ii] > 0)
-    //         {(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];}
-    //         else
-    //         {
-    //             if ((*data)->Qseep[ii] * setting->dt > (*data)->cellV[ii])
-    //             {(*data)->z[jj] = (*data)->z[jj] - (*data)->cellV[ii]/(setting->dx*setting->dy);}
-    //             else
-    //             {
-	// 				(*data)->z[jj] = (*data)->z[jj] + (setting->dt/(setting->dx*setting->dy)) * (*data)->Qseep[ii];
-    //             }
-    //         }
-    //         //if (ii == 284)
-    //         //{printf("after-seepage,z,surf = %f,%f,%f\n",10000*(*data)->Qseep[ii],(*data)->z[jj],(*data)->surf[ii]);}
-    //     }
-    // }
+  // add rainfall as a source term
+  if (setting->useRain == 1)
+  {
+      // For Maxwell2014 only!
+      for (ii = 0; ii < setting->N2ci; ii++)
+      {
+          // only retain rainfall on the slope
+          // if (map->jj2d[map->trps[ii]] < 4)
+          {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
+      }
+  }
 }
 
 // ===== find the location to add inflow in the transposed array =====
@@ -1188,6 +1179,9 @@ void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting)
       (*data)->Vloss4[0] -= (vel0 - (*data)->vvYP[ii]) * \
           setting->dt * (*data)->depthYP[ii] * setting->dx;
     }
+
+    // if (map->jj2d[ii] < 5 & map->ii2d[ii] == 1)
+    // {printf("jj, wtf, v, vel0 depth = %d, %f, %f, %f, %f\n",map->jj2d[ii], (*data)->wtfYP[ii], (*data)->vvYP[ii], vel0, (*data)->depth[ii]);}
   }
   // reset waterfall locations
   for (ii = 0; ii < setting->N2ci; ii++)
@@ -1262,22 +1256,70 @@ void monitorCFL(Data **data, Bath *bath, int irank, Config *setting, int tt, int
   }
 }
 
+// ===================== Surface-subsurface exchange ====================
+void infiltration(Data **data, Bath *bath, Maps *map, Config *setting)
+{
+    // surface-subsurface exchange, ZhiLi 20190109
+    int ii;
+    if (setting->useSubsurface == 1)
+    {
+      for (ii = 0; ii < setting->N2ci; ii++)
+      {
+          if ((*data)->depth[ii] > 0 & (*data)->Qseep[ii] < 0)
+          {
+              (*data)->surf[ii] -= -(*data)->Qseep[ii] * setting->dt / (setting->dx * setting->dy);
+              if ((*data)->surf[ii] < bath->bottomZ[ii] + setting->minDepth)
+              {(*data)->surf[ii] = bath->bottomZ[ii];}
+              (*data)->depth[ii] = (*data)->surf[ii] - bath->bottomZ[ii];
+          }
+      }
+    }
+}
+
 // ===================== Evap/Rain ===========================
-void computeEvapRain(Data **data, Bath *bath, BC *bc, Config *setting, int tt)
+void computeEvapRain(Data **data, Bath *bath, Maps *map, BC *bc, Config *setting, int tt)
 {
     int ii;
     double he, epsi = -0.00000001;
+    // surface-subsurface exchange
+    double deq;
+    if (setting->useSubsurface == 1)
+    {
+        for (ii = 0; ii < setting->N2ci; ii++)
+        {
+            if ((*data)->Qseep[ii] < 0)
+            {
+                deq = fabs((*data)->Qseep[ii] * setting->dt / (setting->dx*setting->dy));
+                if (deq >= (*data)->depth[ii])
+                {
+                    (*data)->surf[ii] -= (*data)->depth[ii];
+                    (*data)->depth[ii] = 0.0;
+                }
+                else
+                {
+					(*data)->surf[ii] -= deq;
+                    (*data)->depth[ii] -= deq;
+                }
+                if ((*data)->surf[ii] < bath->bottomZ[ii])  {(*data)->surf[ii] = bath->bottomZ[ii];}
+            }
+        }
+    }
+
 	if (setting->useRain == 1)
 	{
 		for (ii = 0; ii < setting->N2ci; ii++)
 		{
-            // rainfall on both water and land
-			(*data)->rainC[ii] = (*data)->rainC[ii] + bc->rain[tt] * setting->dt;
-			if ((*data)->rainC[ii] > setting->minDepth)
-			{
-                (*data)->surf[ii] = (*data)->surf[ii] + (*data)->rainC[ii];
-				(*data)->rainC[ii] = epsi;
-			}
+            // only retain rainfall on the slope
+            if (map->jj2d[ii] < 100)
+            {
+                // rainfall on both water and land
+    			(*data)->rainC[ii] = (*data)->rainC[ii] + bc->rain[tt] * setting->dt;
+    			if ((*data)->rainC[ii] > setting->minDepth)
+    			{
+                    (*data)->surf[ii] = (*data)->surf[ii] + (*data)->rainC[ii];
+    				(*data)->rainC[ii] = epsi;
+    			}
+            }
 		}
 	}
 	if (setting->useEvap == 1)
@@ -1290,4 +1332,5 @@ void computeEvapRain(Data **data, Bath *bath, BC *bc, Config *setting, int tt)
 			{(*data)->surf[ii] = (*data)->surf[ii] - he;}
 		}
 	}
+
 }

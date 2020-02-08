@@ -44,13 +44,13 @@ void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting);
 void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting);
 void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
 void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting);
-void adjustWaterContent(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
+void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting);
 void groundScalarAdvection(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
 void groundScalarDiffusion(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
 void groundScalarTransport(Ground **ground, Data **data, Gmaps *gmap, Maps *map, Config *setting, int irank, int nrank);
 double waterContent(double h, Config *setting);
 double updateDSDH(double h, Config *setting);
-double hydraulicCond(double h, double Ks, Config *setting);
+double hydraulicCond(double wc, double Ks, Config *setting);
 double headFromWC(double wc, Config *setting);
 double faceCond(double K1, double K2);
 
@@ -79,24 +79,27 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
 
     if (setting->useMPI == 1)
     {mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);}
-    computeSeepage(data, ground, map, gmap, setting);
     computeFlowRate(ground, *data, gmap, setting);
+    computeSeepage(data, ground, map, gmap, setting);
     updateWaterContent(ground, gmap, setting);
-    adjustWaterContent(ground, *data, gmap, setting);
+    adjustWaterContent(ground, data, gmap, setting);
 }
 
 // ===== Function --- Calculate conductivity =====
-double hydraulicCond(double h, double Ks, Config *setting)
+double hydraulicCond(double wc, double Ks, Config *setting)
 {
-  double n, m, ah, K, S, Kr;
+  double n, m, ah, K, S, Kr, wcr, wcs;
   n = setting->a1;
   m = 1.0 - 1.0 / n;
-  ah = fabs(setting->a2 * h);
-  S = pow(1 + pow(ah,n), -m);
+  wcs = setting->porosity;
+  wcr = setting->Sres * setting->porosity;
+  S = (wc - wcr)/(wcs - wcr);
+  // ah = fabs(setting->a2 * h);
+  // S = pow(1 + pow(ah,n), -m);
   if (S > 1.0)    {S = 1.0;}
   Kr = pow(S,0.5) * pow(1-pow(1-pow(S,1.0/m),m), 2.0);
   if (Kr > 1.0)  {Kr = 1.0;}
-  if (Kr < 0.01)   {Kr = 0.0;}
+  if (Kr < 1e-6)   {Kr = 0.0;}
   K = Ks * Kr;
   if (Ks == 0.0)    {K = 0.0;}
   return K;
@@ -116,7 +119,8 @@ double waterContent(double h, Config *setting)
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     S = pow(1 + pow(ah,n), -m);
-    wc = wcr + (wcs - wcr) * S;
+    if (h > 0)  {wc = wcs;}
+    else    {wc = wcr + (wcs - wcr) * S;}
     if (wc > wcs)   {wc = wcs;}
     if (wc < wcr)   {wc = wcr;}
     return wc;
@@ -125,12 +129,14 @@ double waterContent(double h, Config *setting)
 // FUNCTION --- Calculate head from water content
 double headFromWC(double wc, Config *setting)
 {
-    double a, n, m, wcr, wcs, h;
+    double a, n, m, wcr, wcs, h, eps;
+    eps = 1e-5;
     n = setting->a1;
     a = setting->a2;
     m = 1.0 - 1.0 / n;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
+    if (wc - wcr < eps) {wc = wcr + eps;}
     h = -(1.0/a) * pow(pow((wcs - wcr)/(wc - wcr),(1.0/m)) - 1.0,(1.0/n));
     return h;
 }
@@ -152,7 +158,8 @@ double updateDSDH(double h, Config *setting)
 void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank)
 {
     int ii;
-    double coef, dzavg, ah, n, Kc, Kp, Km;
+    double coef, dzavg, ah, n, Kc, Kp, Km, wcs;
+    wcs = setting->porosity;
     coef = setting->dtg * setting->porosity;
     // store layer information
     for (ii = 0; ii < setting->N2ci; ii++)
@@ -163,18 +170,18 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // ===== Cx =====
-        Kc = hydraulicCond((*ground)->h[ii], setting->Kxx, setting);
+        Kc = hydraulicCond((*ground)->wc[ii], setting->Kxx, setting);
         if (gmap->iPjckc[ii] <= setting->N3ci)
-        {Kp = hydraulicCond((*ground)->h[gmap->iPjckc[ii]], setting->Kxx, setting);}
+        {Kp = hydraulicCond((*ground)->wc[gmap->iPjckc[ii]], setting->Kxx, setting);}
         else
         {Kp = Kc;}
         (*ground)->Cx[ii] = setting->dtg * faceCond(Kc,Kp) / (setting->dx * setting->dx);
         if (gmap->iMjckc[ii] >= setting->N3ci)
         {(*ground)->Cx[gmap->iMjckc[ii]] = setting->dtg * Kc / (setting->dx * setting->dx);}
         // ===== Cy =====
-        Kc = hydraulicCond((*ground)->h[ii], setting->Kyy, setting);
+        Kc = hydraulicCond((*ground)->wc[ii], setting->Kyy, setting);
         if (gmap->icjPkc[ii] <= setting->N3ci)
-        {Kp = hydraulicCond((*ground)->h[gmap->icjPkc[ii]], setting->Kyy, setting);}
+        {Kp = hydraulicCond((*ground)->wc[gmap->icjPkc[ii]], setting->Kyy, setting);}
         else
         {Kp = Kc;}
         (*ground)->Cy[ii] = setting->dtg * faceCond(Kc,Kp) / (setting->dy * setting->dy);
@@ -184,17 +191,20 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
         // NOTE: Unlike Cx and Cy, Cz[ii] is its kM face (upward face)
         if (gmap->actv[ii] == 1)
         {
-            Kc = hydraulicCond((*ground)->h[ii], setting->Kzz, setting);
+            Kc = hydraulicCond((*ground)->wc[ii], setting->Kzz, setting);
             if (gmap->istop[ii] == 1)
             {
                 if (data->depth[gmap->top2D[ii]] > 0.0)
-                {(*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);}
+                {
+                    Kc = setting->Kzz;
+                    (*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);
+                }
                 else
                 {(*ground)->Cz[ii] = 0.0;}
             }
             else
             {
-                Km = hydraulicCond((*ground)->h[gmap->icjckM[ii]], setting->Kzz, setting);
+                Km = hydraulicCond((*ground)->wc[gmap->icjckM[ii]], setting->Kzz, setting);
                 (*ground)->Cz[ii] = setting->dtg * faceCond(Kc,Km) / (gmap->dz3d[ii] * 0.5*(gmap->dz3d[ii]+gmap->dz3d[gmap->icjckM[ii]]));
             }
         }
@@ -229,13 +239,30 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
             {(*ground)->Cz[gmap->icjckP[ii]] = 0.0;}
         }
     }
+    // zero horizontal conductance between unsat cells
+    for (ii = 0; ii < setting->N3ci; ii++)
+    {
+        if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs)
+        {
+            if ((*ground)->wc[gmap->iPjckc[ii]] < wcs)
+            {(*ground)->Cx[ii] = 0.0;}
+            if ((*ground)->wc[gmap->iMjckc[ii]] < wcs)
+            {(*ground)->Cx[gmap->iMjckc[ii]] = 0.0;}
+            if ((*ground)->wc[gmap->icjPkc[ii]] < wcs)
+            {(*ground)->Cy[ii] = 0.0;}
+            if ((*ground)->Cy[gmap->icjMkc[ii]] < wcs)
+            {(*ground)->Cy[gmap->icjMkc[ii]] = 0.0;}
+        }
+    }
 }
 
 // =============== Compute the coefficients of the matrix A ===============
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
-    int ii,jj,kk;
-    double depth, dwdh, Ve, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid;
+    int ii,jj,kk, unsat, lay;
+    double depth, dwdh, Ve, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
+    wcs = setting->porosity;
+    eps = 0.001;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         if (gmap->actv[ii] == 1)
@@ -315,41 +342,41 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             dwdh = updateDSDH((*ground)->h[ii], setting);
             (*ground)->B[ii] = (*ground)->B[ii] * wc / setting->porosity + dwdh * (*ground)->h[ii];
             // evaporation
-            if (setting->useEvap == 1 & gmap->istop[ii] == 1 & gmap->actv[ii] == 1)
-            {
-                Ve = setting->qe * setting->dtg * setting->dx * setting->dy * setting->porosity;
-                kk = ii;
-                while (Ve > 0.0)
-                {
-                    Vvoid = gmap->dz3d[kk] * setting->dx * setting->dy * setting->porosity;
-                    allV = (*ground)->V[kk] - Vvoid * setting->Sres;
-                    if (Ve <= allV)
-                    {
-                        (*ground)->B[kk] -= setting->qe * setting->dtg / gmap->dz3d[kk];
-                        Ve = 0.0;
-                    }
-                    else
-                    {
-                        (*ground)->B[kk] -= allV / (setting->dx * setting->dy * setting->porosity);
-                        Ve -= allV;
-                        kk = gmap->icjckP[kk];
-                    }
-                }
-            }
+            // if (setting->useEvap == 1 & gmap->istop[ii] == 1 & gmap->actv[ii] == 1)
+            // {
+            //     Ve = setting->qe * setting->dtg * setting->dx * setting->dy * setting->porosity;
+            //     kk = ii;
+            //     while (Ve > 0.0)
+            //     {
+            //         Vvoid = gmap->dz3d[kk] * setting->dx * setting->dy * setting->porosity;
+            //         allV = (*ground)->V[kk] - Vvoid * setting->Sres;
+            //         if (Ve <= allV)
+            //         {
+            //             (*ground)->B[kk] -= setting->qe * setting->dtg / gmap->dz3d[kk];
+            //             Ve = 0.0;
+            //         }
+            //         else
+            //         {
+            //             (*ground)->B[kk] -= allV / (setting->dx * setting->dy * setting->porosity);
+            //             Ve -= allV;
+            //             kk = gmap->icjckP[kk];
+            //         }
+            //     }
+            // }
         }
 
         // Gravity terms and surface/subsurface interface BC
-        Kc = hydraulicCond((*ground)->h[ii], setting->Kzz, setting);
+        Kc = hydraulicCond((*ground)->wc[ii], setting->Kzz, setting);
         if (gmap->icjckP[ii] < setting->N3ci & gmap->icjckP[ii] >= 0)
         {
-            Kp = hydraulicCond((*ground)->h[gmap->icjckP[ii]], setting->Kzz, setting);
+            Kp = hydraulicCond((*ground)->wc[gmap->icjckP[ii]], setting->Kzz, setting);
             Kpf = faceCond(Kc,Kp);
         }
         else
         {Kpf = 0.0;}
         if (gmap->istop[ii] != 1)
         {
-            Km = hydraulicCond((*ground)->h[gmap->icjckM[ii]], setting->Kzz, setting);
+            Km = hydraulicCond((*ground)->wc[gmap->icjckM[ii]], setting->Kzz, setting);
             Kmf = faceCond(Kc,Km);
         }
         else
@@ -361,14 +388,51 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         if (gmap->actv[ii] == 1 & gmap->istop[ii] == 1)
         {
             if ((*data)->depth[gmap->top2D[ii]] > 0)
-            {(*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
+            {
+                // calculate potential infiltration
+                // Ip = ((*ground)->Cz[ii] * ((*data)->depth[gmap->top2D[ii]] - (*ground)->h[ii]) + \
+                    setting->dtg * Kmf / gmap->dz3d[ii]) * gmap->dz3d[ii];
+                Ip = setting->Kzz * setting->dtg;
+                // If Ip > depth, use Neumann BC
+                if (Ip > (*data)->depth[gmap->top2D[ii]])
+                {
+                    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 20)
+                    // {printf("jj -- Neumann! : %d\n",gmap->jj[ii]);}
+                    unsat = 0;
+                    lay = ii;
+                    while (gmap->icjckP[lay] > 0)
+                    {
+                        if ((*ground)->wc[lay] < wcs-eps)
+                        {
+                            unsat = 1;
+                            break;
+                        }
+                        lay += 1;
+                    }
+                    if (unsat == 1)
+                    {
+                        (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kmf) / gmap->dz3d[ii];
+                        (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
+                    }
+
+                }
+                // If Ip < depth, use Dirichlet BC
+                else if (Ip > 0 & Ip < (*data)->depth[gmap->top2D[ii]])
+                {
+                    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 20)
+                    // {printf("jj -- Dirichlet! : %d\n",gmap->jj[ii]);}
+                    (*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];
+                }
+            }
             else
-            {(*ground)->B[ii] -= setting->dtg * Kmf / gmap->dz3d[ii];}
+            {
+                (*ground)->B[ii] -= setting->dtg * Kmf / gmap->dz3d[ii];
+                (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
+            }
         }
 
         if (gmap->actv[ii] == 0)
         {(*ground)->B[ii] = (*ground)->SS;}
-
     }
 }
 
@@ -460,12 +524,12 @@ void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, 
 
      // for (ii = 0; ii < setting->N3ci; ii++)
      // {
-     //     if (gmap->ii[ii] == 1 & gmap->jj[ii] == 1){
-     //     printf("jj,kk,actv,Gc,xp,xm,yp,ym,zp,zm,B = %d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii], \
-     //            gmap->kk[ii],gmap->actv[ii],ground->GnCt[ii], \
-     //            ground->GnXP[ii],ground->GnXM[ii],ground->GnYP[ii],ground->GnYM[ii], \
-     //            ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);}
-     //     if (gmap->kk[ii] == 5) {printf("-------------------- \n");}
+     //    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 5){
+     //    // printf("jj,kk,actv,Gc,xp,xm,yp,ym,zp,zm,B = %d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii], \
+     //    //        gmap->kk[ii],gmap->actv[ii],ground->GnCt[ii], \
+     //    //        ground->GnXP[ii],ground->GnXM[ii],ground->GnYP[ii],ground->GnYM[ii], \
+     //    //        ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);}
+     //     // if (gmap->kk[ii] == 25) {printf("-------------------- \n");}
      // }
     // initialize x
     V_SetAllCmp(&x, 0.0);
@@ -505,25 +569,6 @@ void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting)
 	}
 }
 
-// ========== Compute flow rate from subsurface to surface ==========
-void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting)
-{
-    int ii, kk;
-    float d;
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // find 2D index of top layer 3D cell
-        if (gmap->istop[ii] == 1)
-        {
-            kk = gmap->top2D[ii];
-            // update head boundary condition
-            (*ground)->h[gmap->icjckM[ii]] = (*data)->depth[kk];
-            // compute flux (positive = upward)
-            (*data)->Qseep[kk] = (*ground)->Cz[ii] * (*ground)->V[ii] * ((*ground)->h[ii] - (*data)->depth[kk]) / setting->dtg;
-        }
-    }
-}
-
 // ========== Compute flow rate for subsurface faces ==========
 void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
 {
@@ -551,7 +596,12 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
                 if (data->depth[gmap->top2D[ii]] == 0)
                 {(*ground)->Qww[ii] = 0.0;}
                 else
-                {(*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - gmap->dz3d[ii]);}
+                {
+                    (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - gmap->dz3d[ii]);
+                    // Switch to Neumann BC if depth is shallow
+                    if ((*ground)->Qww[ii] * gmap->dz3d[ii] > data->depth[gmap->top2D[ii]])
+                    {(*ground)->Qww[ii] = data->depth[gmap->top2D[ii]] / gmap->dz3d[ii];}
+                }
             }
             else
             {(*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - (*ground)->h[gmap->icjckM[ii]]) - gmap->dz3d[ii]);}
@@ -590,51 +640,93 @@ void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
             (*ground)->wc[ii] += ((*ground)->Qvv[gmap->icjMkc[ii]] - (*ground)->Qvv[ii]);
             (*ground)->wc[ii] += ((*ground)->Qww[gmap->icjckP[ii]] - (*ground)->Qww[ii]);
             (*ground)->wc[ii] = (*ground)->wc[ii] / (1.0 + (*ground)->SS * ((*ground)->h[ii]-(*ground)->hOld[ii]) / setting->porosity);
-            if ((*ground)->wc[ii] >= wcs)
-            {(*ground)->wc[ii] = wcs;}
+            if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
+        }
+    }
+}
+
+// ========== Compute flow rate from subsurface to surface ==========
+void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting)
+{
+    int ii, kk, lay, unsat;
+    double Vmax, wcs, eps;
+    wcs = setting->porosity;
+    eps = 0.001;
+    for (ii = 0; ii < setting->N3ci; ii++)
+    {
+        // find 2D index of top layer 3D cell
+        if (gmap->istop[ii] == 1)
+        {
+            kk = gmap->top2D[ii];
+            Vmax = (*ground)->Qww[ii] * (*ground)->V[ii];
+            if ((*data)->depth[kk] > 0)
+            {(*data)->Qseep[kk] = Vmax / setting->dtg;}
             else
+            {(*data)->Qseep[kk] = 0.0;}
+            // Check if the soil column is fully saturated
+            unsat = 0;
+            lay = ii;
+            while (gmap->icjckP[lay] > 0)
             {
-                if ((*ground)->wc[ii] < wcr)
-                {(*ground)->wc[ii] = wcr;}
-                // if (gmap->ii[ii] == 1 & gmap->istop[ii] == 1)
-                // {
-                //     printf("After: jj,kk,wc,h0,h1=%d,%d,%f,%f,%f\n",gmap->jj[ii],gmap->kk[ii],(*ground)->wc[ii],(*ground)->h[ii],-(1.0/a) * pow((pow((wcs-wcr)/((*ground)->wc[ii]-wcr),1.0/m) - 1.0),1.0/n));
-                //     printf("Qum,Qup,Qvm,Qvp,Qwm,Qwp = %f,%f,%f,%f,%f,%f\n",(*ground)->Quu[gmap->iMjckc[ii]],(*ground)->Quu[ii],(*ground)->Qvv[gmap->icjMkc[ii]],(*ground)->Qvv[ii],(*ground)->Qww[ii],(*ground)->Qww[gmap->icjckP[ii]]);
-                // }
-                // (*ground)->h[ii] = -(1.0/a) * pow((pow((wcs-wcr)/((*ground)->wc[ii]-wcr),1.0/m) - 1.0),1.0/n);
+                if ((*ground)->wc[lay] < wcs-eps)
+                {
+                    unsat = 1;
+                    break;
+                }
+                lay += 1;
             }
+            // Zero seepage if fully saturated
+            if (unsat == 0) {(*data)->Qseep[kk] = 0.0;}
+
+            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 42)
+            // {printf("jj---flag---bot3d---depth,h,Cz,Qseep,Qdepth=%d,%d,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii],flag,gmap->bot3d[ii],(*data)->depth[gmap->top2D[ii]], \
+                (*ground)->h[ii],(*ground)->Cz[ii],(*data)->Qseep[kk],-(*data)->Qseep[kk] * setting->dt / (setting->dx * setting->dy));}
+
+            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 40)
+            // {printf("jj,flag >>>> Vmax,wc,Qseep,depth = %d,%d,%f,%f,%f,%f\n",gmap->jj[ii],flag,Vmax,(*ground)->wc[ii],(*data)->Qseep[kk]*setting->dtg,(*data)->depth[kk]);}
         }
     }
 }
 
 // ========== Adjust wc and h to handle sat/unsat interface
-void adjustWaterContent(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
+void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
-    int ii;
-    double wcr, wcs, wch, hwc, dwc;
+    int ii, flag;
+    double wcr, wcs, wch, hwc, dwc, eps;
+    eps = 1e-3;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
-        if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs)
+        flag = 0;
+        // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 2)
+        // {
+        //     printf("Before - wc, h, Qxp, Qxm, Qyp, Qym, Qzp, Qzm = %f, %f, %f, %f, %f, %f, %f, %f\n", (*ground)->wc[ii], \
+        //         (*ground)->h[ii], 1e4*(*ground)->Quu[ii], 1e4*(*ground)->Quu[gmap->iMjckc[ii]], 1e4*(*ground)->Qvv[ii], \
+        //         1e4*(*ground)->Qvv[gmap->icjMkc[ii]], 1e4*(*ground)->Qww[ii], 1e4*(*ground)->Qww[gmap->icjckP[ii]]);
+        // }
+        if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs - eps)
         {
             // computer wc from h, h from wc
             wch = waterContent((*ground)->h[ii], setting);
             hwc = headFromWC((*ground)->wc[ii], setting);
             if (gmap->istop[ii] == 1)
             {
-                if ((*ground)->wc[gmap->icjckP[ii]] >= wcs | data->depth[gmap->top2D[ii]] > 0.0)
+                if ((*ground)->wc[gmap->icjckP[ii]] >= wcs | (*data)->depth[gmap->top2D[ii]] > 0.0)
                 {
+                    flag = 1;
                     if (wch > (*ground)->wc[ii])
                     {
                         dwc = (wch - (*ground)->wc[ii]);
                         (*ground)->wc[ii] = wch;
                         if ((*ground)->Qww[ii] > 0)
                         {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
+                        else
+                        {(*data)->Qseep[gmap->top2D[ii]] -= dwc * gmap->dz3d[ii] * setting->dx * setting->dy / setting->dtg;}
                     }
                 }
                 else
-                {(*ground)->h[ii] = hwc;}
+                {(*ground)->h[ii] = hwc;    flag = 2;}
             }
             else if (gmap->icjckP[ii] == -1)
             {
@@ -655,34 +747,73 @@ void adjustWaterContent(Ground **ground, Data *data, Gmaps *gmap, Config *settin
             else
             {
                 // if one neighbor cell is saturated
+
                 if ((*ground)->wc[gmap->icjckM[ii]] >= wcs | (*ground)->wc[gmap->icjckP[ii]] >= wcs)
                 {
                     if (wch > (*ground)->wc[ii])
                     {
                         dwc = (wch - (*ground)->wc[ii]);
+
+                        if (gmap->ii[ii] == 10 & gmap->jj[ii] == 50)
+                        {printf("kk, wci, wcf, wch = %d, %f, %f, %f\n",gmap->kk[ii],(*ground)->wc[ii],(*ground)->wc[gmap->icjckM[ii]]-dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckM[ii]]),wch);}
+
                         (*ground)->wc[ii] = wch;
                         // adjust wc of the upwind cell
                         if ((*ground)->Qww[ii] > 0)
                         {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
                         else
                         {(*ground)->wc[gmap->icjckM[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckM[ii]]);}
+
                     }
                 }
                 // if all neighbor cells are un-sat
                 else
-                {(*ground)->h[ii] = hwc;}
+                {(*ground)->h[ii] = hwc;    if (gmap->ii[ii] == 10 & gmap->jj[ii] == 50)    {printf("All unsat!\n");}}
             }
         }
+        else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] > wcs)
+        {
+            dwc = (*ground)->wc[ii] - wcs;
+            (*ground)->wc[ii] = wcs;
+            // if downward flow, move water to kP cell
+            if (gmap->icjckP[ii] != -1 & (*ground)->Qww[ii] < 0)
+            {
+                if ((*ground)->wc[gmap->icjckP[ii]] < wcs)
+                {
+                    (*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);
+                    if ((*ground)->wc[gmap->icjckP[ii]] > wcs)  {(*ground)->wc[gmap->icjckP[ii]] = wcs;}
+                }
+            }
+            // if upward flow, move water to kM cell
+            else if (gmap->istop[ii] != 1 & (*ground)->Qww[ii] > 0)
+            {
+                if ((*ground)->wc[gmap->icjckM[ii]] < wcs)
+                {
+                    (*ground)->wc[gmap->icjckM[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckM[ii]]);
+                    if ((*ground)->wc[gmap->icjckM[ii]] > wcs)  {(*ground)->wc[gmap->icjckM[ii]] = wcs;}
+                }
+            }
+        }
+        // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 40 & gmap->istop[ii] == 1)
+        // {printf("jj--flag, wch, wc = %d, %d, %f, %f\n",gmap->jj[ii],flag,wch,(*ground)->wc[ii]);}
     }
     // final check if wc <= 1
     for (ii = 0; ii < setting->N3ci; ii++)
     {
-        if ((*ground)->wc[ii] > wcs)
+        if ((*ground)->wc[ii] > wcs - eps)
         {(*ground)->wc[ii] = wcs;}
-        else if ((*ground)->wc[ii] < wcr)
+        else if ((*ground)->wc[ii] < wcr + eps)
         {(*ground)->wc[ii] = wcr;}
         (*ground)->V[ii] = setting->dx * setting->dy * (*ground)->wc[ii] * gmap->dz3d[ii];
     }
+    // enforce sidewall boundary condition
+    for (ii = 0; ii < setting->N3ci; ii++)
+	{
+		if (gmap->ii[ii] == 0)	{(*ground)->wc[gmap->iMjckc[ii]] = (*ground)->wc[ii];}
+		if (gmap->ii[ii] == setting->nx-1)	{(*ground)->wc[gmap->iPjckc[ii]] = (*ground)->wc[ii];}
+		if (gmap->jj[ii] == 0)	{(*ground)->wc[gmap->icjMkc[ii]] = (*ground)->wc[ii];}
+		if (gmap->jj[ii] == setting->ny-1)	{(*ground)->wc[gmap->icjPkc[ii]] = (*ground)->wc[ii];}
+	}
 }
 
 // ========== Subsurface scalar advection ==========

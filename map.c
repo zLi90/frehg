@@ -154,15 +154,15 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
         if (columnH < 0) {printf("WARNING: Column height is negative!\n");}
 
         if (floor(columnH/setting->layZ) == columnH/setting->layZ)
-        {
-            (*gmap)->nlay[ll] = floor(columnH / setting->layZ);
-            (*gmap)->htop[ll] = setting->layZ;
-        }
+        {(*gmap)->nlay[ll] = floor(columnH / setting->layZ);}
         else
         {
-            (*gmap)->nlay[ll] = floor(columnH / setting->layZ) + 1;
-            (*gmap)->htop[ll] = columnH - setting->layZ * ((*gmap)->nlay[ll]-1);
+            if (columnH - floor(columnH/setting->layZ)*setting->layZ > 0.5*setting->layZ)
+            {(*gmap)->nlay[ll] = floor(columnH/setting->layZ) + 1;}
+            else
+            {(*gmap)->nlay[ll] = floor(columnH/setting->layZ);}
         }
+        (*gmap)->htop[ll] = setting->layZ;
         if ((*gmap)->htop[ll] < htopmin) {(*gmap)->htop[ll] = htopmin;}
         if ((*gmap)->nlay[ll] > maxLay) {maxLay = (*gmap)->nlay[ll];}
         N3ca += (*gmap)->nlay[ll];
@@ -277,10 +277,11 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
             // calculate dz vector
             if ((*gmap)->actv[ind] == 1)
             {
-                if ((*gmap)->istop[ind] == 1)
-                {(*gmap)->dz3d[ind] = (*gmap)->htop[(*gmap)->top2D[ind]];}
-                else
-                {(*gmap)->dz3d[ind] = setting->layZ;}
+                (*gmap)->dz3d[ind] = setting->layZ;
+                // if ((*gmap)->istop[ind] == 1)
+                // {(*gmap)->dz3d[ind] = (*gmap)->htop[(*gmap)->top2D[ind]];}
+                // else
+                // {(*gmap)->dz3d[ind] = setting->layZ;}
             }
             else
             {(*gmap)->dz3d[ind] = -1;}
@@ -296,6 +297,7 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
             {(*gmap)->bot3d[ind] = 100;}
             // update the counter
             ind++;
+
         }
     }
     // for (ii = 0; ii < setting->N3ci; ii++)

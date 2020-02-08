@@ -53,7 +53,7 @@ void readIC(IC **ic, Bath *bath, Config *setting);
 void readBC(BC **bc, Config *setting, int irank);
 //void readRestartFile(IC **ic, Config **setting);
 void readOneBC(double *arr, char filename[], Config *setting, int N);
-void initGroundArrays(Ground **ground, Gmaps *gmap, Bath *bath, Config *setting);
+void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting);
 
 
 //#endif
