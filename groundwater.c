@@ -691,9 +691,9 @@ void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config
 // ========== Adjust wc and h to handle sat/unsat interface
 void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
-    int ii, flag;
+    int ii, flag, unsat, lay;
     double wcr, wcs, wch, hwc, dwc, eps;
-    eps = 1e-3;
+    eps = 1e-6;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     for (ii = 0; ii < setting->N3ci; ii++)
@@ -747,16 +747,11 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
             else
             {
                 // if one neighbor cell is saturated
-
                 if ((*ground)->wc[gmap->icjckM[ii]] >= wcs | (*ground)->wc[gmap->icjckP[ii]] >= wcs)
                 {
                     if (wch > (*ground)->wc[ii])
                     {
                         dwc = (wch - (*ground)->wc[ii]);
-
-                        if (gmap->ii[ii] == 10 & gmap->jj[ii] == 50)
-                        {printf("kk, wci, wcf, wch = %d, %f, %f, %f\n",gmap->kk[ii],(*ground)->wc[ii],(*ground)->wc[gmap->icjckM[ii]]-dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckM[ii]]),wch);}
-
                         (*ground)->wc[ii] = wch;
                         // adjust wc of the upwind cell
                         if ((*ground)->Qww[ii] > 0)
@@ -768,7 +763,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                 }
                 // if all neighbor cells are un-sat
                 else
-                {(*ground)->h[ii] = hwc;    if (gmap->ii[ii] == 10 & gmap->jj[ii] == 50)    {printf("All unsat!\n");}}
+                {(*ground)->h[ii] = hwc;}
             }
         }
         else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] > wcs)
@@ -776,13 +771,42 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
             dwc = (*ground)->wc[ii] - wcs;
             (*ground)->wc[ii] = wcs;
             // if downward flow, move water to kP cell
-            if (gmap->icjckP[ii] != -1 & (*ground)->Qww[ii] < 0)
+            if (gmap->icjckP[ii] != -1)
             {
-                if ((*ground)->wc[gmap->icjckP[ii]] < wcs)
+                // check if the entire column is saturated
+                unsat = 0;
+                lay = ii;
+                while (gmap->icjckP[lay] > 0)
                 {
-                    (*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);
-                    if ((*ground)->wc[gmap->icjckP[ii]] > wcs)  {(*ground)->wc[gmap->icjckP[ii]] = wcs;}
+                    if ((*ground)->wc[lay] < wcs-eps)
+                    {
+                        unsat = 1;
+                        break;
+                    }
+                    lay += 1;
                 }
+
+                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
+                {printf("Before: kk, wc, unsat = %d, %f, %d\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]],unsat);}
+
+                if (unsat == 1)
+                {(*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
+                else
+                {
+                    (*data)->Qseep[gmap->top2D[ii]] = 0.0;
+                    if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
+                    {printf("INFILTRATION SENT BACK TO SURFACE!!!\n");}
+                }
+
+                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
+                {printf("After: kk, wc Qseep = %d, %f, %f\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]], (*data)->Qseep[gmap->top2D[ii]]);}
+                // if ((*ground)->wc[gmap->icjckP[ii]] < wcs)
+                // {
+                //     if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->istop[ii] == 1)
+                //     {printf("Move extra water to the downward cell! wc_kP from %f to %f\n",(*ground)->wc[gmap->icjckP[ii]],(*ground)->wc[gmap->icjckP[ii]]+dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]));}
+                //     (*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);
+                //     if ((*ground)->wc[gmap->icjckP[ii]] > wcs)  {(*ground)->wc[gmap->icjckP[ii]] = wcs;}
+                // }
             }
             // if upward flow, move water to kM cell
             else if (gmap->istop[ii] != 1 & (*ground)->Qww[ii] > 0)
