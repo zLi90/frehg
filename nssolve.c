@@ -131,6 +131,7 @@ void oneCompleteStep(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *
       printf("=====> Subsurface step executed!\n");
     }
     infiltration(data, bath, map, setting);
+    
     // Update velocity
     updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);
     // Scalar transport

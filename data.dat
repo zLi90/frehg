@@ -93,8 +93,8 @@ subdata/;                                   # Subgrid folder
 0.0013;                                     # Wind drag coefficient
 0.0001;                                     # Eddy diffusivity in x
 0.0001;                                     # Eddy diffusivity in y
-0.000001;                                    # Minimum depth allowed(m)
-0.000001;                                    # Minimum waterfall depth(m)
+0.0000001;                                    # Minimum depth allowed(m)
+0.0000001;                                    # Minimum waterfall depth(m)
 0.5;                                        # Low nonlinear cutoff
 0.7;                                        # High nonlinear cutoff
 0.00000001;                                 # Minimum CG residual
@@ -103,7 +103,7 @@ subdata/;                                   # Subgrid folder
 1;                                          # Activate groundwater model
 -4.8;                                      # Bottom of domain (m)
 0.2;                                        # Layer thickness (m)
-8.0;					                      # Subsurface dt (sec)
+4.0;					                      # Subsurface dt (sec)
 0.4;                                        # Porosity
 0.0000001;                                   # Soil compressibility
 0.0000000005;                                # Water compressibility

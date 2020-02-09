@@ -262,7 +262,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
     int ii,jj,kk, unsat, lay;
     double depth, dwdh, Ve, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
     wcs = setting->porosity;
-    eps = 0.001;
+    eps = 0.002;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         if (gmap->actv[ii] == 1)
@@ -383,46 +383,30 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         {Kmf = Kc;}
         (*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];
 
-
         // Add surface flow BC to B
         if (gmap->actv[ii] == 1 & gmap->istop[ii] == 1)
         {
             if ((*data)->depth[gmap->top2D[ii]] > 0)
             {
-                // calculate potential infiltration
-                // Ip = ((*ground)->Cz[ii] * ((*data)->depth[gmap->top2D[ii]] - (*ground)->h[ii]) + \
-                    setting->dtg * Kmf / gmap->dz3d[ii]) * gmap->dz3d[ii];
+                // calculate infiltration capacity
                 Ip = setting->Kzz * setting->dtg;
-                // If Ip > depth, use Neumann BC
-                if (Ip > (*data)->depth[gmap->top2D[ii]])
+                // check for saturation
+                unsat = 0;
+                lay = ii;
+                while (gmap->icjckP[lay] > 0)
                 {
-                    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 20)
-                    // {printf("jj -- Neumann! : %d\n",gmap->jj[ii]);}
-                    unsat = 0;
-                    lay = ii;
-                    while (gmap->icjckP[lay] > 0)
-                    {
-                        if ((*ground)->wc[lay] < wcs-eps)
-                        {
-                            unsat = 1;
-                            break;
-                        }
-                        lay += 1;
-                    }
-                    if (unsat == 1)
-                    {
-                        (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kmf) / gmap->dz3d[ii];
-                        (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
-                    }
-
+                    if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
+                    lay += 1;
                 }
-                // If Ip < depth, use Dirichlet BC
-                else if (Ip > 0 & Ip < (*data)->depth[gmap->top2D[ii]])
+                // If Ip > depth and soil column is unsaturated, use Neumann BC
+                if (Ip > (*data)->depth[gmap->top2D[ii]] & unsat == 1)
                 {
-                    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 20)
-                    // {printf("jj -- Dirichlet! : %d\n",gmap->jj[ii]);}
-                    (*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];
+                    (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kmf) / gmap->dz3d[ii];
+                    (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
                 }
+                // Otherwise, use Dirichlet BC
+                else
+                {(*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];}
             }
             else
             {
@@ -517,20 +501,7 @@ void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, 
     size_t ii;
     // create the z Vector
     for (ii = 1; ii <= setting->N3ci; ii++)
-    {
-		//if (gmap->actv[ii] == 1)
-		  V_SetCmp(&z, ii, ground->B[ii-1]);
-	   }
-
-     // for (ii = 0; ii < setting->N3ci; ii++)
-     // {
-     //    // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 5){
-     //    // printf("jj,kk,actv,Gc,xp,xm,yp,ym,zp,zm,B = %d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii], \
-     //    //        gmap->kk[ii],gmap->actv[ii],ground->GnCt[ii], \
-     //    //        ground->GnXP[ii],ground->GnXM[ii],ground->GnYP[ii],ground->GnYM[ii], \
-     //    //        ground->GnZP[ii],ground->GnZM[ii],ground->B[ii]);}
-     //     // if (gmap->kk[ii] == 25) {printf("-------------------- \n");}
-     // }
+    {V_SetCmp(&z, ii, ground->B[ii-1]);}
     // initialize x
     V_SetAllCmp(&x, 0.0);
     // set stopping criteria
@@ -573,6 +544,7 @@ void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting)
 void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
 {
     int ii;
+    double Ip;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // assume no lateral exchange
@@ -597,10 +569,23 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
                 {(*ground)->Qww[ii] = 0.0;}
                 else
                 {
-                    (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - gmap->dz3d[ii]);
+                    Ip = setting->Kzz * setting->dtg;
+                    if (Ip > data->depth[gmap->top2D[ii]])
+                    {
+                        (*ground)->Qww[ii] = -data->depth[gmap->top2D[ii]] / gmap->dz3d[ii] / setting->porosity;
+                        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50)
+                        {printf("Depth < Infiltration Cap, Qww = %f, Ip = %f\n", (*ground)->Qww[ii], Ip);}
+                    }
+                    else
+//                    {(*ground)->Qww[ii] = -Ip / gmap->dz3d[ii];}
+                    {
+                        (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - gmap->dz3d[ii]);
+                        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50)
+                        {printf("Depth > Infiltration Cap, Qww = %f, Ip = %f\n", (*ground)->Qww[ii], Ip);}
+                    }
                     // Switch to Neumann BC if depth is shallow
-                    if ((*ground)->Qww[ii] * gmap->dz3d[ii] > data->depth[gmap->top2D[ii]])
-                    {(*ground)->Qww[ii] = data->depth[gmap->top2D[ii]] / gmap->dz3d[ii];}
+                    if (-(*ground)->Qww[ii] * gmap->dz3d[ii] > data->depth[gmap->top2D[ii]])
+                    {(*ground)->Qww[ii] = -data->depth[gmap->top2D[ii]] / gmap->dz3d[ii];}
                 }
             }
             else
@@ -610,6 +595,7 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         }
         else
         {(*ground)->Qww[ii] = 0.0;}
+        
         // Force outflow < cell volume
         if ((*ground)->Qww[ii] > (*ground)->wc[ii])
         {(*ground)->Qww[ii] = (*ground)->wc[ii];}
@@ -632,10 +618,6 @@ void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
     {
         if (gmap->actv[ii] == 1)
         {
-            // if (gmap->ii[ii] == 1 & gmap->istop[ii] == 1)
-            // {
-            //     printf("Before: jj,kk,wc,sum(Q)=%d,%d,%f,%f,\n",gmap->jj[ii],gmap->kk[ii],(*ground)->wc[ii],(*ground)->Qww[ii]-(*ground)->Qww[gmap->icjckP[ii]]);
-            // }
             (*ground)->wc[ii] += ((*ground)->Quu[gmap->iMjckc[ii]] - (*ground)->Quu[ii]);
             (*ground)->wc[ii] += ((*ground)->Qvv[gmap->icjMkc[ii]] - (*ground)->Qvv[ii]);
             (*ground)->wc[ii] += ((*ground)->Qww[gmap->icjckP[ii]] - (*ground)->Qww[ii]);
@@ -651,14 +633,14 @@ void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config
     int ii, kk, lay, unsat;
     double Vmax, wcs, eps;
     wcs = setting->porosity;
-    eps = 0.001;
+    eps = 0.002;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // find 2D index of top layer 3D cell
         if (gmap->istop[ii] == 1)
         {
             kk = gmap->top2D[ii];
-            Vmax = (*ground)->Qww[ii] * (*ground)->V[ii];
+            Vmax = (*ground)->Qww[ii] * setting->dx * setting->dy * gmap->dz3d[ii] * setting->porosity;
             if ((*data)->depth[kk] > 0)
             {(*data)->Qseep[kk] = Vmax / setting->dtg;}
             else
@@ -668,11 +650,7 @@ void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config
             lay = ii;
             while (gmap->icjckP[lay] > 0)
             {
-                if ((*ground)->wc[lay] < wcs-eps)
-                {
-                    unsat = 1;
-                    break;
-                }
+                if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
                 lay += 1;
             }
             // Zero seepage if fully saturated
@@ -693,25 +671,23 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
 {
     int ii, flag, unsat, lay;
     double wcr, wcs, wch, hwc, dwc, eps;
-    eps = 1e-6;
+    eps = 0.002;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
+        // computer wc from h, h from wc
+        wch = waterContent((*ground)->h[ii], setting);
+        hwc = headFromWC((*ground)->wc[ii], setting);
+        
+//        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
+//        {printf("kk : %d BEFORE<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]]);}
         flag = 0;
-        // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 2)
-        // {
-        //     printf("Before - wc, h, Qxp, Qxm, Qyp, Qym, Qzp, Qzm = %f, %f, %f, %f, %f, %f, %f, %f\n", (*ground)->wc[ii], \
-        //         (*ground)->h[ii], 1e4*(*ground)->Quu[ii], 1e4*(*ground)->Quu[gmap->iMjckc[ii]], 1e4*(*ground)->Qvv[ii], \
-        //         1e4*(*ground)->Qvv[gmap->icjMkc[ii]], 1e4*(*ground)->Qww[ii], 1e4*(*ground)->Qww[gmap->icjckP[ii]]);
-        // }
         if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs - eps)
         {
-            // computer wc from h, h from wc
-            wch = waterContent((*ground)->h[ii], setting);
-            hwc = headFromWC((*ground)->wc[ii], setting);
             if (gmap->istop[ii] == 1)
             {
+                // if ii is adjacent to a saturated cell, adjust wc based on h
                 if ((*ground)->wc[gmap->icjckP[ii]] >= wcs | (*data)->depth[gmap->top2D[ii]] > 0.0)
                 {
                     flag = 1;
@@ -722,52 +698,43 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                         if ((*ground)->Qww[ii] > 0)
                         {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
                         else
-                        {(*data)->Qseep[gmap->top2D[ii]] -= dwc * gmap->dz3d[ii] * setting->dx * setting->dy / setting->dtg;}
+                        {
+                            (*data)->Qseep[gmap->top2D[ii]] -= dwc * gmap->dz3d[ii] * setting->dx * setting->dy / setting->dtg;
+                            if (fabs((*data)->Qseep[gmap->top2D[ii]]) > (*data)->depth[gmap->top2D[ii]] * setting->dx * setting->dy / setting->dtg)
+                            {(*data)->Qseep[gmap->top2D[ii]] = -(*data)->depth[gmap->top2D[ii]] * setting->dx * setting->dy / setting->dtg;}
+                        }
                     }
                 }
+                // otherwise adjust h based on wc
                 else
                 {(*ground)->h[ii] = hwc;    flag = 2;}
             }
-            else if (gmap->icjckP[ii] == -1)
-            {
-                if ((*ground)->wc[gmap->icjckM[ii]] >= wcs)
-                {
-                    if (wch > (*ground)->wc[ii])
-                    {
-                        dwc = (wch - (*ground)->wc[ii]);
-                        (*ground)->wc[ii] = wch;
-                        // adjust wc of the upwind cell
-                        if ((*ground)->Qww[ii] > 0)
-                        {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
-                    }
-                }
-                else
-                {(*ground)->h[ii] = hwc;}
-            }
+            else if (gmap->icjckP[ii] == -1)    {(*ground)->wc[ii] = wch;   flag = 4;}
+//            {printf("WARNING: Water table is lower than domain bottom at ii = %d, jj = %d\n",gmap->ii[ii],gmap->jj[ii]);}
             else
             {
-                // if one neighbor cell is saturated
+                // if one neighbor cell is saturated, adjust wc based on h
                 if ((*ground)->wc[gmap->icjckM[ii]] >= wcs | (*ground)->wc[gmap->icjckP[ii]] >= wcs)
                 {
+                    flag = 1;
                     if (wch > (*ground)->wc[ii])
                     {
                         dwc = (wch - (*ground)->wc[ii]);
                         (*ground)->wc[ii] = wch;
-                        // adjust wc of the upwind cell
                         if ((*ground)->Qww[ii] > 0)
                         {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
                         else
                         {(*ground)->wc[gmap->icjckM[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckM[ii]]);}
-
                     }
                 }
-                // if all neighbor cells are un-sat
+                // otherwise adjust h based on wc
                 else
-                {(*ground)->h[ii] = hwc;}
+                {(*ground)->h[ii] = hwc;    flag = 2;}
             }
         }
         else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] > wcs)
         {
+            flag = 3;
             dwc = (*ground)->wc[ii] - wcs;
             (*ground)->wc[ii] = wcs;
             // if downward flow, move water to kP cell
@@ -778,28 +745,16 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                 lay = ii;
                 while (gmap->icjckP[lay] > 0)
                 {
-                    if ((*ground)->wc[lay] < wcs-eps)
-                    {
-                        unsat = 1;
-                        break;
-                    }
+                    if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
                     lay += 1;
                 }
 
-                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
-                {printf("Before: kk, wc, unsat = %d, %f, %d\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]],unsat);}
+//                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
+//                {printf("Before: kk, wc, unsat = %d, %f, %d\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]],unsat);}
 
                 if (unsat == 1)
                 {(*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
-                else
-                {
-                    (*data)->Qseep[gmap->top2D[ii]] = 0.0;
-                    if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
-                    {printf("INFILTRATION SENT BACK TO SURFACE!!!\n");}
-                }
 
-                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
-                {printf("After: kk, wc Qseep = %d, %f, %f\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]], (*data)->Qseep[gmap->top2D[ii]]);}
                 // if ((*ground)->wc[gmap->icjckP[ii]] < wcs)
                 // {
                 //     if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->istop[ii] == 1)
@@ -818,8 +773,9 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                 }
             }
         }
-        // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 40 & gmap->istop[ii] == 1)
-        // {printf("jj--flag, wch, wc = %d, %d, %f, %f\n",gmap->jj[ii],flag,wch,(*ground)->wc[ii]);}
+        
+//         if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
+//         {printf("kk : %d AFTER<<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f, flag = %d\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]], flag); printf("--------------------\n");}
     }
     // final check if wc <= 1
     for (ii = 0; ii < setting->N3ci; ii++)

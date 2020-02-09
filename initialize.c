@@ -598,7 +598,8 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
                 if (data->depth[gmap->top2D[ii]] > 0.0)
                 {(*ground)->wc[ii] = wcs;}
                 else
-                {(*ground)->wc[ii] = 0.1;}
+                {(*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
+                (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;}
                 if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
                 if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
                 (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);

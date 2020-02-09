@@ -120,7 +120,7 @@ outflow = sum(flow) * dt * itvl / 60
 inflow = 5.5e-6 * 200 * 60.0 * Nx*dx * (Ny/2.0)*dy
 # print(inflow, outflow)
 
-tVec = np.linspace(0,Tend*dt,Tend/itvl+1)
+tVec = np.linspace(0,int(Tend*dt),int(Tend/itvl+1))
 plt.figure(3)
 plt.plot(tVec/60.0, flow)
 plt.ylim(0.0,12.0)

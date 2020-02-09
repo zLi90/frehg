@@ -1267,7 +1267,7 @@ void infiltration(Data **data, Bath *bath, Maps *map, Config *setting)
       {
           if ((*data)->depth[ii] > 0 & (*data)->Qseep[ii] < 0)
           {
-              (*data)->surf[ii] -= -(*data)->Qseep[ii] * setting->dt / (setting->dx * setting->dy);
+              (*data)->surf[ii] -= -(*data)->Qseep[ii] * setting->dt * (setting->dt/setting->dtg) / (setting->dx * setting->dy);
               if ((*data)->surf[ii] < bath->bottomZ[ii] + setting->minDepth)
               {(*data)->surf[ii] = bath->bottomZ[ii];}
               (*data)->depth[ii] = (*data)->surf[ii] - bath->bottomZ[ii];
