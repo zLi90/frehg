@@ -262,7 +262,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
     int ii,jj,kk, unsat, lay;
     double depth, dwdh, Ve, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
     wcs = setting->porosity;
-    eps = 0.002;
+    eps = 0.0005;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         if (gmap->actv[ii] == 1)
@@ -633,7 +633,7 @@ void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config
     int ii, kk, lay, unsat;
     double Vmax, wcs, eps;
     wcs = setting->porosity;
-    eps = 0.002;
+    eps = 0.0005;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // find 2D index of top layer 3D cell
@@ -671,7 +671,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
 {
     int ii, flag, unsat, lay;
     double wcr, wcs, wch, hwc, dwc, eps;
-    eps = 0.002;
+    eps = 0.0005;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     for (ii = 0; ii < setting->N3ci; ii++)
