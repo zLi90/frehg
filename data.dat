@@ -120,10 +120,17 @@ subdata/;                                   # Subgrid folder
 1.0;                                      # coefficient a2, which equals alpha in ParFlow
 0.2;                                       # residual water content
 1;                                          # Use unsaturated zone
-# ======================== Evap/Rain ==========================
-0;                                          # Use evap
-1;                                          # Use rain
-0.000000001                                 # Evap flux
-2400;                                        # Size of rain data
-10.0;                                       # ET extinction depths (layer)
+# ======================== Rain ==========================
+1;                                          # Use rain (1 = read rain.dat, 2 = const rainfall rate)
+0.0000055;                                  # Rainfall rate (m/s, if const)
+0;                                          # Rainfall start time (step)
+3000;                                       # Rainfall end time (step)
+2400;                                       # Size of rain data
+# ======================== Evap ==========================
+0;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
+0.000000001                                 # Evap rate (m/s, if const)
+0;                                          # Evap start time (step)
+3000;                                       # Evap end time (step)
+2400;                                       # Size of evap data
+0.5;                                        # ET extinction depths (m)
 # ============================ End ============================

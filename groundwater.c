@@ -260,7 +260,7 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
     int ii,jj,kk, unsat, lay;
-    double depth, dwdh, Ve, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
+    double depth, dwdh, Ve, Vw, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
     wcs = setting->porosity;
     eps = 0.0005;
     for (ii = 0; ii < setting->N3ci; ii++)
@@ -341,28 +341,6 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
             wc = waterContent((*ground)->h[ii], setting);
             dwdh = updateDSDH((*ground)->h[ii], setting);
             (*ground)->B[ii] = (*ground)->B[ii] * wc / setting->porosity + dwdh * (*ground)->h[ii];
-            // evaporation
-            // if (setting->useEvap == 1 & gmap->istop[ii] == 1 & gmap->actv[ii] == 1)
-            // {
-            //     Ve = setting->qe * setting->dtg * setting->dx * setting->dy * setting->porosity;
-            //     kk = ii;
-            //     while (Ve > 0.0)
-            //     {
-            //         Vvoid = gmap->dz3d[kk] * setting->dx * setting->dy * setting->porosity;
-            //         allV = (*ground)->V[kk] - Vvoid * setting->Sres;
-            //         if (Ve <= allV)
-            //         {
-            //             (*ground)->B[kk] -= setting->qe * setting->dtg / gmap->dz3d[kk];
-            //             Ve = 0.0;
-            //         }
-            //         else
-            //         {
-            //             (*ground)->B[kk] -= allV / (setting->dx * setting->dy * setting->porosity);
-            //             Ve -= allV;
-            //             kk = gmap->icjckP[kk];
-            //         }
-            //     }
-            // }
         }
 
         // Gravity terms and surface/subsurface interface BC
@@ -414,7 +392,23 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                 (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
             }
         }
-
+        
+        // Evaporation on bare soil
+        if (gmap->actv[ii] == 1 & setting->useEvap == 1 & (*data)->depth[gmap->top2D[ii]] <= 0.0)
+        {
+            // for the time being, assume evap only occurs in the top cell
+            if (gmap->istop[ii] == 1)
+            {
+                // calculate potential evaporation
+                Ve = setting->qEvap * setting->dtg;
+                // calculate amount of water in the current cell
+                Vw = (*ground)->wc[ii] * gmap->dz3d[ii];
+                if (Ve > Vw)    {Ve = Vw;}
+                // add to Richards as a source term
+                (*ground)->B[ii] -= Ve / gmap->dz3d[ii];
+            }
+        }
+        
         if (gmap->actv[ii] == 0)
         {(*ground)->B[ii] = (*ground)->SS;}
     }

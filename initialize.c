@@ -354,47 +354,64 @@ void initBCArrays(BC **bc, Config *setting)
 // =============== read boundary conditions from data files ===============
 void readBC(BC **bc, Config *setting, int irank)
 {
-  if (setting->bcType != 2)
-  {
-    writeText("Loading tide boundary condition ...", irank);
-    readOneBC((*bc)->tideP, "tideP.dat", setting, setting->tideNP);
-  }
-  if (setting->bcType != 1)
-  {
-    writeText("Loading tide boundary condition ...", irank);
-    readOneBC((*bc)->tideM, "tideM.dat", setting, setting->tideNM);
-  }
-  if (setting->bcType != 3)
-  {
-    writeText("Loading inflow boundary condition ...", irank);
-    readOneBC((*bc)->inflow, "inflow.dat", setting, setting->inflowN);
-  }
-  if (setting->useWind == 1)
-  {
-    writeText("Loading wind boundary condition ...", irank);
-    readOneBC((*bc)->windspd, "windspd.dat", setting, setting->windspdN);
-    readOneBC((*bc)->winddir, "winddir.dat", setting, setting->winddirN);
-  }
-  if (setting->useConstTidePS == 0)
-  {
-    writeText("Loading tidal salinity boundary condition ...", irank);
-    readOneBC((*bc)->tidalPS, "salinityBC.dat", setting, setting->tidalPSN);
-  }
-  if (setting->useConstTideMS == 0)
-  {
-    writeText("Loading tidal salinity boundary condition ...", irank);
-    readOneBC((*bc)->tidalMS, "salinityBC.dat", setting, setting->tidalMSN);
-  }
-  if (setting->useEvap == 1)
-  {
-    writeText("Loading evaporation boundary condition ...", irank);
-    readOneBC((*bc)->evap, "evap.dat", setting, setting->evapN);
-  }
-  if (setting->useRain == 1)
-  {
-    writeText("Loading rainfall boundary condition ...", irank);
-    readOneBC((*bc)->rain, "rain.dat", setting, setting->rainN);
-  }
+    int ii;
+    if (setting->bcType != 2)
+    {
+        writeText("Loading tide boundary condition ...", irank);
+        readOneBC((*bc)->tideP, "tideP.dat", setting, setting->tideNP);
+    }
+    if (setting->bcType != 1)
+    {
+        writeText("Loading tide boundary condition ...", irank);
+        readOneBC((*bc)->tideM, "tideM.dat", setting, setting->tideNM);
+    }
+    if (setting->bcType != 3)
+    {
+        writeText("Loading inflow boundary condition ...", irank);
+        readOneBC((*bc)->inflow, "inflow.dat", setting, setting->inflowN);
+    }
+    if (setting->useWind == 1)
+    {
+        writeText("Loading wind boundary condition ...", irank);
+        readOneBC((*bc)->windspd, "windspd.dat", setting, setting->windspdN);
+        readOneBC((*bc)->winddir, "winddir.dat", setting, setting->winddirN);
+    }
+    if (setting->useConstTidePS == 0)
+    {
+        writeText("Loading tidal salinity boundary condition ...", irank);
+        readOneBC((*bc)->tidalPS, "salinityBC.dat", setting, setting->tidalPSN);
+    }
+    if (setting->useConstTideMS == 0)
+    {
+        writeText("Loading tidal salinity boundary condition ...", irank);
+        readOneBC((*bc)->tidalMS, "salinityBC.dat", setting, setting->tidalMSN);
+    }
+    if (setting->useEvap == 1)
+    {
+        writeText("Loading evaporation boundary condition ...", irank);
+        readOneBC((*bc)->evap, "evap.dat", setting, setting->evapN);
+    }
+    else if (setting->useEvap == 2)
+    {
+        for (ii = 0; ii < setting->Nt; ii++)
+        {
+            if (ii >= setting->eTstart & ii < setting->eTend)   {(*bc)->evap[ii] = setting->qEvap;}
+            else    {(*bc)->evap[ii] = 0.0;}
+        }
+    }
+    if (setting->useRain == 1)
+    {
+        writeText("Loading rainfall boundary condition ...", irank);
+        readOneBC((*bc)->rain, "rain.dat", setting, setting->rainN);
+    }
+    else if (setting->useRain == 2)
+    {
+        for (ii = 0; ii < setting->Nt; ii++)
+        {
+            if (ii >= setting->rTstart & ii < setting->rTend)   {(*bc)->rain[ii] = setting->qRain;}
+            else    {(*bc)->rain[ii] = 0.0;}
+        }
+    }
 }
 
 // =============== initialize drag coefficient ================
@@ -598,8 +615,10 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
                 if (data->depth[gmap->top2D[ii]] > 0.0)
                 {(*ground)->wc[ii] = wcs;}
                 else
-                {(*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
-                (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;}
+                {
+                    (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
+                (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
+                }
                 if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
                 if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
                 (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);

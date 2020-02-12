@@ -116,8 +116,8 @@ typedef struct Config
     double subS0, Kmx, Kmy, Kmz;
 	double a1, a2, Sres;
   // -------------------- setting for evap/rain -------------------------------
-	int useEvap, useRain, evapN, rainN, kkext;
-  double qe;
+	int useEvap, useRain, evapN, rainN, kkext, eTstart, eTend, rTstart, rTend;
+    double qRain, qEvap;
 }Config;
 
 #endif

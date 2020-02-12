@@ -69,7 +69,6 @@ void detectWaterfallLocation(Data **data, Bath *bath, Maps *map, Config *setting
 void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting);
 void updateCD(Data **data, Config *setting);
 void monitorCFL(Data **data, Bath *bath, int irank, Config *setting, int tt, int root);
-void computeEvapRain(Data **data, Bath *bath, Maps *map, BC *bc, Config *setting, int tt);
 void infiltration(Data **data, Bath *bath, Maps *map, Config *setting);
 
 
@@ -388,7 +387,7 @@ void volumeByFlux(Data **data, Maps *map, BC *bc, Config *setting, int tt, int i
     }
     if (setting->useEvap == 1)
     {
-      (*data)->cellV[ii] = (*data)->cellV[ii] - setting->qe * \
+      (*data)->cellV[ii] = (*data)->cellV[ii] - setting->qEvap * \
         setting->dt * setting->dx * setting->dy;
     }
     if (setting->useRain == 1)
@@ -1274,63 +1273,4 @@ void infiltration(Data **data, Bath *bath, Maps *map, Config *setting)
           }
       }
     }
-}
-
-// ===================== Evap/Rain ===========================
-void computeEvapRain(Data **data, Bath *bath, Maps *map, BC *bc, Config *setting, int tt)
-{
-    int ii;
-    double he, epsi = -0.00000001;
-    // surface-subsurface exchange
-    double deq;
-    if (setting->useSubsurface == 1)
-    {
-        for (ii = 0; ii < setting->N2ci; ii++)
-        {
-            if ((*data)->Qseep[ii] < 0)
-            {
-                deq = fabs((*data)->Qseep[ii] * setting->dt / (setting->dx*setting->dy));
-                if (deq >= (*data)->depth[ii])
-                {
-                    (*data)->surf[ii] -= (*data)->depth[ii];
-                    (*data)->depth[ii] = 0.0;
-                }
-                else
-                {
-					(*data)->surf[ii] -= deq;
-                    (*data)->depth[ii] -= deq;
-                }
-                if ((*data)->surf[ii] < bath->bottomZ[ii])  {(*data)->surf[ii] = bath->bottomZ[ii];}
-            }
-        }
-    }
-
-	if (setting->useRain == 1)
-	{
-		for (ii = 0; ii < setting->N2ci; ii++)
-		{
-            // only retain rainfall on the slope
-            if (map->jj2d[ii] < 100)
-            {
-                // rainfall on both water and land
-    			(*data)->rainC[ii] = (*data)->rainC[ii] + bc->rain[tt] * setting->dt;
-    			if ((*data)->rainC[ii] > setting->minDepth)
-    			{
-                    (*data)->surf[ii] = (*data)->surf[ii] + (*data)->rainC[ii];
-    				(*data)->rainC[ii] = epsi;
-    			}
-            }
-		}
-	}
-	if (setting->useEvap == 1)
-	{
-    he = setting->qe * setting->dt;
-		for (ii = 0; ii < setting->N2ci; ii++)
-		{
-			// evaporation from water surface
-			if ((*data)->surf[ii] - he >= bath->bottomZ[ii])
-			{(*data)->surf[ii] = (*data)->surf[ii] - he;}
-		}
-	}
-
 }
