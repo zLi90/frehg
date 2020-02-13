@@ -386,6 +386,7 @@ void readBC(BC **bc, Config *setting, int irank)
         writeText("Loading tidal salinity boundary condition ...", irank);
         readOneBC((*bc)->tidalMS, "salinityBC.dat", setting, setting->tidalMSN);
     }
+    printf("useEvap = %d\n",setting->useEvap);
     if (setting->useEvap == 1)
     {
         writeText("Loading evaporation boundary condition ...", irank);

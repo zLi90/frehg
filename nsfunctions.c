@@ -385,12 +385,12 @@ void volumeByFlux(Data **data, Maps *map, BC *bc, Config *setting, int tt, int i
       {if (ii == setting->inflowLoc[jj])
         {(*data)->cellV[ii] = (*data)->cellV[ii] + bc->inflow[tt]*setting->dt;}}
     }
-    if (setting->useEvap == 1)
+    if (setting->useEvap > 0)
     {
       (*data)->cellV[ii] = (*data)->cellV[ii] - setting->qEvap * \
         setting->dt * setting->dx * setting->dy;
     }
-    if (setting->useRain == 1)
+    if (setting->useRain > 0)
     {
       if ((*data)->rainC[ii] > setting->minDepth)
   		{
@@ -793,17 +793,17 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
     }
   }
   // add rainfall and evaporation as source terms
-  if (setting->useRain == 1)
+  if (setting->useRain > 0)
   {
       for (ii = 0; ii < setting->N2ci; ii++)
       {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
   }
   // evaporation on wet regions only
-  if (setting->useEvap == 1)
+  if (setting->useEvap > 0)
   {
       for (ii = 0; ii < setting->N2ci; ii++)
       {
-          if ((*data)->depth[ii] > 0.0)
+          if ((*data)->depth[map->trps[ii]] > 0.0)
           {(*data)->z[ii] -= bc->evap[tt] * setting->dt;}
       }
   }

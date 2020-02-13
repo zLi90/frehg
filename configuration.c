@@ -144,19 +144,19 @@ void ReadUserSettings(Config **setting, double *configArr, char *date, char *inp
 	(*setting)->a1 = configArr[103];
 	(*setting)->a2 = configArr[104];
 	(*setting)->Sres = configArr[105];
-  (*setting)->useUnSat = configArr[106];
+    (*setting)->useUnSat = configArr[106];
 	// ------------------------ EVAP/RAIN --------------------------------
 	(*setting)->useRain = configArr[107];
     (*setting)->qRain = configArr[108];
     (*setting)->rTstart = configArr[109];
-    (*setting)->rTend = configArr[120];
-    (*setting)->rainN = configArr[121];
-	(*setting)->useEvap = configArr[122];
-	(*setting)->qEvap = configArr[123];
-    (*setting)->eTstart = configArr[124];
-    (*setting)->eTend = configArr[125];
-	(*setting)->evapN = configArr[126];
-    (*setting)->kkext = configArr[111];
+    (*setting)->rTend = configArr[110];
+    (*setting)->rainN = configArr[111];
+	(*setting)->useEvap = configArr[112];
+	(*setting)->qEvap = configArr[113];
+    (*setting)->eTstart = configArr[114];
+    (*setting)->eTend = configArr[115];
+	(*setting)->evapN = configArr[116];
+    (*setting)->kkext = configArr[117];
   // ---------------------------------------------------------------------------
   // -------------------- NO USER CHANGE BELOW ---------------------------------
   // ---------------------------------------------------------------------------

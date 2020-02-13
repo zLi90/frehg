@@ -75,8 +75,8 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
       if (tt > 3000)  {bc->rain[tt] = 0.0;}
       else {bc->rain[tt] = 0.0000025;}
 
-      if (tt < 3000)    {setting->qEvap = 0.0;}
-      else {setting->qEvap = 0.00000009;}
+//      if (tt < 3000)    {setting->qEvap = 0.0;}
+//      else {setting->qEvap = 0.00000009;}
 
     writeInd = tt;
     QMatrix A;
