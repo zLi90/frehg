@@ -259,9 +259,10 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
 // =============== Compute the coefficients of the matrix A ===============
 void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
-    int ii,jj,kk, unsat, lay;
-    double depth, dwdh, Ve, Vw, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, eps;
+    int ii,jj,kk, unsat, lay, Nevap;
+    double depth, dwdh, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, wcr, eps;
     wcs = setting->porosity;
+    wcr = setting->Sres * setting->porosity;
     eps = 0.0005;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
@@ -392,23 +393,24 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                 (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
             }
         }
-        
+
         // Evaporation on bare soil
+        (*ground)->qe[ii] = 0.0;
         if (gmap->actv[ii] == 1 & setting->useEvap == 1 & (*data)->depth[gmap->top2D[ii]] <= 0.0)
         {
-            // for the time being, assume evap only occurs in the top cell
-            if (gmap->istop[ii] == 1)
+
+            if (gmap->bot3d[ii] >= gmap->bot2d[gmap->top2D[ii]] - setting->kkext)
             {
-                // calculate potential evaporation
-                Ve = setting->qEvap * setting->dtg;
-                // calculate amount of water in the current cell
-                Vw = (*ground)->wc[ii] * gmap->dz3d[ii];
-                if (Ve > Vw)    {Ve = Vw;}
-                // add to Richards as a source term
-                (*ground)->B[ii] -= Ve / gmap->dz3d[ii];
+                // distribute evap flux to each cell
+                Nevap = floor((gmap->bot2d[gmap->top2D[ii]] - setting->kkext) / gmap->dz3d[ii]);
+                // NOTE: need to change this to bc->evap[tt]
+                (*ground)->qe[ii] = setting->qEvap / Nevap;
+                // add to Richards as a source term if there is enough water to evaporate
+                if ((*ground)->wc[ii]*gmap->dz3d[ii] - (*ground)->qe[ii]*setting->dtg >= wcr*gmap->dz3d[ii])
+                {(*ground)->B[ii] -= (*ground)->qe[ii]*setting->dtg / gmap->dz3d[ii];}
             }
         }
-        
+
         if (gmap->actv[ii] == 0)
         {(*ground)->B[ii] = (*ground)->SS;}
     }
@@ -589,7 +591,7 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         }
         else
         {(*ground)->Qww[ii] = 0.0;}
-        
+
         // Force outflow < cell volume
         if ((*ground)->Qww[ii] > (*ground)->wc[ii])
         {(*ground)->Qww[ii] = (*ground)->wc[ii];}
@@ -616,6 +618,8 @@ void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
             (*ground)->wc[ii] += ((*ground)->Qvv[gmap->icjMkc[ii]] - (*ground)->Qvv[ii]);
             (*ground)->wc[ii] += ((*ground)->Qww[gmap->icjckP[ii]] - (*ground)->Qww[ii]);
             (*ground)->wc[ii] = (*ground)->wc[ii] / (1.0 + (*ground)->SS * ((*ground)->h[ii]-(*ground)->hOld[ii]) / setting->porosity);
+            if (setting->useEvap == 1 & (*ground)->qe[ii] > 0.0)
+            {(*ground)->wc[ii] -= (*ground)->qe[ii]*setting->dtg/gmap->dz3d[ii];}
             if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
         }
     }
@@ -673,7 +677,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
         // computer wc from h, h from wc
         wch = waterContent((*ground)->h[ii], setting);
         hwc = headFromWC((*ground)->wc[ii], setting);
-        
+
 //        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
 //        {printf("kk : %d BEFORE<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]]);}
         flag = 0;
@@ -767,7 +771,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                 }
             }
         }
-        
+
 //         if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
 //         {printf("kk : %d AFTER<<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f, flag = %d\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]], flag); printf("--------------------\n");}
     }

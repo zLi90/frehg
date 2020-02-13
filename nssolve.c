@@ -57,7 +57,7 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   // begin time stepping
   if (irank == 0)
   {printf("Ready for time stepping ...\n");}
-  setting->Nt = 4500;
+  setting->Nt = 6000;
   setting->OutItvl = 45;
   for (tt = 1; tt <= setting->Nt; tt++)
   {
@@ -73,6 +73,10 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
       bc->inflow[tt] = 0.0;
       // For Maxwell2014 only!
       if (tt > 3000)  {bc->rain[tt] = 0.0;}
+      else {bc->rain[tt] = 0.0000025;}
+
+      if (tt < 3000)    {setting->qEvap = 0.0;}
+      else {setting->qEvap = 0.00000009;}
 
     writeInd = tt;
     QMatrix A;
@@ -131,7 +135,7 @@ void oneCompleteStep(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *
       printf("=====> Subsurface step executed!\n");
     }
     infiltration(data, bath, map, setting);
-    
+
     // Update velocity
     updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);
     // Scalar transport

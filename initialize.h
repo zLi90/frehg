@@ -36,7 +36,7 @@ typedef struct Ground
     double H0, SS, *allh0, *allh, *h, *hm, *hOld, *Cx, *Cy, *Cz, *Kx, *Ky, *Kz, *V, *B, *wc, *allwc;
     double *GnCt, *GnXP, *GnXM, *GnYP, *GnYM, *GnZP, *GnZM;
     double *nlay, *Quu, *Qvv, *Qww;
-    double *S, *Sm, *allS;
+    double *S, *Sm, *allS, *qe;
 }Ground;
 
 

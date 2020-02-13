@@ -205,12 +205,14 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
     (*gmap)->top2D = malloc(setting->N3ci*sizeof(int));
     (*gmap)->dz3d = malloc(setting->N3ci*sizeof(double));
     (*gmap)->bot3d = malloc(setting->N3ci*sizeof(double));
+    (*gmap)->bot2d = malloc(setting->N2ci*sizeof(double));
     // outer loop over 2D domain
     ind = 0;
     for (ll = 0; ll < setting->N2ci; ll++)
     {
         jj = floor(ll / setting->nx);
         ii = ll - jj * setting->nx;
+        (*gmap)->bot2d[ll] = bath->bottomZ[ll];
         // inner loop over each column
         for (kk = 0; kk < (*gmap)->maxLay; kk++)
         {

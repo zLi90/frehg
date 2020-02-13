@@ -792,15 +792,19 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
         (setting->dt/(setting->dx*setting->dy)) * (bc->inflow[tt] / setting->inflowLocLength);
     }
   }
-  // add rainfall as a source term
+  // add rainfall and evaporation as source terms
   if (setting->useRain == 1)
   {
-      // For Maxwell2014 only!
+      for (ii = 0; ii < setting->N2ci; ii++)
+      {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
+  }
+  // evaporation on wet regions only
+  if (setting->useEvap == 1)
+  {
       for (ii = 0; ii < setting->N2ci; ii++)
       {
-          // only retain rainfall on the slope
-          // if (map->jj2d[map->trps[ii]] < 4)
-          {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
+          if ((*data)->depth[ii] > 0.0)
+          {(*data)->z[ii] -= bc->evap[tt] * setting->dt;}
       }
   }
 }

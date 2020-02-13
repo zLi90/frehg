@@ -2,7 +2,7 @@
 # =========================== Paths ============================
 2018-01-01;                                 # Model start date
 inputSlope/;                             # Input folder
-outputP2/;                                  # Output folder
+outputP5/;                                  # Output folder
 subdata/;                                   # Subgrid folder
 # =========================== Domain ===========================
 4.0;                                        # dx(m)
@@ -122,15 +122,15 @@ subdata/;                                   # Subgrid folder
 1;                                          # Use unsaturated zone
 # ======================== Rain ==========================
 1;                                          # Use rain (1 = read rain.dat, 2 = const rainfall rate)
-0.0000055;                                  # Rainfall rate (m/s, if const)
+0.0000025;                                  # Rainfall rate (m/s, if const)
 0;                                          # Rainfall start time (step)
 3000;                                       # Rainfall end time (step)
 2400;                                       # Size of rain data
 # ======================== Evap ==========================
-0;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
-0.000000001                                 # Evap rate (m/s, if const)
-0;                                          # Evap start time (step)
-3000;                                       # Evap end time (step)
+1;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
+0.00000009                                 # Evap rate (m/s, if const)
+3000;                                          # Evap start time (step)
+6000;                                       # Evap end time (step)
 2400;                                       # Size of evap data
 0.5;                                        # ET extinction depths (m)
 # ============================ End ============================

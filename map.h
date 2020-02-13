@@ -18,7 +18,7 @@ typedef struct Gmaps
     int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM;
     int *iPbd, *iPgt, *iMbd, *iMgt, *jPbd, *jPgt, *jMbd, *jMgt;
     int *kPbd, *kPgt, *kMbd, *kMgt;
-    double *htop, *dz3d, *bot3d;
+    double *htop, *dz3d, *bot3d, *bot2d;
 }Gmaps;
 
 #endif
