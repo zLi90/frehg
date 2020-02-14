@@ -263,7 +263,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
     double depth, dwdh, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, wcs, wcr, eps;
     wcs = setting->porosity;
     wcr = setting->Sres * setting->porosity;
-    eps = 0.0005;
+    eps = 0.01;
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         if (gmap->actv[ii] == 1)
@@ -367,8 +367,6 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         {
             if ((*data)->depth[gmap->top2D[ii]] > 0)
             {
-                // calculate infiltration capacity
-                Ip = setting->Kzz * setting->dtg;
                 // check for saturation
                 unsat = 0;
                 lay = ii;
@@ -377,8 +375,11 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                     if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
                     lay += 1;
                 }
+                // calculate infiltration capacity
+                Ip = setting->Kzz * setting->dtg;
+                // Ip = (*ground)->h[ii] / (1.0 - 0.5*gmap->dz3d[ii]/(setting->Kzz*setting->dtg));
                 // If Ip > depth and soil column is unsaturated, use Neumann BC
-                if (Ip > (*data)->depth[gmap->top2D[ii]] & unsat == 1)
+                if ((*data)->depth[gmap->top2D[ii]] <= Ip & unsat == 1)
                 {
                     (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kmf) / gmap->dz3d[ii];
                     (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
@@ -566,22 +567,19 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
                 else
                 {
                     Ip = setting->Kzz * setting->dtg;
-                    if (Ip > data->depth[gmap->top2D[ii]])
+                    // Ip = (*ground)->hOld[ii] / (1.0 - 0.5*gmap->dz3d[ii]/(setting->Kzz*setting->dtg));
+                    if (data->depth[gmap->top2D[ii]] <= Ip)
                     {
                         (*ground)->Qww[ii] = -data->depth[gmap->top2D[ii]] / gmap->dz3d[ii] / setting->porosity;
                         if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50)
                         {printf("Depth < Infiltration Cap, Qww = %f, Ip = %f\n", (*ground)->Qww[ii], Ip);}
                     }
                     else
-//                    {(*ground)->Qww[ii] = -Ip / gmap->dz3d[ii];}
                     {
                         (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - gmap->dz3d[ii]);
                         if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50)
                         {printf("Depth > Infiltration Cap, Qww = %f, Ip = %f\n", (*ground)->Qww[ii], Ip);}
                     }
-                    // Switch to Neumann BC if depth is shallow
-                    if (-(*ground)->Qww[ii] * gmap->dz3d[ii] > data->depth[gmap->top2D[ii]])
-                    {(*ground)->Qww[ii] = -data->depth[gmap->top2D[ii]] / gmap->dz3d[ii];}
                 }
             }
             else
@@ -597,6 +595,49 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         {(*ground)->Qww[ii] = (*ground)->wc[ii];}
         else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
         {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
+    }
+}
+
+// ========== Compute flow rate from subsurface to surface ==========
+void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting)
+{
+    int ii, kk, lay, unsat;
+    double Vmax, wcs, eps;
+    wcs = setting->porosity;
+    eps = 0.01;
+    for (ii = 0; ii < setting->N3ci; ii++)
+    {
+        // find 2D index of top layer 3D cell
+        if (gmap->istop[ii] == 1)
+        {
+            kk = gmap->top2D[ii];
+            Vmax = (*ground)->Qww[ii] * setting->dx * setting->dy * gmap->dz3d[ii] * setting->porosity;
+            if ((*data)->depth[kk] > 0)
+            {(*data)->Qseep[kk] = Vmax / setting->dtg;}
+            else
+            {(*data)->Qseep[kk] = 0.0;}
+            // Check if the soil column is fully saturated
+            unsat = 0;
+            lay = ii;
+            while (gmap->icjckP[lay] > 0)
+            {
+                if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
+                lay += 1;
+            }
+            // Zero seepage if fully saturated
+            if (unsat == 0)
+            {
+                (*data)->Qseep[kk] = 0.0;
+                // (*ground)->Qww[ii] = 0.0;
+            }
+
+            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 42)
+            // {printf("jj---flag---bot3d---depth,h,Cz,Qseep,Qdepth=%d,%d,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii],flag,gmap->bot3d[ii],(*data)->depth[gmap->top2D[ii]], \
+                (*ground)->h[ii],(*ground)->Cz[ii],(*data)->Qseep[kk],-(*data)->Qseep[kk] * setting->dt / (setting->dx * setting->dy));}
+
+            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 40)
+            // {printf("jj,flag >>>> Vmax,wc,Qseep,depth = %d,%d,%f,%f,%f,%f\n",gmap->jj[ii],flag,Vmax,(*ground)->wc[ii],(*data)->Qseep[kk]*setting->dtg,(*data)->depth[kk]);}
+        }
     }
 }
 
@@ -625,51 +666,12 @@ void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
     }
 }
 
-// ========== Compute flow rate from subsurface to surface ==========
-void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting)
-{
-    int ii, kk, lay, unsat;
-    double Vmax, wcs, eps;
-    wcs = setting->porosity;
-    eps = 0.0005;
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // find 2D index of top layer 3D cell
-        if (gmap->istop[ii] == 1)
-        {
-            kk = gmap->top2D[ii];
-            Vmax = (*ground)->Qww[ii] * setting->dx * setting->dy * gmap->dz3d[ii] * setting->porosity;
-            if ((*data)->depth[kk] > 0)
-            {(*data)->Qseep[kk] = Vmax / setting->dtg;}
-            else
-            {(*data)->Qseep[kk] = 0.0;}
-            // Check if the soil column is fully saturated
-            unsat = 0;
-            lay = ii;
-            while (gmap->icjckP[lay] > 0)
-            {
-                if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
-                lay += 1;
-            }
-            // Zero seepage if fully saturated
-            if (unsat == 0) {(*data)->Qseep[kk] = 0.0;}
-
-            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 42)
-            // {printf("jj---flag---bot3d---depth,h,Cz,Qseep,Qdepth=%d,%d,%f,%f,%f,%f,%f,%f\n",gmap->jj[ii],flag,gmap->bot3d[ii],(*data)->depth[gmap->top2D[ii]], \
-                (*ground)->h[ii],(*ground)->Cz[ii],(*data)->Qseep[kk],-(*data)->Qseep[kk] * setting->dt / (setting->dx * setting->dy));}
-
-            // if (gmap->ii[ii] == 5 & gmap->jj[ii] < 40)
-            // {printf("jj,flag >>>> Vmax,wc,Qseep,depth = %d,%d,%f,%f,%f,%f\n",gmap->jj[ii],flag,Vmax,(*ground)->wc[ii],(*data)->Qseep[kk]*setting->dtg,(*data)->depth[kk]);}
-        }
-    }
-}
-
 // ========== Adjust wc and h to handle sat/unsat interface
 void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
 {
     int ii, flag, unsat, lay;
     double wcr, wcs, wch, hwc, dwc, eps;
-    eps = 0.0005;
+    eps = 0.01;
     wcr = setting->Sres * setting->porosity;
     wcs = setting->porosity;
     for (ii = 0; ii < setting->N3ci; ii++)
@@ -678,8 +680,8 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
         wch = waterContent((*ground)->h[ii], setting);
         hwc = headFromWC((*ground)->wc[ii], setting);
 
-//        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
-//        {printf("kk : %d BEFORE<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]]);}
+       // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 8 & gmap->actv[ii] == 1)
+       // {printf("kk : %d BEFORE<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]]);}
         flag = 0;
         if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs - eps)
         {
@@ -693,6 +695,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                     {
                         dwc = (wch - (*ground)->wc[ii]);
                         (*ground)->wc[ii] = wch;
+
                         if ((*ground)->Qww[ii] > 0)
                         {(*ground)->wc[gmap->icjckP[ii]] -= dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
                         else
@@ -730,7 +733,7 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
                 {(*ground)->h[ii] = hwc;    flag = 2;}
             }
         }
-        else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] > wcs)
+        else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] >= wcs - eps)
         {
             flag = 3;
             dwc = (*ground)->wc[ii] - wcs;
@@ -750,8 +753,14 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
 //                if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 10)
 //                {printf("Before: kk, wc, unsat = %d, %f, %d\n",gmap->kk[ii],(*ground)->wc[gmap->icjckP[ii]],unsat);}
 
-                if (unsat == 1)
-                {(*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);}
+                if (unsat == 1 & dwc > 0.0)
+                {
+                    (*ground)->wc[gmap->icjckP[ii]] += dwc * (gmap->dz3d[ii]/gmap->dz3d[gmap->icjckP[ii]]);
+                    // if ((*ground)->wc[gmap->icjckP[ii]] < wcs - eps)
+                    // {(*ground)->h[gmap->icjckP[ii]] = headFromWC((*ground)->wc[gmap->icjckP[ii]], setting);}
+                }
+                // else
+                // {printf("WARNING: Column saturated but wcs still exceeded!\n");}
 
                 // if ((*ground)->wc[gmap->icjckP[ii]] < wcs)
                 // {
@@ -772,8 +781,8 @@ void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setti
             }
         }
 
-//         if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 6 & gmap->actv[ii] == 1)
-//         {printf("kk : %d AFTER<<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f, flag = %d\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]], flag); printf("--------------------\n");}
+        if (gmap->ii[ii] == 5 & gmap->jj[ii] == 50 & gmap->kk[ii] < 2 & gmap->actv[ii] == 1)
+        {printf("kk : %d AFTER<<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f, flag = %d\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]], flag); printf("--------------------\n");}
     }
     // final check if wc <= 1
     for (ii = 0; ii < setting->N3ci; ii++)

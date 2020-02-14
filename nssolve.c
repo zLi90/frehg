@@ -57,7 +57,7 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   // begin time stepping
   if (irank == 0)
   {printf("Ready for time stepping ...\n");}
-  setting->Nt = 6000;
+  setting->Nt = 4500;
   setting->OutItvl = 45;
   for (tt = 1; tt <= setting->Nt; tt++)
   {
@@ -72,8 +72,8 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
       // bc->tideM[tt] = 0.0;
       bc->inflow[tt] = 0.0;
       // For Maxwell2014 only!
-      if (tt > 3000)  {bc->rain[tt] = 0.0;}
-      else {bc->rain[tt] = 0.0000025;}
+      // if (tt > 3000)  {bc->rain[tt] = 0.0;}
+      // else {bc->rain[tt] = 0.0000025;}
 
 //      if (tt < 3000)    {setting->qEvap = 0.0;}
 //      else {setting->qEvap = 0.00000009;}

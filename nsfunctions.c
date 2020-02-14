@@ -796,7 +796,10 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
   if (setting->useRain > 0)
   {
       for (ii = 0; ii < setting->N2ci; ii++)
-      {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
+      {
+          // if (map->jj2d[map->trps[ii]] < setting->ny/2.0)
+          {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
+      }
   }
   // evaporation on wet regions only
   if (setting->useEvap > 0)

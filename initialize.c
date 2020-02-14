@@ -558,6 +558,7 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
     (*ground)->h = malloc(setting->N3cf*sizeof(double));
     (*ground)->hOld = malloc(setting->N3cf*sizeof(double));
     (*ground)->wc = malloc(setting->N3cf*sizeof(double));
+    (*ground)->wcf = malloc(setting->N3cf*sizeof(double));
     (*ground)->Cx = malloc(setting->N3ct*sizeof(double));
     (*ground)->Cy = malloc(setting->N3ct*sizeof(double));
     (*ground)->Cz = malloc(setting->N3ci*sizeof(double));
@@ -648,6 +649,7 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
 	for (ii = 0; ii < setting->N3cf; ii++)
 	{
 		(*ground)->hOld[ii] = (*ground)->h[ii];
+        (*ground)->wcf[ii] = (*ground)->wc[ii];
 		(*ground)->S[ii] = setting->subS0;
         (*ground)->Sm[ii] = 0.0;
 	}
