@@ -57,7 +57,7 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   // begin time stepping
   if (irank == 0)
   {printf("Ready for time stepping ...\n");}
-  setting->Nt = 4500;
+  setting->Nt = 2000;
   setting->OutItvl = 45;
   for (tt = 1; tt <= setting->Nt; tt++)
   {

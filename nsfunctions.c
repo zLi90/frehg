@@ -1278,6 +1278,11 @@ void infiltration(Data **data, Bath *bath, Maps *map, Config *setting)
               {(*data)->surf[ii] = bath->bottomZ[ii];}
               (*data)->depth[ii] = (*data)->surf[ii] - bath->bottomZ[ii];
           }
+          else if ((*data)->Qseep[ii] > 0)
+          {
+              (*data)->surf[ii] += (*data)->Qseep[ii] * setting->dt * (setting->dt/setting->dtg) / (setting->dx * setting->dy);
+              (*data)->depth[ii] = (*data)->surf[ii] - bath->bottomZ[ii];
+          }
       }
     }
 }

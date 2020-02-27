@@ -130,8 +130,8 @@ void ReadUserSettings(Config **setting, double *configArr, char *date, char *inp
     (*setting)->layZ = configArr[89];
     (*setting)->dtg = configArr[90];
     (*setting)->porosity = configArr[91];
-    (*setting)->compS = configArr[92];
-    (*setting)->compW = configArr[93];
+    (*setting)->topBC = configArr[92];
+    (*setting)->botBC = configArr[93];
     (*setting)->Kxx = configArr[94];
     (*setting)->Kyy = configArr[95];
     (*setting)->Kzz = configArr[96];

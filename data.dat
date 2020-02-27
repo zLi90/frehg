@@ -1,8 +1,8 @@
 # This is the user input file of FrehdC, ZhiLi20181211
 # =========================== Paths ============================
 2018-01-01;                                 # Model start date
-inputSlope/;                             # Input folder
-outputP1/;                                  # Output folder
+inputSlopeP5/;                             # Input folder
+outputP5/;                                  # Output folder
 subdata/;                                   # Subgrid folder
 # =========================== Domain ===========================
 4.0;                                        # dx(m)
@@ -101,16 +101,16 @@ subdata/;                                   # Subgrid folder
 10000000;                                   # Maximum CG iteration
 # ========================== Groundwater ==========================
 1;                                          # Activate groundwater model
--4.8;                                      # Bottom of domain (m)
+-2.6;                                      # Bottom of domain (m)
 0.2;                                        # Layer thickness (m)
 4.0;					                      # Subsurface dt (sec)
 0.4;                                        # Porosity
-0.0000001;                                   # Soil compressibility
-0.0000000005;                                # Water compressibility
-0.000000116;                                     # Hydraulic conductivity in x
-0.000000116;                                     # Hydraulic conductivity in y
-0.000000116;                                     # Hydraulic conductivity in z
--0.8;                                         # Initial head (m) / Initial water table
+0;                                          # TopBC (0=FromSurface, 1=FixedQ, 2=FixedHead)
+0;                                          # BottomBC (0=NoFlow, 1=FreeDrainage, 2=FixedHead)
+0.00116;                                     # Hydraulic conductivity in x
+0.00116;                                     # Hydraulic conductivity in y
+0.00116;                                     # Hydraulic conductivity in z
+-0.5;                                         # Initial head (m) / Initial water table
 1;                                          # Activate groundwater scalar model
 10.0;                                        # Initial scalar concentration
 0.000000001;								# Molecular diffusivity in x
@@ -118,19 +118,19 @@ subdata/;                                   # Subgrid folder
 0.000000001;								# Molecular diffusivity in z
 2.0;                                        # coefficient a1, which equals n in ParFlow
 1.0;                                      # coefficient a2, which equals alpha in ParFlow
-0.2;                                       # residual water content
+0.2;                                       # residual saturation
 1;                                          # Use unsaturated zone
 # ======================== Rain ==========================
 2;                                          # Use rain (1 = read rain.dat, 2 = const rainfall rate)
-0.0000055;                                  # Rainfall rate (m/s, if const)
+0.0000002;                                  # Rainfall rate (m/s, if const)
 0;                                          # Rainfall start time (step)
-3000;                                       # Rainfall end time (step)
+100;                                       # Rainfall end time (step)
 2400;                                       # Size of rain data
 # ======================== Evap ==========================
-0;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
-0.00000009                                 # Evap rate (m/s, if const)
-3000;                                          # Evap start time (step)
-6000;                                       # Evap end time (step)
+2;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
+0.0000004                                 # Evap rate (m/s, if const)
+101;                                          # Evap start time (step)
+2000;                                       # Evap end time (step)
 2400;                                       # Size of evap data
-0.5;                                        # ET extinction depths (m)
+0.4;                                        # ET extinction depths (m)
 # ============================ End ============================

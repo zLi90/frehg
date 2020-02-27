@@ -558,10 +558,12 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
     (*ground)->h = malloc(setting->N3cf*sizeof(double));
     (*ground)->hOld = malloc(setting->N3cf*sizeof(double));
     (*ground)->wc = malloc(setting->N3cf*sizeof(double));
-    (*ground)->wcf = malloc(setting->N3cf*sizeof(double));
+    (*ground)->wcf = malloc(setting->N3ci*sizeof(double));
+    (*ground)->dwc = malloc(setting->N3ci*sizeof(double));
+    (*ground)->wcflag = malloc(setting->N3ci*sizeof(int));
     (*ground)->Cx = malloc(setting->N3ct*sizeof(double));
     (*ground)->Cy = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Cz = malloc(setting->N3ci*sizeof(double));
+    (*ground)->Cz = malloc(setting->N3ct*sizeof(double));
     (*ground)->Kx = malloc(setting->N3ct*sizeof(double));
     (*ground)->Ky = malloc(setting->N3ct*sizeof(double));
     (*ground)->Kz = malloc(setting->N3ci*sizeof(double));
@@ -587,7 +589,11 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
     {
       (*ground)->h[ii] = setting->H0;
       (*ground)->wc[ii] = waterContent((*ground)->h[ii], setting);
+
+      // (*ground)->wc[ii] = 0.065;
+      // (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
     }
+
     if (setting->H0 > 0.0)
     {
         // get hydrostatic initial head (assume fully saturated)
@@ -602,14 +608,17 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
         // use hydrostatic initial head below water table
         for (ii = 0; ii < setting->N3ci; ii++)
         {
-            if (gmap->bot3d[ii] < setting->H0)
+            // Fully saturated, hydrostatic pressure below the water table
+            if (gmap->bot3d[ii] < bath->bottomZ[gmap->top2D[ii]] + setting->H0)
             {
-                if (bath->bottomZ[ii] > setting->H0)
-                {(*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];}
-                else
-                {(*ground)->h[ii] = fabs(bath->bottomZ[ii] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii]);}
+                // if (bath->bottomZ[gmap->top2D[ii]] > setting->H0)
+                // {(*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];}
+                // else
+                // {(*ground)->h[ii] = fabs(bath->bottomZ[ii] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii]);}
+                (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] + setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
                 (*ground)->wc[ii] = setting->porosity;
             }
+            // Above the water table
             else
             {
                 // (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
@@ -619,8 +628,9 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
                 {(*ground)->wc[ii] = wcs;}
                 else
                 {
+                    // (*ground)->wc[ii] = wcr + 0.01;
                     (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
-                (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
+                (-setting->H0) + wcr;
                 }
                 if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
                 if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
@@ -645,12 +655,15 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
         (*ground)->V[ii] = setting->dx * setting->dy * 1.0;
         (*ground)->B[ii] = 0.0;
         (*ground)->qe[ii] = 0.0;
+        (*ground)->wcf[ii] = (*ground)->wc[ii];
+        (*ground)->dwc[ii] = 0.0;
+        (*ground)->wcflag[ii] = 0;
     }
 	for (ii = 0; ii < setting->N3cf; ii++)
 	{
 		(*ground)->hOld[ii] = (*ground)->h[ii];
-        (*ground)->wcf[ii] = (*ground)->wc[ii];
 		(*ground)->S[ii] = setting->subS0;
         (*ground)->Sm[ii] = 0.0;
 	}
+
 }

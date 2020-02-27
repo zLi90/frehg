@@ -112,12 +112,13 @@ typedef struct Config
   double CFLl, CFLh;
   // -------------------- setting for groundwater ------------------------------
     int useSubsurface, useSubscalar, N3ci, N3ct, N3cf, N3ca, N3CI, useUnSat;
-    double zbot, layZ, porosity, compS, compW, Kxx, Kyy, Kzz, H0, dtg;
+    int topBC, botBC;
+    double zbot, layZ, porosity, Kxx, Kyy, Kzz, H0, dtg;
     double subS0, Kmx, Kmy, Kmz;
 	double a1, a2, Sres;
   // -------------------- setting for evap/rain -------------------------------
-	int useEvap, useRain, evapN, rainN, kkext, eTstart, eTend, rTstart, rTend;
-    double qRain, qEvap;
+	int useEvap, useRain, evapN, rainN, eTstart, eTend, rTstart, rTend;
+    double qRain, qEvap, kkext;
 }Config;
 
 #endif
