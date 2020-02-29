@@ -594,47 +594,76 @@ void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Conf
       // (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
     }
 
-    if (setting->H0 > 0.0)
+    // If H0 == 0, domain is fully saturated, wc=porosity, head is hydrostatic
+    if (setting->H0 == 0.0)
     {
-        // get hydrostatic initial head (assume fully saturated)
         for (ii = 0; ii < setting->N3ci; ii++)
         {
-            (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii]);
+            (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii]);
             (*ground)->wc[ii] = setting->porosity;
         }
     }
-    else
+    // If H0 > 0, water table is H0 below the surface, head is hydrostatic below water table
+    else if (setting->H0 > 100.0)
     {
-        // use hydrostatic initial head below water table
+        setting->H0 = setting->H0 - 100.0;
         for (ii = 0; ii < setting->N3ci; ii++)
         {
-            // Fully saturated, hydrostatic pressure below the water table
-            if (gmap->bot3d[ii] < bath->bottomZ[gmap->top2D[ii]] + setting->H0)
+            // Fully saturated below water table
+            if (gmap->bot3d[ii] + 0.5*gmap->dz3d[ii] < bath->bottomZ[gmap->top2D[ii]] - setting->H0)
             {
-                // if (bath->bottomZ[gmap->top2D[ii]] > setting->H0)
-                // {(*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];}
-                // else
-                // {(*ground)->h[ii] = fabs(bath->bottomZ[ii] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii]);}
-                (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] + setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
+                (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
                 (*ground)->wc[ii] = setting->porosity;
             }
             // Above the water table
             else
             {
-                // (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
-                    (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
-                // (*ground)->wc[ii] = ((wcs-wcr) / setting->H0) * gmap->bot3d[ii] + wcr;
                 if (data->depth[gmap->top2D[ii]] > 0.0)
                 {(*ground)->wc[ii] = wcs;}
                 else
                 {
-                    // (*ground)->wc[ii] = wcr + 0.01;
-                    (*ground)->wc[ii] = (wcs-wcr) * (bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii]) /  \
-                (-setting->H0) + wcr;
+                    (*ground)->wc[ii] = (wcs-wcr)*(bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii] + 0.5*gmap->dz3d[ii])/setting->H0 + wcr;
                 }
                 if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
                 if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
                 (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+            }
+        }
+    }
+    // If H0 < 0, water table is fixed at H0
+    else
+    {
+        for (ii = 0; ii < setting->N3ci; ii++)
+        {
+            // Fully saturated below water table
+            if (gmap->bot3d[ii] + 0.5*gmap->dz3d[ii] < setting->H0)
+            {
+                (*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
+                (*ground)->wc[ii] = setting->porosity;
+            }
+            // Above the water table
+            else
+            {
+                // If water table below surface
+                if (bath->bottomZ[gmap->top2D[ii]] > setting->H0)
+                {
+                    if (data->depth[gmap->top2D[ii]] > 0.0)
+                    {(*ground)->wc[ii] = wcs;}
+                    else
+                    {
+                        (*ground)->wc[ii] = (wcs-wcr)*(bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii] + 0.5*gmap->dz3d[ii])/ \
+                            (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
+                    }
+                    if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
+                    if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
+                    (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+                }
+                // If water table above surface, its fully saturated
+                else
+                {
+                    (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii]);
+                    (*ground)->wc[ii] = setting->porosity;
+                }
             }
         }
     }

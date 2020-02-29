@@ -5,11 +5,11 @@ inputSlopeP5/;                             # Input folder
 outputP5/;                                  # Output folder
 subdata/;                                   # Subgrid folder
 # =========================== Domain ===========================
-4.0;                                        # dx(m)
-4.0;                                        # dy(m)
-20;                                         # NX
-200;                                         # NY
-4.0;                                        # dt(s)
+5.0;                                        # dx(m)
+5.0;                                        # dy(m)
+8;                                         # NX
+150;                                         # NY
+5.0;                                        # dt(s)
 1.0;                                        # NT(days)
 0;                                          # If use cell edge
 # =========================== Output ===========================
@@ -24,7 +24,7 @@ subdata/;                                   # Subgrid folder
 # ============================= BC =============================
 1;                                          # Type of boundary conditions
 # --------------------------------------------------------------
-20;                                         # Length of tideP boundary
+16;                                         # Length of tideP boundary
 0;                                         # First cell of tideP boundary
 2400;                                        # Size of tideP data
 # --------------------------------------------------------------
@@ -93,24 +93,24 @@ subdata/;                                   # Subgrid folder
 0.0013;                                     # Wind drag coefficient
 0.0001;                                     # Eddy diffusivity in x
 0.0001;                                     # Eddy diffusivity in y
-0.0000001;                                    # Minimum depth allowed(m)
-0.0000001;                                    # Minimum waterfall depth(m)
+0.000005;                                    # Minimum depth allowed(m)
+0.000005;                                    # Minimum waterfall depth(m)
 0.5;                                        # Low nonlinear cutoff
 0.7;                                        # High nonlinear cutoff
 0.00000001;                                 # Minimum CG residual
 10000000;                                   # Maximum CG iteration
 # ========================== Groundwater ==========================
 1;                                          # Activate groundwater model
--2.6;                                      # Bottom of domain (m)
-0.2;                                        # Layer thickness (m)
-4.0;					                      # Subsurface dt (sec)
+-3.0;                                      # Bottom of domain (m)
+0.05;                                        # Layer thickness (m)
+5.0;					                      # Subsurface dt (sec)
 0.4;                                        # Porosity
 0;                                          # TopBC (0=FromSurface, 1=FixedQ, 2=FixedHead)
 0;                                          # BottomBC (0=NoFlow, 1=FreeDrainage, 2=FixedHead)
 0.00116;                                     # Hydraulic conductivity in x
 0.00116;                                     # Hydraulic conductivity in y
 0.00116;                                     # Hydraulic conductivity in z
--0.5;                                         # Initial head (m) / Initial water table
+100.51;                                         # 100.51Water table, >100: (100+depth) below surface, <0: wt elevation, =0: fully saturated
 1;                                          # Activate groundwater scalar model
 10.0;                                        # Initial scalar concentration
 0.000000001;								# Molecular diffusivity in x
@@ -122,15 +122,15 @@ subdata/;                                   # Subgrid folder
 1;                                          # Use unsaturated zone
 # ======================== Rain ==========================
 2;                                          # Use rain (1 = read rain.dat, 2 = const rainfall rate)
-0.0000002;                                  # Rainfall rate (m/s, if const)
+0.0000025;                                  # Rainfall rate (m/s, if const)
 0;                                          # Rainfall start time (step)
-100;                                       # Rainfall end time (step)
+2400;                                       # Rainfall end time (step)
 2400;                                       # Size of rain data
 # ======================== Evap ==========================
 2;                                          # Use evap (1 = read evap.dat, 2 = const evap rate)
-0.0000004                                 # Evap rate (m/s, if const)
-101;                                          # Evap start time (step)
-2000;                                       # Evap end time (step)
+0.00000009;                                 # Evap rate (m/s, if const)
+2401;                                          # Evap start time (step)
+4800;                                       # Evap end time (step)
 2400;                                       # Size of evap data
-0.4;                                        # ET extinction depths (m)
+0.41;                                        # ET extinction depths (m) below surface
 # ============================ End ============================

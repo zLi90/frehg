@@ -387,7 +387,7 @@ void volumeByFlux(Data **data, Maps *map, BC *bc, Config *setting, int tt, int i
     }
     if (setting->useEvap > 0)
     {
-      (*data)->cellV[ii] = (*data)->cellV[ii] - setting->qEvap * \
+      (*data)->cellV[ii] = (*data)->cellV[ii] - bc->evap[tt] * \
         setting->dt * setting->dx * setting->dy;
     }
     if (setting->useRain > 0)
@@ -797,9 +797,10 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
   {
       for (ii = 0; ii < setting->N2ci; ii++)
       {
-          // if (map->jj2d[map->trps[ii]] < setting->ny/2.0)
+          // if (map->ii2d[map->trps[ii]] == 1)
           {(*data)->z[ii] += bc->rain[tt] * setting->dt;}
       }
+      // printf("Rainfall rate = %f\n",1e5*bc->rain[tt]);
   }
   // evaporation on wet regions only
   if (setting->useEvap > 0)
@@ -809,6 +810,7 @@ void matrixSourceTerm(Data **data, Maps *map, BC *bc, Config *setting, int tt, i
           if ((*data)->depth[map->trps[ii]] > 0.0)
           {(*data)->z[ii] -= bc->evap[tt] * setting->dt;}
       }
+      // printf("Evap rate = %f\n",1e5*bc->evap[tt]);
   }
 }
 
