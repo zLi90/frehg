@@ -396,7 +396,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
                     if ((*data)->depth[gmap->top2D[ii]] <= Ip & unsat == 1)
                     {
                         // (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kpf) / gmap->dz3d[ii];
-                        (*ground)->B[ii] += (*data)->depth[gmap->top2D[ii]] / gmap->dz3d[ii] / setting->porosity;
+                        (*ground)->B[ii] += (*data)->depth[gmap->top2D[ii]]/gmap->dz3d[ii]/setting->porosity - setting->dtg*Kpf/gmap->dz3d[ii];
                         (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
                     }
                     // Otherwise, use Dirichlet BC
