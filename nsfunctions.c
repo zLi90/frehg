@@ -1185,11 +1185,7 @@ void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting)
 //        if ((*data)->depthYP[ii] < cutoff & (*data)->depthYP[ii] > setting->wtfh)
 //        {(*data)->vvYP[ii] = (*data)->wtfYP[ii] * Cw * sqrt(2 * setting->g * cutoff);}
       if ((*data)->vvYP[ii] > CFLmax * setting->dy / setting->dt)
-      {
-          if (map->ii2d[ii] == 2)
-          {printf("CFL limiter applied on waterfall! v0 = %f, v1 = %f\n",(*data)->vvYP[ii],CFLmax);}
-          (*data)->vvYP[ii] = CFLmax * setting->dy / setting->dt;
-      }
+      {(*data)->vvYP[ii] = CFLmax * setting->dy / setting->dt;}
     }
 
     // if (map->jj2d[ii] < 5 & map->ii2d[ii] == 1)
