@@ -7,7 +7,7 @@
 
 void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank);
 void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank);
-void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting);
+void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting, int irank, int nrank);
 void setupGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A);
 void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, Vector x, Vector z);
 void getHead(Ground **ground, Gmaps *gmap, Config *setting, Vector x);

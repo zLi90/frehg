@@ -81,7 +81,10 @@ void DataOutput(Data **data, Ground **ground, Bath *bath, Config *setting, int t
     if (setting->checkConservation == 1)
     {combineAllRanks((*data)->allVloss, (*data)->Vloss, setting, root);}
 	if (setting->useSubsurface == 1)
-	{combineAllRanksGround((*ground)->allh, (*ground)->h, setting, root);}
+	{
+        combineAllRanksGround((*ground)->allh, (*ground)->h, setting, root);
+        combineAllRanksGround((*ground)->allwc, (*ground)->wc, setting, root);
+    }
     if (setting->useSubscalar == 1)
 	{combineAllRanksGround((*ground)->allS, (*ground)->S, setting, root);}
   }
@@ -102,9 +105,9 @@ void DataOutput(Data **data, Ground **ground, Bath *bath, Config *setting, int t
     {combineSerial((*data)->allVloss, (*data)->Vloss, setting, setting->N2ci);}
     if (setting->useSubsurface == 1)
 	{
-    combineSerial((*ground)->allh, (*ground)->h, setting, setting->N3ci);
-    combineSerial((*ground)->allwc, (*ground)->wc, setting, setting->N3ci);
-  }
+        combineSerial((*ground)->allh, (*ground)->h, setting, setting->N3ci);
+        combineSerial((*ground)->allwc, (*ground)->wc, setting, setting->N3ci);
+    }
     if (setting->useSubscalar == 1)
 	{combineSerial((*ground)->allS, (*ground)->S, setting, setting->N3ci);}
   }

@@ -302,13 +302,4 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
 
         }
     }
-    // for (ii = 0; ii < setting->N3ci; ii++)
-    // {
-    //   if ((*gmap)->ii[ii] == 5 & (*gmap)->istop[ii] > 0)
-    //   {
-    //     printf("jj,istop,dz,botZ=%d,%d,%f,%f\n",(*gmap)->jj[ii],(*gmap)->istop[ii],\
-    //         (*gmap)->dz3d[ii],(*gmap)->bot3d[ii]);
-    //   }
-    // }
-
 }

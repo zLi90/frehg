@@ -69,6 +69,10 @@ void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **
   initCD(data, setting);
   // initialize U, V, surf with IC for internal cells
   initFieldValues(data, bath, *ic, setting, irank);
+    // surface elevation for flopy
+//    int ii;
+//    for (ii = 0; ii < setting->N2ci; ii++)
+//    {if (irank == 0)     {(*data)->surf[ii] = (*data)->surf[ii] - 1.25;}}
   // adjust free surface at dry regions
   zeroNegSurf(data, bath, setting, 0);
   // assign BC on ghost cells
@@ -413,6 +417,9 @@ void readBC(BC **bc, Config *setting, int irank)
             else    {(*bc)->rain[ii] = 0.0;}
         }
     }
+    // flopy
+//    for (ii = 0; ii < setting->Nt; ii++)
+//    {(*bc)->tideP[ii] = -0.5;}
 }
 
 // =============== initialize drag coefficient ================
