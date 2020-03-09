@@ -1163,7 +1163,7 @@ void detectWaterfallLocation(Data **data, Bath *bath, Maps *map, Config *setting
 void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting)
 {
   int ii;
-  double Cw = 0.7, Ck = 0.1, Cv = 0, CFLmax = 0.24, surf, bot, dep, vel0;
+  double Cw = 0.7, Ck = 0.1, Cv = 0, CFLmax = 0.49, surf, bot, dep, vel0, cutoff = 5e-3;
   // correct waterfall velocities
   for (ii = 0; ii < setting->N2ci; ii++)
   {
@@ -1172,20 +1172,20 @@ void waterfallCorrection(Data **data, Bath *bath, Maps *map, Config *setting)
       vel0 = (*data)->uuXP[ii];
       (*data)->uuXP[ii] = (*data)->wtfXP[ii] * \
       Cw * sqrt(2 * setting->g * (*data)->depthXP[ii]);
+//        if ((*data)->depthXP[ii] < cutoff & (*data)->depthXP[ii] > setting->wtfh)
+//        {(*data)->uuXP[ii] = (*data)->wtfXP[ii] * Cw * sqrt(2 * setting->g * cutoff);}
       if ((*data)->uuXP[ii] > CFLmax * setting->dx / setting->dt)
       {(*data)->uuXP[ii] = CFLmax * setting->dx / setting->dt;}
-      (*data)->Vloss4[0] -= (vel0 - (*data)->uuXP[ii]) * \
-          setting->dt * (*data)->depthXP[ii] * setting->dy;
     }
     if ((*data)->wtfYP[ii] != 0)
     {
       vel0 = (*data)->vvYP[ii];
       (*data)->vvYP[ii] = (*data)->wtfYP[ii] * \
       Cw * sqrt(2 * setting->g * (*data)->depthYP[ii]);
+//        if ((*data)->depthYP[ii] < cutoff & (*data)->depthYP[ii] > setting->wtfh)
+//        {(*data)->vvYP[ii] = (*data)->wtfYP[ii] * Cw * sqrt(2 * setting->g * cutoff);}
       if ((*data)->vvYP[ii] > CFLmax * setting->dy / setting->dt)
       {(*data)->vvYP[ii] = CFLmax * setting->dy / setting->dt;}
-      (*data)->Vloss4[0] -= (vel0 - (*data)->vvYP[ii]) * \
-          setting->dt * (*data)->depthYP[ii] * setting->dx;
     }
 
     // if (map->jj2d[ii] < 5 & map->ii2d[ii] == 1)
