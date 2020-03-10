@@ -72,8 +72,18 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
     solveGroundMatrix(*ground, gmap, setting, AA, xx, zz);
     getHead(ground, gmap, setting, xx);
     enforceSidewallBC(ground, gmap, setting);
+    // for (ii = 0; ii < setting->N3ci; ii++)
+    // {
+    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & gmap->kk[ii] == 33 & irank == 0)
+    //     {printf("BEFORE : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
+    // }
     if (setting->useMPI == 1)
     {mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);}
+    // for (ii = 0; ii < setting->N3ci; ii++)
+    // {
+    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & gmap->kk[ii] == 33 & irank == 0)
+    //     {printf("AFTER : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
+    // }
     computeConductance(ground, *data, gmap, setting, irank, nrank);
     Q_Destr(&AA);
     V_Destr(&xx);
@@ -90,6 +100,11 @@ void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, C
         mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);
         mpiexchangeGround((*ground)->wc, gmap, setting, irank, nrank);
     }
+    // for (ii = 0; ii < setting->N3ci; ii++)
+    // {
+    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & irank == 0)
+    //     {printf("FINAL : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
+    // }
 }
 
 // ===== Function --- Calculate conductivity =====
@@ -258,8 +273,9 @@ void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *settin
             {(*ground)->Cz[gmap->icjckP[ii]] = 0.0;}
         }
 
-        // for MaxwellP5
-        // if (gmap->jj[ii] == 80)
+        // for KolletP1
+        // if (gmap->jj[ii] == 10 & irank == 3)
+        // if (gmap->jj[ii] == 100)
         // {(*ground)->Cy[ii] = 0.0;}
     }
     // zero horizontal conductance between unsat cells
@@ -462,7 +478,7 @@ void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *settin
         // Gravity term for interior layers
         if (gmap->actv[ii] == 1 & gmap->istop[ii] != 1 & gmap->icjckP[ii] != -1)
         {(*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];}
-        
+
         // B for side boundaries between ranks
         if (gmap->icjPkc[ii] >= setting->N3ci & irank != nrank-1)
         {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
@@ -641,11 +657,11 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         else
         {(*ground)->Quu[ii] = 0.0;}
         // Qvv
-//        if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 1 & \
-//                gmap->icjPkc[ii] < setting->N3ci)
-//        {(*ground)->Qvv[ii] = (*ground)->Cy[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->icjPkc[ii]]);}
-//        else
-//        {(*ground)->Qvv[ii] = 0.0;}
+       // if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 1 & \
+       //         gmap->icjPkc[ii] < setting->N3ci)
+       // {(*ground)->Qvv[ii] = (*ground)->Cy[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->icjPkc[ii]]);}
+       // else
+       // {(*ground)->Qvv[ii] = 0.0;}
         if ((*ground)->Cy[ii] != 0.0)
         {(*ground)->Qvv[ii] = (*ground)->Cy[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->icjPkc[ii]]);}
         if (gmap->icjMkc[ii] >= setting->N3ci & (*ground)->Cy[gmap->icjMkc[ii]] != 0.0)
@@ -714,10 +730,10 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         {(*ground)->Qww[ii] = 0.0;}
 
         // Force outflow < cell volume
-//        if ((*ground)->Qww[ii] > (*ground)->wc[ii])
-//        {(*ground)->Qww[ii] = (*ground)->wc[ii];}
-//        else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
-//        {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
+       if ((*ground)->Qww[ii] > (*ground)->wc[ii])
+       {(*ground)->Qww[ii] = (*ground)->wc[ii];}
+       else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
+       {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
     }
 }
 

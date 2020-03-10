@@ -11,6 +11,8 @@
 
 #include "configuration.h"
 #include "map.h"
+#include "mpifunctions.h"
+#include "utilities.h"
 
 void createMaps(Maps **map, Config *setting)
 {
@@ -131,7 +133,7 @@ void createMaps(Maps **map, Config *setting)
 
 
 // ========== Create Map for Subsurface ==========
-void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
+void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting, int root, int irank, int nrank)
 {
     int ii, jj, kk, ll, pp, ind, maxLay, N3ca = 0;
     double columnH, nnlay, htopmin = 0.01;
@@ -139,6 +141,8 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
     int indgtiP = 0, indgtiM = 0, indgtjP = 0, indgtjM = 0;
     // initialize gmap, number of layer in each column, and top-layer thickness
     *gmap = malloc(sizeof(Gmaps));
+    (*gmap)->allMaxLayer = malloc(setting->np*sizeof(int));
+    (*gmap)->maxLay = malloc(1*sizeof(int));
     (*gmap)->nlay = malloc(setting->N2ci*sizeof(int));
     (*gmap)->htop = malloc(setting->N2ci*sizeof(double));
     for (ii = 0; ii < setting->N2ci; ii++)
@@ -167,19 +171,29 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
         if ((*gmap)->nlay[ll] > maxLay) {maxLay = (*gmap)->nlay[ll];}
         N3ca += (*gmap)->nlay[ll];
     }
-	(*gmap)->maxLay = maxLay;
-    printf("Max number of layers = %d\n",maxLay);
-    (*gmap)->ngtjP = (*gmap)->maxLay * setting->nx;
-	(*gmap)->ngtjM = (*gmap)->maxLay * setting->nx;
-	(*gmap)->ngtiP = (*gmap)->maxLay * setting->ny;
-	(*gmap)->ngtiM = (*gmap)->maxLay * setting->ny;
+	(*gmap)->maxLay[0] = maxLay;
+
+    // if parallel, get the max layer of the entire domain
+    if (setting->useMPI == 1)
+    {
+        combineAllRanksLayer((*gmap)->allMaxLayer, (*gmap)->maxLay, setting, root);
+        (*gmap)->maxLay[0] = getMaxInt((*gmap)->allMaxLayer, setting->np);
+        broadcastAllRanksLayer((*gmap)->maxLay, root);
+    }
+
+    // update the layer information
+    printf("Max number of layers = %d\n",(*gmap)->maxLay[0]);
+    (*gmap)->ngtjP = (*gmap)->maxLay[0] * setting->nx;
+	(*gmap)->ngtjM = (*gmap)->maxLay[0] * setting->nx;
+	(*gmap)->ngtiP = (*gmap)->maxLay[0] * setting->ny;
+	(*gmap)->ngtiM = (*gmap)->maxLay[0] * setting->ny;
     // compute total number of subsurface cells
     //for (ii = 0; ii < setting->nx; ii++)
     //{ngtjP += (*gmap)->nlay[map->jPbd[ii]];    ngtjM += (*gmap)->nlay[map->jMbd[ii]];}
     //for (ii = 0; ii < setting->ny; ii++)
     //{ngtiP += (*gmap)->nlay[map->iPbd[ii]];    ngtiM += (*gmap)->nlay[map->iMbd[ii]];}
 	// N3ci = all interior grids for subsurface domain
-    setting->N3ci = (*gmap)->maxLay * setting->nx * setting->ny;
+    setting->N3ci = (*gmap)->maxLay[0] * setting->nx * setting->ny;
 	// N3ct = all grids for subsurface domain (interior + ghost)
     setting->N3ct = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + (*gmap)->ngtiP + (*gmap)->ngtiM;
 	// N3CI = all interior grids for all ranks
@@ -214,19 +228,19 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
         ii = ll - jj * setting->nx;
         (*gmap)->bot2d[ll] = bath->bottomZ[ll];
         // inner loop over each column
-        for (kk = 0; kk < (*gmap)->maxLay; kk++)
+        for (kk = 0; kk < (*gmap)->maxLay[0]; kk++)
         {
             (*gmap)->ii[ind] = ii;
             (*gmap)->jj[ind] = jj;
             (*gmap)->kk[ind] = kk;
             (*gmap)->cntr[ind] = ind;
-			if (kk < (*gmap)->maxLay - (*gmap)->nlay[ll])
+			if (kk < (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
 			{(*gmap)->actv[ind] = 0;}
 			else
 			{(*gmap)->actv[ind] = 1;}
             // iP
             if (ii != setting->nx-1)
-            {(*gmap)->iPjckc[ind] = ind + (*gmap)->maxLay;}
+            {(*gmap)->iPjckc[ind] = ind + (*gmap)->maxLay[0];}
             else
             {
 				(*gmap)->iPjckc[ind] = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + indgtiP;
@@ -234,7 +248,7 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
 			}
             // iM
             if (ii != 0)
-            {(*gmap)->iMjckc[ind] = ind - (*gmap)->maxLay;}
+            {(*gmap)->iMjckc[ind] = ind - (*gmap)->maxLay[0];}
             else
             {
 				(*gmap)->iMjckc[ind] = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + (*gmap)->ngtiP + indgtiM;
@@ -242,7 +256,7 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
 			}
             // jP
             if (jj != setting->ny-1)
-            {(*gmap)->icjPkc[ind] = ind + setting->nx * (*gmap)->maxLay;}
+            {(*gmap)->icjPkc[ind] = ind + setting->nx * (*gmap)->maxLay[0];}
             else
             {
 				(*gmap)->icjPkc[ind] = setting->N3ci + indgtjP;
@@ -250,29 +264,29 @@ void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting)
 			}
             // jM
             if (jj != 0)
-            {(*gmap)->icjMkc[ind] = ind - setting->nx * (*gmap)->maxLay;}
+            {(*gmap)->icjMkc[ind] = ind - setting->nx * (*gmap)->maxLay[0];}
             else
             {
 				(*gmap)->icjMkc[ind] = setting->N3ci + (*gmap)->ngtjP + indgtjM;
 				indgtjM += 1;
 			}
             // kP
-            if (kk != (*gmap)->maxLay-1 & kk >= (*gmap)->maxLay - (*gmap)->nlay[ll])
+            if (kk != (*gmap)->maxLay[0]-1 & kk >= (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
             {(*gmap)->icjckP[ind] = ind + 1;}
             else
             {(*gmap)->icjckP[ind] = -1;}
             // kM
-            if (kk != 0 & kk > (*gmap)->maxLay - (*gmap)->nlay[ll])
+            if (kk != 0 & kk > (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
             {(*gmap)->icjckM[ind] = ind - 1;}
-			else if (kk == (*gmap)->maxLay - (*gmap)->nlay[ll])
+			else if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
 			{(*gmap)->icjckM[ind] = setting->N3ct + ll;}
             else
             {(*gmap)->icjckM[ind] = -1;}
 
 			// identify if a cell is on top layer
-            if (kk == (*gmap)->maxLay - (*gmap)->nlay[ll])
+            if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
             {(*gmap)->istop[ind] = 1;   (*gmap)->top2D[ind] = ll;}
-            else if (kk == (*gmap)->maxLay - (*gmap)->nlay[ll] + 1)
+            else if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll] + 1)
             {(*gmap)->istop[ind] = 2;   (*gmap)->top2D[ind] = ll;}
             else
             {(*gmap)->istop[ind] = 0;   (*gmap)->top2D[ind] = ll;}

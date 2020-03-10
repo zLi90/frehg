@@ -57,8 +57,8 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
   // begin time stepping
   if (irank == 0)
   {printf("Ready for time stepping ...\n");}
-//  setting->Nt = 4800;
-//  setting->OutItvl = 36;
+ setting->Nt = 28800;
+ setting->OutItvl = 144;
 //    setting->Nt = 4500;
 //    setting->OutItvl = 45;
   for (tt = 1; tt <= setting->Nt; tt++)
@@ -68,7 +68,7 @@ void SolveAll(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *gmap, B
       // {setting->OutItvl = 1;}
 
 //    bc->inflow[tt] = 2.0 * bc->inflow[tt];
-      bc->tideP[tt] = -0.5;
+      bc->tideP[tt] = 0.0;
       // bc->tideP[tt] = 0.3 * sin(3.14159/(3.0*3600.0/setting->dt) * tt + (6.0*3600.0/setting->dt)/4.0) + 0.3;
       // printf("tideP, inflow are %lf, %lf\n",bc->tideP[tt],bc->inflow[tt]);
       // bc->tideM[tt] = 0.0;
@@ -136,7 +136,7 @@ void oneCompleteStep(Data **data, Sub **sub, Ground **ground, Maps *map, Gmaps *
         groundwaterExchange(data, ground, map, gmap, setting, irank, nrank);
         if (irank == 0) {printf("=====> Subsurface step executed!\n");}
     }
-//    infiltration(data, bath, map, setting);
+   infiltration(data, bath, map, setting);
 
     // Update velocity
     updateData(data, sub, map, bc, bath, setting, tt, irank, nrank);

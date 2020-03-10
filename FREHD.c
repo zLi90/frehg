@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
   writeText("----- STATUS ----- Creating maps...", irank);
   createMaps(&map, setting);
   if (setting->useSubsurface == 1)
-  {createGmaps(&gmap, bath, map, setting);}
+  {createGmaps(&gmap, bath, map, setting, 0, irank, nrank);}
   // Initialize the model
   writeText("----- STATUS ----- Initializing...", irank);
   Init(&data, &map, &ground, &gmap, &ic, &bc, &sub, bath, setting, irank, nrank);

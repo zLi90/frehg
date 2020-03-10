@@ -97,15 +97,51 @@ void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **
     mpiexchange((*data)->depthXP, *map, setting, irank, nrank);
     mpiexchange((*data)->depthYP, *map, setting, irank, nrank);
   }
+
   // allocate memory for groundwater model
   if (setting->useSubsurface == 1)
-  {initGroundArrays(ground, *data, *gmap, bath, setting);}
+  {
+      initGroundArrays(ground, *data, *gmap, bath, setting);
+      // Kollet P1
+      // int ii;
+      // for (ii = 0; ii < setting->N3ci; ii++)
+      // {
+      //     if ((*gmap)->jj[ii] > 100)
+      //     {
+      //         (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
+      //         (*ground)->wc[ii] = setting->porosity;
+      //         (*ground)->wcf[ii] = (*ground)->wc[ii];
+      // 		  (*ground)->hOld[ii] = (*ground)->h[ii];
+      //     }
+      // }
+      // if (irank == 4)
+      // {
+      //     for (ii = 0; ii < setting->N3ci; ii++)
+      //     {
+      //         (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
+      //         (*ground)->wc[ii] = setting->porosity;
+      //         (*ground)->wcf[ii] = (*ground)->wc[ii];
+      // 		  (*ground)->hOld[ii] = (*ground)->h[ii];
+      //     }
+      // }
+      // else if (irank == 3)
+      // {
+      //     for (ii = 0; ii < setting->N3ci; ii++)
+      //     {
+      //         if ((*gmap)->jj[ii] > 10)
+      //         {
+      //             (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
+      //             (*ground)->wc[ii] = setting->porosity;
+      //             (*ground)->wcf[ii] = (*ground)->wc[ii];
+      //     		  (*ground)->hOld[ii] = (*ground)->h[ii];
+      //         }
+      //     }
+      // }
+  }
+
   // initialize subgrid
   if (setting->useSubgrid == 1 || setting->CDnotN == 2)
   {initAllSubVar(sub, bath, setting, irank);}
-//  initSubArea(sub, bath, setting, irank);
-//  readSubArea(sub, bath, setting, irank);
-//  splitSubArea(sub, bath, setting, irank);
 
   if (setting->useSubgrid != 0 || setting->CDnotN == 2)
   {

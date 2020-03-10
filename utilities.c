@@ -13,6 +13,7 @@
 
 double getMax(double *arr, int N);
 double getMin(double *arr, int N);
+int getMaxInt(int *arr, int N);
 void dataSplit(double *t, double *value, double *arr, int N);
 void dataInterp(double *y, double *t, double *value, int ind, int Nt, double dt, double tNStart);
 time_t dateNum(char *t);
@@ -45,6 +46,17 @@ double getMin(double *arr, int N)
     {minvalue = arr[ii];}
   }
   return minvalue;
+}
+
+int getMaxInt(int *arr, int N)
+{
+  int ii, maxvalue = arr[0];
+  for (ii = 1; ii < N; ii++)
+  {
+    if (arr[ii] > maxvalue)
+    {maxvalue = arr[ii];}
+  }
+  return maxvalue;
 }
 
 // =============== Split the BCs into time and value columns ===============

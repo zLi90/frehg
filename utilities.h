@@ -3,6 +3,7 @@
 
 double getMax(double *arr, int N);
 double getMin(double *arr, int N);
+int getMaxInt(int *arr, int N);
 void dataSplit(double *t, double *value, double *arr, int N);
 void dataInterp(double *y, double *t, double *value, int ind, int Nt, double dt, double tNStart);
 time_t dateNum(char *t);

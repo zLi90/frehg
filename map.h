@@ -13,7 +13,7 @@ typedef struct Maps
 
 typedef struct Gmaps
 {
-    int *cntr, *ii, *jj, *kk, maxLay, ngtiP, ngtiM, ngtjP, ngtjM, *actv;
+    int *cntr, *ii, *jj, *kk, *maxLay, ngtiP, ngtiM, ngtjP, ngtjM, *actv, *allMaxLayer, maxLay0;
     int *nlay, *istop, *top2D;
     int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM;
     int *iPbd, *iPgt, *iMbd, *iMgt, *jPbd, *jPgt, *jMbd, *jMgt;
@@ -24,4 +24,4 @@ typedef struct Gmaps
 #endif
 
 void createMaps(Maps **map, Config *setting);
-void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting);
+void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting, int root, int irank, int nrank);

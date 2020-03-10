@@ -33,6 +33,21 @@ void combineAllRanksGround(double *ally, double *y, Config *setting, int root)
     &ally[0], setting->N3ci, MPI_DOUBLE, root, MPI_COMM_WORLD);
 }
 
+// =============== Combine all ranks into one ===============
+void combineAllRanksLayer(int *ally, int *y, Config *setting, int root)
+{
+  MPI_Gather(&y[0], 1, MPI_INT, \
+    &ally[0], 1, MPI_INT, root, MPI_COMM_WORLD);
+  // MPI_Barrier(MPI_COMM_WORLD);
+}
+
+// =============== Broadcast to all ranks ===============
+void broadcastAllRanksLayer(int *y, int root)
+{
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&y[0], 1, MPI_INT, root, MPI_COMM_WORLD);
+}
+
 // =============== Message Passing via MPI ===============
 void mpiexchange(double *S, Maps *map, Config *setting, int irank, int nrank)
 {
@@ -99,11 +114,11 @@ void mpiexchangeGround(double *S, Gmaps *gmap, Config *setting, int irank, int n
 	// starting indices
 	int sendleft = 0;
 	int recvleft = setting->N3ci;
-	int sendright = setting->nx * (setting->ny-1) * gmap->maxLay;
-	int recvright = setting->N3ci + setting->nx * gmap->maxLay;
+	int sendright = setting->nx * (setting->ny-1) * gmap->maxLay[0];
+	int recvright = setting->N3ci + setting->nx * gmap->maxLay[0];
 	// define column datatype
 	MPI_Datatype mpi_column;
-	MPI_Type_contiguous(setting->nx * gmap->maxLay, MPI_DOUBLE, &mpi_column);
+	MPI_Type_contiguous(setting->nx * gmap->maxLay[0], MPI_DOUBLE, &mpi_column);
 	MPI_Type_commit(&mpi_column);
 	// send left
 	MPI_Sendrecv(&S[sendleft], 1, mpi_column, ileft, 9, &S[recvleft], 1, \
@@ -113,5 +128,3 @@ void mpiexchangeGround(double *S, Gmaps *gmap, Config *setting, int irank, int n
 	mpi_column, ileft, 9, MPI_COMM_WORLD, &status);
 	MPI_Type_free(&mpi_column);
 }
-
-
