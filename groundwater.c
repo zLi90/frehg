@@ -645,8 +645,9 @@ void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting)
 // ========== Compute flow rate for subsurface faces ==========
 void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
 {
-    int ii;
-    double Ip, Czp;
+    int ii, ff, iface;
+    double Ip, Czp, netQ;
+    double *Qout = malloc(6*sizeof(double));
     for (ii = 0; ii < setting->N3ci; ii++)
     {
         // assume no lateral exchange
@@ -728,12 +729,54 @@ void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
         }
         else
         {(*ground)->Qww[ii] = 0.0;}
+    }
 
+    for (ii = 0; ii < setting->N3ci; ii++)
+    {
         // Force outflow < cell volume
-       if ((*ground)->Qww[ii] > (*ground)->wc[ii])
-       {(*ground)->Qww[ii] = (*ground)->wc[ii];}
-       else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
-       {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
+        netQ = 0.0;
+        iface = 0;
+        for (ff = 0; ff < 6; ff++)
+        {Qout[ff] = 0.0;}
+
+        if ((*ground)->Qww[ii] > 0.0 & gmap->istop[ii] != 1)   {Qout[iface] = (*ground)->Qww[ii];}
+        iface += 1;
+        if (gmap->icjckP[ii] != -1 & (*ground)->Qww[gmap->icjckP[ii]] < 0.0)   {Qout[iface] = -(*ground)->Qww[gmap->icjckP[ii]];}
+        iface += 1;
+        if ((*ground)->Quu[ii] > 0.0)   {Qout[iface] = (*ground)->Quu[ii];}
+        iface += 1;
+        if ((*ground)->Quu[gmap->iMjckc[ii]] < 0.0)   {Qout[iface] = -(*ground)->Quu[gmap->iMjckc[ii]];}
+        iface += 1;
+        if ((*ground)->Qvv[ii] > 0.0)   {Qout[iface] = (*ground)->Qvv[ii];}
+        iface += 1;
+        if ((*ground)->Qvv[gmap->icjMkc[ii]] < 0.0)   {Qout[iface] = -(*ground)->Qvv[gmap->icjMkc[ii]];}
+
+        for (ff = 0; ff < 6; ff++)
+        {netQ += Qout[ff];}
+
+        if (netQ > (*ground)->wc[ii] & (*ground)->wc[ii] >= setting->Sres * setting->porosity)
+        {
+            if (Qout[0] > 0)    {(*ground)->Qww[ii] = (*ground)->wc[ii] * Qout[0] / netQ;}
+            if (Qout[1] > 0)    {(*ground)->Qww[gmap->icjckP[ii]] = -(*ground)->wc[ii] * Qout[1] / netQ;}
+            if (Qout[2] > 0)    {(*ground)->Quu[ii] = (*ground)->wc[ii] * Qout[2] / netQ;}
+            if (Qout[3] > 0)    {(*ground)->Quu[gmap->iMjckc[ii]] = -(*ground)->wc[ii] * Qout[3] / netQ;}
+            if (Qout[4] > 0)    {(*ground)->Qvv[ii] = (*ground)->wc[ii] * Qout[4] / netQ;}
+            if (Qout[5] > 0)    {(*ground)->Qvv[gmap->icjMkc[ii]] = -(*ground)->wc[ii] * Qout[5] / netQ;}
+        }
+        else if ((*ground)->wc[ii] < setting->Sres * setting->porosity)
+        {
+            if (Qout[0] > 0)    {(*ground)->Qww[ii] = 0.0;}
+            if (Qout[1] > 0)    {(*ground)->Qww[gmap->icjckP[ii]] = 0.0;}
+            if (Qout[2] > 0)    {(*ground)->Quu[ii] = 0.0;}
+            if (Qout[3] > 0)    {(*ground)->Quu[gmap->iMjckc[ii]] = 0.0;}
+            if (Qout[4] > 0)    {(*ground)->Qvv[ii] = 0.0;}
+            if (Qout[5] > 0)    {(*ground)->Qvv[gmap->icjMkc[ii]] = 0.0;}
+        }
+
+       // if ((*ground)->Qww[ii] > (*ground)->wc[ii])
+       // {(*ground)->Qww[ii] = (*ground)->wc[ii];}
+       // else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
+       // {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
     }
 }
 
