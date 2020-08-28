@@ -1,0 +1,107 @@
+# This is the user input file of FrehdC, ZhiLi20181211
+
+# --------------------------------------------------------------------------
+# --------------------------- Simulation Control ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Paths <<<<<
+sim_id = MaxP3
+finput = input/
+foutput = output_P3/
+
+# >>>>> Domain <<<<<
+NX = 3
+NY = 100
+botZ = -2.0
+dx = 1.0
+dy = 1.0
+dz = 0.1
+dz_incre = 1.0
+use_mpi = 0
+mpi_nx = 1
+mpi_ny = 1
+
+# >>>>> Time <<<<<
+dt = 2.0
+Tend = 86400
+NT = 100
+dt_out = 3600
+
+# >>>>> Bathymetry <<<<<
+bath_file = 1
+
+# >>>>> Parameters <<<<<
+grav = 9.81
+viscx = 0.0001
+viscy = 0.0001
+min_dept = 0.00001
+manning = 0.01986
+wtfh = 0.00005
+hD = 0.0001
+
+# --------------------------------------------------------------------------
+# -------------------------- Shallow water solver --------------------------
+# --------------------------------------------------------------------------
+# >>>>> Shallow water solver <<<<<
+sim_shallowwater = 1
+#   >> Shallowwater IC <<
+init_eta = -0.6
+eta_file = 0
+uv_file = 0
+#   >> Shallowwater BC <<
+bctype_SW = 0,0,0,1
+n_tide = 1
+tide_file = 0
+tide_locX = 0,3
+tide_locY = 99,99
+init_tide = -0.6
+
+evap_file = 0
+q_evap = 0.0
+rain_file = 0
+q_rain = 0.00000
+
+inflow_loc = 1,2,1,2
+n_inflow = 100
+cst_inflow = 0.0
+
+# >>>>> Subgrid model <<<<<
+use_subgrid = 0
+
+# --------------------------------------------------------------------------
+# --------------------------- Groundwater solver ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Groundwater solver <<<<<
+sim_groundwater = 1
+use_full3d = 0
+dt_adjust = 0
+use_corrector = 1
+post_allocate = 1
+use_mvg = 0
+aev = -0.02
+dt_max = 2.0
+dt_min = 2.0
+Co_max = 2
+Ksx = 0.0
+Ksy = 0.000278
+Ksz = 0.000278
+Ss = 0.00001
+soil_a = 6.0
+soil_n = 2.0
+wcs = 0.4
+wcr = 0.08
+#   >> Groundwater IC <<
+init_wc = 1.0
+init_h = 1.0
+init_wt_rel = 0.2
+init_wt_abs = -0.75
+qtop = 0.0
+qbot = 0.0
+htop = 0.0
+hbot = 0.0
+#   >> Groundwater BC <<
+bctype_GW = 0,0,0,0,0,2
+
+
+
+
+# END

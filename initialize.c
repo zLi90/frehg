@@ -1,741 +1,614 @@
+// Initialize model runs
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
 #include<math.h>
 #include<string.h>
-#include<sys/stat.h>
+#include<mpi.h>
 
-// -----------------------------------------------------------------------------
-// Functions to initialize the model, which includes reading the bathymetry,
-// creating the grids and maps, reading the initial and boundary conditions and
-// set up all other parameters for time stepping
-// - Zhi Li 2017-05-04 -
-// -----------------------------------------------------------------------------
-
-#include "bathymetry.h"
-#include "configuration.h"
-#include "fileio.h"
-#include "groundwater.h"
-#include "initialize.h"
-#include "map.h"
-#include "nsfunctions.h"
-#include "mpifunctions.h"
-#include "scalar.h"
-#include "subgrid.h"
-#include "utilities.h"
-
-void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **bc, Sub **sub, Bath *bath, Config *setting, int irank, int nrank);
-void enforceBathBC(Bath *bath, Maps *map, Config *setting, int irank, int nrank);
-void initDataArrays(Data **data, Config *setting);
-void initFieldValues(Data **data, Bath *bath, IC *ic, Config *setting, int irank);
-void initICArrays(IC **ic, Config *setting);
-void initBCArrays(BC **bc, Config *setting);
-void initCD(Data **data, Config *setting);
-void readIC(IC **ic, Bath *bath, Config *setting);
-void readBC(BC **bc, Config *setting, int irank);
-//void readRestartFile(IC **ic, Config **setting);
-void readOneBC(double *arr, char filename[], Config *setting, int N);
-void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting);
+#include"configuration.h"
+#include"initialize.h"
+#include"groundwater.h"
+#include"mpifunctions.h"
+#include"map.h"
+#include"shallowwater.h"
+#include"solve.h"
+#include"utility.h"
 
 
-// =============== Top level code for initialization ===============
-void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **bc, Sub **sub, Bath *bath, Config *setting, int irank, int nrank)
+void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank);
+void init_domain(Config **param);
+void init_Data(Data **data, Config *param);
+void read_bathymetry(Data **data, Config *param, int irank, int nrank);
+void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank);
+void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank);
+void bc_surface(Data **data, Map *smap, Config *param, int irank);
+void update_depth(Data **data, Map *smap, Config *param, int irank);
+void ic_subsurface(Data **data, Map *gmap, Config *param);
+
+// >>>>> Initialize FREHG <<<<<
+void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank)
 {
-  enforceBathBC(bath, *map, setting, irank, nrank);
-  updateAllFaceElev(bath, *map, setting);
-  if (setting->useMPI == 1)
-  {
-    mpiexchange(bath->bottomZ, *map, setting, irank, nrank);
-    mpiexchange(bath->bottomXP, *map, setting, irank, nrank);
-    mpiexchange(bath->bottomYP, *map, setting, irank, nrank);
-  }
-  // allocate memory for the data arrays
-  if (irank == 0)
-  {printf("Initializing data arrays ...\n");}
-  initDataArrays(data, setting);
-  // read initial conditions
-  if (irank == 0)
-  {printf("Setting up initial conditions ...\n");}
-  initICArrays(ic, setting);
-  readIC(ic, bath, setting);
-  // read boundary conditions
-  if (irank == 0)
-  {printf("Setting up boundary conditions ...\n");}
-  initBCArrays(bc, setting);
-  readBC(bc, setting, irank);
-  // initialize bottom CD
-  if (irank == 0)
-  {printf("Initializing data arrays ...\n");}
-  initCD(data, setting);
-  // initialize U, V, surf with IC for internal cells
-  initFieldValues(data, bath, *ic, setting, irank);
-    // surface elevation for flopy
-//    int ii;
-//    for (ii = 0; ii < setting->N2ci; ii++)
-//    {if (irank == 0)     {(*data)->surf[ii] = (*data)->surf[ii] - 1.25;}}
-  // adjust free surface at dry regions
-  zeroNegSurf(data, bath, setting, 0);
-  // assign BC on ghost cells
-  enforceFreeSurfaceBC(data, *map, setting);
-  enforceVelocityBC(data, *map, setting);
-  if (setting->useMPI == 1)
-  {
-    mpiexchange((*data)->uuXP, *map, setting, irank, nrank);
-    mpiexchange((*data)->vvYP, *map, setting, irank, nrank);
-  }
-  // enforce tidal BC at tidal boundary
-  enforceTidalBC(data, bath, *bc, setting, 0, irank, nrank);
-  if (setting->useMPI == 1)
-  {
-    mpiexchange((*data)->surf, *map, setting, irank, nrank);
-  }
-  // initialize for cell center and edge depth
-  updateDepth(data, *map, bath, setting);
-  updateAllFaceDepth(data, bath, *map, setting, irank, nrank);
-  if (setting->useMPI == 1)
-  {
-    mpiexchange((*data)->depthXP, *map, setting, irank, nrank);
-    mpiexchange((*data)->depthYP, *map, setting, irank, nrank);
-  }
-
-  // allocate memory for groundwater model
-  if (setting->useSubsurface == 1)
-  {
-      initGroundArrays(ground, *data, *gmap, bath, setting);
-      // Kollet P1
-      // int ii;
-      // for (ii = 0; ii < setting->N3ci; ii++)
-      // {
-      //     if ((*gmap)->jj[ii] > 100)
-      //     {
-      //         (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
-      //         (*ground)->wc[ii] = setting->porosity;
-      //         (*ground)->wcf[ii] = (*ground)->wc[ii];
-      // 		  (*ground)->hOld[ii] = (*ground)->h[ii];
-      //     }
-      // }
-      // if (irank == 4)
-      // {
-      //     for (ii = 0; ii < setting->N3ci; ii++)
-      //     {
-      //         (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
-      //         (*ground)->wc[ii] = setting->porosity;
-      //         (*ground)->wcf[ii] = (*ground)->wc[ii];
-      // 		  (*ground)->hOld[ii] = (*ground)->h[ii];
-      //     }
-      // }
-      // else if (irank == 3)
-      // {
-      //     for (ii = 0; ii < setting->N3ci; ii++)
-      //     {
-      //         if ((*gmap)->jj[ii] > 10)
-      //         {
-      //             (*ground)->h[ii] = fabs(bath->bottomZ[(*gmap)->top2D[ii]] - (*gmap)->bot3d[ii] - 0.5*(*gmap)->dz3d[ii]);
-      //             (*ground)->wc[ii] = setting->porosity;
-      //             (*ground)->wcf[ii] = (*ground)->wc[ii];
-      //     		  (*ground)->hOld[ii] = (*ground)->h[ii];
-      //         }
-      //     }
-      // }
-  }
-
-  // initialize subgrid
-  if (setting->useSubgrid == 1 || setting->CDnotN == 2)
-  {initAllSubVar(sub, bath, setting, irank);}
-
-  if (setting->useSubgrid != 0 || setting->CDnotN == 2)
-  {
-    writeText("----- STATUS ----- Subgrid model is invoked...", irank);
-    computeSubArea(sub, *data, bath, *map, setting);
-    if (setting->useMPI == 1)
-    {
-      mpiexchangeInt((*sub)->ind, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Op, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Om, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Vyp, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Vym, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->Zyp, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->Zym, *map, setting, irank, nrank);
-    }
-    combineSubArea(sub, *data, bath, *map, setting, irank, nrank);
-    if (setting->useMPI == 1)
-    {
-      mpiexchange((*sub)->Nx, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Oy, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->N, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->O, *map, setting, irank, nrank);
-      mpiexchange((*sub)->V, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Z, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Vx, *map, setting, irank, nrank);
-      mpiexchange((*sub)->Vy, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->Zx, *map, setting, irank, nrank);
-//      mpiexchange((*sub)->Zy, *map, setting, irank, nrank);
-    }
-  }
-  // compute cell volumes
-  computeVolume(data, setting);
-  // initialize for the uuYP and vvXP velocities
-  velocityInterp(data, setting);
-  // correct the drag coefficient
-  thinLayerDrag(data, setting);
-  // convert the inflow location into the transposed coordinate
-  findInflowLocation(data, *map, setting);
-  // initialize scalar mass
-  if (setting->useScalar == 1)
-  {
     int ii;
-    for (ii = 0; ii < setting->N2ci; ii++)
-    {if ((*data)->depth[ii] <= 0) {(*data)->S[ii] = 0;}}
-    scalarMass(data, setting);
-    if (setting->useMPI == 1)
-    {mpiexchange((*data)->S, *map, setting, irank, nrank);}
-    //enforceScalarBC(data, *bc, *map, setting, 0);
-  }
+    // domain partition
+    init_domain(param);
+    // generate bathymetry
+    read_bathymetry(data, *param, irank, irank);
+    // build maps
+    build_surf_map(smap, *param);
+    build_subsurf_map(gmap, *smap, (*data)->bottom, (*data)->offset, *param, irank);
+    mpi_print(" >>> Connection maps built !", irank);
+    // boundary bathymetry
+    boundary_bath(data, *smap, *param, irank, nrank);
+    // initialize data array
+    init_Data(data, *param);
+    // initial condition for shallow water solver
+    ic_surface(data, *smap, *param, irank, nrank);
+    update_drag_coef(data, *param);
+    // initial condition for groundwater solver
+    ic_subsurface(data, *gmap, *param);
+    // boundary condition for shallow water solver
+    enforce_head_bc(data, *gmap, *param);
+
+    mpi_print(" >>> Initialization completed !", irank);
+
 }
 
-// =============== message passing for bathymetry ===============
-void enforceBathBC(Bath *bath, Maps *map, Config *setting, int irank, int nrank)
+// >>>>> Initialize domain partition and bathymetry
+void init_domain(Config **param)
 {
-  int ii;
-  // bathymetry values at ghost cells
-  for (ii = 0; ii < setting->nx; ii++)
-  {
-    bath->bottomZ[map->jMgt[ii]] = bath->bottomZ[map->jMbd[ii]];
-    bath->bottomZ[map->jPgt[ii]] = bath->bottomZ[map->jPbd[ii]];
-  }
-  for (ii = 0; ii < setting->ny; ii++)
-  {
-    bath->bottomZ[map->iMgt[ii]] = bath->bottomZ[map->iMbd[ii]];
-    bath->bottomZ[map->iPgt[ii]] = bath->bottomZ[map->iPbd[ii]];
-  }
-  // message passing
-  if (setting->useMPI == 1)
-  {mpiexchange(bath->bottomZ, map, setting, irank, nrank);}
+    int ii;
+    // total number of grid cells
+    (*param)->nx = (*param)->NX / (*param)->mpi_nx;
+    (*param)->ny = (*param)->NY / (*param)->mpi_ny;
+    (*param)->n2ci = (*param)->nx * (*param)->ny;
+    (*param)->n2ct = ((*param)->nx + 2) * ((*param)->ny + 2);
+    (*param)->N2CI = (*param)->NX * (*param)->NY;
 }
 
-// =============== allocate memory for data drrays ===============
-void initDataArrays(Data **data, Config *setting)
+// >>>>> Read bathymetry <<<<<
+void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 {
-  int ii;
-  // initialize the data arrays
-  *data = malloc(sizeof(Data));
-  (*data)->uuXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->uuYP = malloc(setting->N2ci*sizeof(double));
-  (*data)->vvYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->vvXP = malloc(setting->N2ci*sizeof(double));
-  (*data)->Fuu = malloc(setting->N2ct*sizeof(double));
-  (*data)->Fvv = malloc(setting->N2ct*sizeof(double));
-  (*data)->surf = malloc(setting->N2ct*sizeof(double));
-  (*data)->surfOld = malloc(setting->N2ct*sizeof(double));
-  (*data)->Vloss = malloc(setting->N2ci*sizeof(double));
-  (*data)->depth = malloc(setting->N2ci*sizeof(double));
-  (*data)->depthXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->depthYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->EnXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->EnYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->DragXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->DragYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->CDXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->CDYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->GnXP = malloc(setting->N2ci*sizeof(double));
-  (*data)->GnXM = malloc(setting->N2ci*sizeof(double));
-  (*data)->GnYP = malloc(setting->N2ci*sizeof(double));
-  (*data)->GnYM = malloc(setting->N2ci*sizeof(double));
-  (*data)->GnCt = malloc(setting->N2ci*sizeof(double));
-  (*data)->alluuXP = malloc(setting->N2CI*sizeof(double));
-  (*data)->allvvYP = malloc(setting->N2CI*sizeof(double));
-  (*data)->allsurf = malloc(setting->N2CI*sizeof(double));
-  (*data)->alldepth = malloc(setting->N2CI*sizeof(double));
-  (*data)->allCDXP = malloc(setting->N2CI*sizeof(double));
-  (*data)->allCDYP = malloc(setting->N2CI*sizeof(double));
-  (*data)->allVloss = malloc(setting->N2CI*sizeof(double));
-  (*data)->inflowLoc = malloc(setting->inflowLocLength*sizeof(int));
-  (*data)->z = malloc(setting->N2ci*sizeof(double));
-  (*data)->wtfXP = malloc(setting->N2ct*sizeof(double));
-  (*data)->wtfYP = malloc(setting->N2ct*sizeof(double));
-  (*data)->cellV = malloc(setting->N2ci*sizeof(double));
-  (*data)->S = malloc(setting->N2ct*sizeof(double));
-  (*data)->Sm = malloc(setting->N2ci*sizeof(double));
-  (*data)->allS = malloc(setting->N2CI*sizeof(double));
-  (*data)->rmvCFL = malloc(setting->N2ci*sizeof(double));
-  (*data)->advX = malloc(setting->N2ct*sizeof(double));
-  (*data)->advY = malloc(setting->N2ct*sizeof(double));
-  (*data)->CFLx = malloc(setting->N2ct*sizeof(double));
-  (*data)->CFLy = malloc(setting->N2ct*sizeof(double));
-  (*data)->Vloss1 = malloc(1*sizeof(double));
-  (*data)->Vloss2 = malloc(1*sizeof(double));
-  (*data)->Vloss3 = malloc(1*sizeof(double));
-  (*data)->Vloss4 = malloc(1*sizeof(double));
-  (*data)->Vloss1[0] = 0;
-  (*data)->Vloss2[0] = 0;
-  (*data)->Vloss3[0] = 0;
-  (*data)->Vloss4[0] = 0;
-  (*data)->Qseep = malloc(setting->N2ci*sizeof(double));
-  (*data)->Ssub = malloc(setting->N2ci*sizeof(double));
-  (*data)->dz = malloc(setting->N2ci*sizeof(double));
-  (*data)->rainC = malloc(setting->N2ci*sizeof(double));
-//    (*data)->rainSum = malloc(1.0*sizeof(double));
-//    (*data)->rainSum[0] = 0.0;
-  for (ii = 0; ii < setting->N2ci; ii++)
-  {
-    (*data)->GnCt[ii] = 0;
-    (*data)->GnXP[ii] = 0;
-    (*data)->GnXM[ii] = 0;
-    (*data)->GnYP[ii] = 0;
-    (*data)->GnYM[ii] = 0;
-    (*data)->z[ii] = 0;
-    (*data)->cellV[ii] = 0;
-    (*data)->Sm[ii] = 0;
-    (*data)->rmvCFL[ii] = 0;
-    (*data)->Vloss[ii] = 0;
-    (*data)->Qseep[ii] = 0;
-	(*data)->dz[ii] = 0;
-	(*data)->rainC[ii] = 0;
-	if (setting->useSubscalar == 1)
-	{(*data)->Ssub[ii] = setting->subS0;}
-  }
-  for (ii = 0; ii < setting->N2ct; ii++)
-  {
-    (*data)->Fuu[ii] = 0;
-    (*data)->Fvv[ii] = 0;
-    (*data)->EnXP[ii] = 0;
-    (*data)->EnYP[ii] = 0;
-    (*data)->DragXP[ii] = 0;
-    (*data)->DragYP[ii] = 0;
-    (*data)->wtfXP[ii] = 0;
-    (*data)->wtfYP[ii] = 0;
-    (*data)->S[ii] = 0;
-  }
-  for (ii = 0; ii < setting->N2CI; ii++)
-  {
-    (*data)->alluuXP[ii] = 0;
-    (*data)->allvvYP[ii] = 0;
-    (*data)->allsurf[ii] = 0;
-    (*data)->alldepth[ii] = 0;
-    (*data)->allCDXP[ii] = 0;
-    (*data)->allCDYP[ii] = 0;
-    (*data)->allS[ii] = 0;
-    (*data)->allVloss[ii] = 0;
-  }
+    int ii, jj, col, row, xrank, yrank;
+    char fullname[20];
+    double z_min;
+    *data = malloc(sizeof(Data));
+    (*data)->bottom = malloc(param->n2ct*sizeof(double));
+    (*data)->bottomXP = malloc(param->n2ct*sizeof(double));
+    (*data)->bottomYP = malloc(param->n2ct*sizeof(double));
+    (*data)->bottom_root = malloc(param->N2CI*sizeof(double));
+    (*data)->offset = malloc(1*sizeof(double));
+    for (ii = 0; ii < param->n2ct; ii++)    {(*data)->bottom[ii] = 0.0;}
+    // assign internal bathymetry
+    if (param->bath_file == 1)
+    {
+        if (param->use_subgrid == 0)
+        {
+            // load the bathymetry file
+            strcpy(fullname, "bath");
+            load_data((*data)->bottom_root, fullname, param->N2CI);
+            // calculate bathymetry offset
+            z_min = getMin((*data)->bottom_root, param->N2CI);
+            if (z_min >= 0) {(*data)->offset[0] = 0;}
+            else    {(*data)->offset[0] = -z_min;}
+            // bathymetry for each rank
+            for (ii = 0; ii < param->n2ci; ii++)
+            {
+                xrank = irank % param->mpi_nx;
+                yrank = floor(irank/param->mpi_nx);
+                // jj = yrank * param->mpi_nx + xrank;
+                // (*data)->bottom[ii] = (*data)->bottom_root[jj*param->n2ci+ii] + (*data)->offset[0];
+                col = floor(ii / param->nx);
+                row = ii % param->nx;
+                jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+                (*data)->bottom[ii] = (*data)->bottom_root[jj] + (*data)->offset[0];
+            }
+        }
+        else
+        {
+            mpi_print(" >>> ERROR: Load subgrid bathymetry is disabled!", irank);
+        }
+    }
+    else
+    {(*data)->bottom[ii] = 0.0;}
 }
 
-// =============== initialize data array for IC ===============
-void initICArrays(IC **ic, Config *setting)
+// >>>>> Set boundary bathymetry <<<<<
+void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
-  *ic = malloc(sizeof(IC));
+    int ii;
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->bottom[smap->jMou[ii]] = (*data)->bottom[smap->jMin[ii]];
+        (*data)->bottom[smap->jPou[ii]] = (*data)->bottom[smap->jPin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->bottom[smap->iMou[ii]] = (*data)->bottom[smap->iMin[ii]];
+        (*data)->bottom[smap->iPou[ii]] = (*data)->bottom[smap->iPin[ii]];
+    }
+    if (param->use_mpi == 1)    {mpi_exchange_surf((*data)->bottom, smap, 2, param, irank, nrank);}
+    // bathymetry at cell edges
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        (*data)->bottomXP[ii] = (*data)->bottom[ii];
+        if ((*data)->bottom[smap->iPjc[ii]] > (*data)->bottom[ii])
+        {(*data)->bottomXP[ii] = (*data)->bottom[smap->iPjc[ii]];}
+        (*data)->bottomYP[ii] = (*data)->bottom[ii];
+        if ((*data)->bottom[smap->icjP[ii]] > (*data)->bottom[ii])
+        {(*data)->bottomYP[ii] = (*data)->bottom[smap->icjP[ii]];}
+    }
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->bottomYP[smap->jPou[ii]] = (*data)->bottomYP[smap->jPin[ii]];
+        (*data)->bottomYP[smap->jMou[ii]] = (*data)->bottom[smap->jMin[ii]];
+        if ((*data)->bottom[smap->jMou[ii]] > (*data)->bottom[smap->jMin[ii]])
+        {(*data)->bottomYP[smap->jMou[ii]] = (*data)->bottom[smap->jMou[ii]];}
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->bottomXP[smap->iPou[ii]] = (*data)->bottomXP[smap->iPin[ii]];
+        (*data)->bottomXP[smap->iMou[ii]] = (*data)->bottom[smap->iMin[ii]];
+        if ((*data)->bottom[smap->iMou[ii]] > (*data)->bottom[smap->iMin[ii]])
+        {(*data)->bottomXP[smap->iMou[ii]] = (*data)->bottom[smap->iMou[ii]];}
+    }
 }
 
-// =============== read initial condition from user setting ===============
-void readIC(IC **ic, Bath *bath, Config *setting)
+// >>>>> Initialize data array <<<<<
+void init_Data(Data **data, Config *param)
 {
-  // initial surface elevation
-  if (setting->useConstSurf0 == 1)
-  {(*ic)->surf0 = setting->initSurf;}
-  else
-  {
-    (*ic)->allSurf0 = malloc(setting->N2CI * sizeof(double));
-    char sicname[100];
-    strcpy(sicname, setting->inputFolder);
-    strcat(sicname, "surfic.dat");
-    ReadFile((*ic)->allSurf0, sicname, setting->N2CI);
-  }
+    int ii, n2_root, n3_root;
+    n2_root = param->n2ci*param->mpi_nx*param->mpi_ny;
+    n3_root = param->n3ci*param->mpi_nx*param->mpi_ny;
+    // surface fields
+    (*data)->uu = malloc(param->n2ct*sizeof(double));
+    (*data)->uy = malloc(param->n2ct*sizeof(double));
+    (*data)->vv = malloc(param->n2ct*sizeof(double));
+    (*data)->vx = malloc(param->n2ct*sizeof(double));
+    (*data)->eta = malloc(param->n2ct*sizeof(double));
+    (*data)->etan = malloc(param->n2ct*sizeof(double));
+    (*data)->dept = malloc(param->n2ct*sizeof(double));
+    (*data)->deptx = malloc(param->n2ct*sizeof(double));
+    (*data)->depty = malloc(param->n2ct*sizeof(double));
+    (*data)->Fu = malloc(param->n2ct*sizeof(double));
+    (*data)->Fv = malloc(param->n2ct*sizeof(double));
+    (*data)->Ex = malloc(param->n2ct*sizeof(double));
+    (*data)->Ey = malloc(param->n2ct*sizeof(double));
+    (*data)->Dx = malloc(param->n2ct*sizeof(double));
+    (*data)->Dy = malloc(param->n2ct*sizeof(double));
+    (*data)->CDx = malloc(param->n2ct*sizeof(double));
+    (*data)->CDy = malloc(param->n2ct*sizeof(double));
+    (*data)->Vs = malloc(param->n2ct*sizeof(double));
+    (*data)->Vsx = malloc(param->n2ct*sizeof(double));
+    (*data)->Vsy = malloc(param->n2ct*sizeof(double));
+    (*data)->Asz = malloc(param->n2ct*sizeof(double));
+    (*data)->Aszx = malloc(param->n2ct*sizeof(double));
+    (*data)->Aszy = malloc(param->n2ct*sizeof(double));
+    (*data)->Asx = malloc(param->n2ct*sizeof(double));
+    (*data)->Asy = malloc(param->n2ct*sizeof(double));
+    (*data)->wtfx = malloc(param->n2ct*sizeof(double));
+    (*data)->wtfy = malloc(param->n2ct*sizeof(double));
+
+    (*data)->uu_root = malloc(n2_root*sizeof(double));
+    (*data)->vv_root = malloc(n2_root*sizeof(double));
+    (*data)->eta_root = malloc(n2_root*sizeof(double));
+    (*data)->dept_root = malloc(n2_root*sizeof(double));
+    (*data)->seep_root = malloc(n2_root*sizeof(double));
+    (*data)->uu_out = malloc(n2_root*sizeof(double));
+    (*data)->vv_out = malloc(n2_root*sizeof(double));
+    (*data)->eta_out = malloc(n2_root*sizeof(double));
+    (*data)->dept_out = malloc(n2_root*sizeof(double));
+    (*data)->seep_out = malloc(n2_root*sizeof(double));
+
+    (*data)->reset_seepage = malloc(param->n2ci*sizeof(int));
+    (*data)->qseepage = malloc(param->n2ci*sizeof(double));
+    (*data)->cflx = malloc(param->n2ci*sizeof(double));
+    (*data)->cfly = malloc(param->n2ci*sizeof(double));
+    (*data)->cfl_active = malloc(param->n2ci*sizeof(double));
+
+    // subsurface fields
+    (*data)->repeat = malloc(1*sizeof(int));
+    (*data)->h = malloc(param->n3ct*sizeof(double));
+    (*data)->hp = malloc(param->n3ct*sizeof(double));
+    (*data)->hn = malloc(param->n3ct*sizeof(double));
+    (*data)->hwc = malloc(param->n3ct*sizeof(double));
+    (*data)->wc = malloc(param->n3ct*sizeof(double));
+    (*data)->wcn = malloc(param->n3ct*sizeof(double));
+    (*data)->wcp = malloc(param->n3ct*sizeof(double));
+    (*data)->wch = malloc(param->n3ct*sizeof(double));
+    (*data)->ch = malloc(param->n3ct*sizeof(double));
+    (*data)->wcs = malloc(param->n3ct*sizeof(double));
+    (*data)->wcr = malloc(param->n3ct*sizeof(double));
+    (*data)->vga = malloc(param->n3ct*sizeof(double));
+    (*data)->vgn = malloc(param->n3ct*sizeof(double));
+    (*data)->Ksx = malloc(param->n3ct*sizeof(double));
+    (*data)->Ksy = malloc(param->n3ct*sizeof(double));
+    (*data)->Ksz = malloc(param->n3ct*sizeof(double));
+    (*data)->Kx = malloc(param->n3ct*sizeof(double));
+    (*data)->Ky = malloc(param->n3ct*sizeof(double));
+    (*data)->Kz = malloc(param->n3ct*sizeof(double));
+    (*data)->qx = malloc(param->n3ct*sizeof(double));
+    (*data)->qy = malloc(param->n3ct*sizeof(double));
+    (*data)->qz = malloc(param->n3ct*sizeof(double));
+    (*data)->Vg = malloc(param->n3ct*sizeof(double));
+    (*data)->room = malloc(param->n3ct*sizeof(double));
+    (*data)->vloss = malloc(param->n3ci*sizeof(double));
+    (*data)->h_root = malloc(n3_root*sizeof(double));
+    (*data)->wc_root = malloc(n3_root*sizeof(double));
+    (*data)->vloss_root = malloc(n3_root*sizeof(double));
+    (*data)->qx_root = malloc(n3_root*sizeof(double));
+    (*data)->qy_root = malloc(n3_root*sizeof(double));
+    (*data)->qz_root = malloc(n3_root*sizeof(double));
+    (*data)->h_out = malloc(n3_root*sizeof(double));
+    (*data)->wc_out = malloc(n3_root*sizeof(double));
+    (*data)->qx_out = malloc(n3_root*sizeof(double));
+    (*data)->qy_out = malloc(n3_root*sizeof(double));
+    (*data)->qz_out = malloc(n3_root*sizeof(double));
+    (*data)->dh6 = malloc(6*sizeof(double));
+    (*data)->rsplit = malloc(6*sizeof(double));
+    (*data)->qbc = malloc(2*sizeof(double));
+    (*data)->qbc[0] = 0.0;
+    (*data)->qbc[1] = 0.0;
+
+    // linear system solver
+    (*data)->Sct = malloc(param->n2ci*sizeof(double));
+    (*data)->Sxp = malloc(param->n2ci*sizeof(double));
+    (*data)->Sxm = malloc(param->n2ci*sizeof(double));
+    (*data)->Syp = malloc(param->n2ci*sizeof(double));
+    (*data)->Sym = malloc(param->n2ci*sizeof(double));
+    (*data)->Srhs = malloc(param->n2ci*sizeof(double));
+
+    (*data)->Gct = malloc(param->n3ci*sizeof(double));
+    (*data)->Gxp = malloc(param->n3ci*sizeof(double));
+    (*data)->Gxm = malloc(param->n3ci*sizeof(double));
+    (*data)->Gyp = malloc(param->n3ci*sizeof(double));
+    (*data)->Gym = malloc(param->n3ci*sizeof(double));
+    (*data)->Gzp = malloc(param->n3ci*sizeof(double));
+    (*data)->Gzm = malloc(param->n3ci*sizeof(double));
+    (*data)->Grhs = malloc(param->n3ci*sizeof(double));
+}
+
+// >>>>> Initial condition for shallow water solver <<<<<
+void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
+{
+    int ii, jj, col, row, xrank, yrank;
+    // initial boundary condition
+    (*data)->tide = malloc(param->n_tide*sizeof(double));
+    get_tide(data, param);
+    (*data)->rain = malloc(1*sizeof(double));
+    (*data)->rain_sum = malloc(1*sizeof(double));
+    (*data)->evap = malloc(1*sizeof(double));
+    (*data)->rain_sum[0] = 0.0;
+    get_evaprain(data, param);
+    // initial surface elevation
+    if (param->eta_file == 0)
+    {
+        for (ii = 0; ii < param->N2CI; ii++)
+        {(*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];}
+    }
+    else
+    {
+        char fullname[20];
+        strcpy(fullname, "surf_ic");
+        load_data((*data)->eta_root, fullname, param->N2CI);
+    }
     // initial velocity
-    if (setting->useConstU0 == 1)
-    {(*ic)->U0 = setting->initU;}
+    if (param->uv_file == 0)
+    {
+        for (ii = 0; ii < param->N2CI; ii++)
+        {(*data)->uu_root[ii] = 0.0;    (*data)->vv_root[ii] = 0.0;}
+    }
     else
     {
-        (*ic)->allU0 = malloc(setting->N2CI * sizeof(double));
-        char sicname[100];
-        strcpy(sicname, setting->inputFolder);
-        strcat(sicname, "uuic.dat");
-        ReadFile((*ic)->allU0, sicname, setting->N2CI);
+        char fullname1[20];
+        strcpy(fullname1, "uu_ic");
+        load_data((*data)->uu_root, fullname1, param->N2CI);
+        char fullname2[20];
+        strcpy(fullname2, "vv_ic");
+        load_data((*data)->vv_root, fullname2, param->N2CI);
     }
-    if (setting->useConstV0 == 1)
-    {(*ic)->V0 = setting->initV;}
+    // assign value to irank
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        xrank = irank % param->mpi_nx;
+        yrank = floor(irank/param->mpi_nx);
+        // jj = yrank * param->mpi_nx + xrank;
+        col = floor(ii / param->nx);
+        row = ii % param->nx;
+        jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+
+        (*data)->eta[ii] = (*data)->eta_root[jj];
+        (*data)->uu[ii] = (*data)->uu_root[jj];
+        (*data)->vv[ii] = (*data)->vv_root[jj];
+        if ((*data)->eta[ii] < (*data)->bottom[ii])
+        {(*data)->eta[ii] = (*data)->bottom[ii];}
+    }
+    // enforce boundary conditions
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->vv, smap, 2, param, irank, nrank);
+    }
+    enforce_surf_bc(data, smap, param, irank, nrank);
+    // calculate depth
+    update_depth(data, smap, param, irank);
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_surf((*data)->dept, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->deptx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->depty, smap, 2, param, irank, nrank);
+    }
+    // calculate subgrid areas
+    if (param->use_subgrid == 1)
+    {
+        mpi_print("WARNING: subgrid functions have not been implemented!",0);
+    }
     else
     {
-        (*ic)->allV0 = malloc(setting->N2CI * sizeof(double));
-        char sicname[100];
-        strcpy(sicname, setting->inputFolder);
-        strcat(sicname, "vvic.dat");
-        ReadFile((*ic)->allV0, sicname, setting->N2CI);
+        for (ii = 0; ii < param->n2ct; ii++)
+        {
+            (*data)->Vs[ii] = (*data)->dept[ii] * param->dx * param->dy;
+            if ((*data)->dept[ii] > 0) {(*data)->Asz[ii] = param->dx * param->dy;}
+            else    {(*data)->Asz[ii] = 0.0;}
+            (*data)->Asx[ii] = (*data)->deptx[ii] * param->dy;
+            (*data)->Asy[ii] = (*data)->depty[ii] * param->dx;
+        }
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            (*data)->Vsx[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->iPjc[ii]]);
+            (*data)->Vsy[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->icjP[ii]]);
+            (*data)->Aszx[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->iPjc[ii]]);
+            (*data)->Aszy[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->icjP[ii]]);
+        }
+        for (ii = 0; ii < param->nx; ii++)
+        {
+            (*data)->Vsy[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+            (*data)->Aszy[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+        }
+        for (ii = 0; ii < param->ny; ii++)
+        {
+            (*data)->Vsx[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+            (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+        }
     }
-    // initial scalar
-  if (setting->useScalar == 1)
-  {
-    if (setting->useConstInitS == 1)
-    {(*ic)->S0 = setting->initS;}
-    else
+    if (param->use_mpi == 1)
     {
-      (*ic)->allS0 = malloc(setting->N2CI * sizeof(double));
-      char sicname[100];
-      strcpy(sicname, setting->inputFolder);
-      strcat(sicname, "scalaric.dat");
-      ReadFile((*ic)->allS0, sicname, setting->N2CI);
+        mpi_exchange_surf((*data)->Vs, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Vsx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Vsy, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asy, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asz, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Aszx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Aszy, smap, 2, param, irank, nrank);
     }
-  }
+    // initialize other relevant variables
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        (*data)->qseepage[ii] = 0.0;
+        (*data)->reset_seepage[ii] = 1;
+    }
 }
 
-// =============== initialize data array for BC ===============
-void initBCArrays(BC **bc, Config *setting)
+// >>>>> Boundary condition for shallowwater solver <<<<<
+void bc_surface(Data **data, Map *smap, Config *param, int irank)
 {
-  *bc = malloc(sizeof(BC));
-  (*bc)->tideP = malloc(setting->Nt*sizeof(double));
-  (*bc)->tideM = malloc(setting->Nt*sizeof(double));
-  (*bc)->inflow = malloc(setting->Nt*sizeof(double));
-  (*bc)->windspd = malloc(setting->Nt*sizeof(double));
-  (*bc)->winddir = malloc(setting->Nt*sizeof(double));
-  (*bc)->tidalPS = malloc(setting->Nt*sizeof(double));
-  (*bc)->tidalMS = malloc(setting->Nt*sizeof(double));
-  (*bc)->evap = malloc(setting->Nt*sizeof(double));
-  (*bc)->rain = malloc(setting->Nt*sizeof(double));
+    if (exist("tide1"))
+    {load_bc((*data)->tide1, (*data)->t_tide1, "tide1", param->n_tide1);}
+    if (exist("tide2"))
+    {load_bc((*data)->tide2, (*data)->t_tide2, "tide2", param->n_tide2);}
+
+    if (param->inflow_loc[0] >= 0 & param->inflow_loc[1] >= 0 & param->inflow_loc[2] >= 0)
+    {load_bc((*data)->inflow, (*data)->t_inflow, "inflow", param->n_inflow);}
+
 }
 
-// =============== read boundary conditions from data files ===============
-void readBC(BC **bc, Config *setting, int irank)
+
+// >>>>> Calculate surface depth from bathymetry and surface elevation <<<<<
+void update_depth(Data **data, Map *smap, Config *param, int irank)
 {
     int ii;
-    if (setting->bcType != 2)
+    double eta_hi, bot_hi;
+    // center depth
+    for (ii = 0; ii < param->n2ct; ii++)
     {
-        writeText("Loading tide boundary condition ...", irank);
-        readOneBC((*bc)->tideP, "tideP.dat", setting, setting->tideNP);
+        (*data)->dept[ii] = (*data)->eta[ii] - (*data)->bottom[ii];
+        if ((*data)->dept[ii] <= param->min_dept)   {(*data)->dept[ii] = 0.0;}
+        (*data)->deptx[ii] = 0.0;
+        (*data)->depty[ii] = 0.0;
     }
-    if (setting->bcType != 1)
+    // internal face depth
+    for (ii = 0; ii < param->n2ci; ii++)
     {
-        writeText("Loading tide boundary condition ...", irank);
-        readOneBC((*bc)->tideM, "tideM.dat", setting, setting->tideNM);
+        // x
+        eta_hi = (*data)->eta[ii];
+        bot_hi = (*data)->bottom[ii];
+        if ((*data)->eta[smap->iPjc[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->iPjc[ii]];}
+        if ((*data)->bottom[smap->iPjc[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->iPjc[ii]];}
+        (*data)->deptx[ii] = eta_hi - bot_hi;
+        // y
+        eta_hi = (*data)->eta[ii];
+        bot_hi = (*data)->bottom[ii];
+        if ((*data)->eta[smap->icjP[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->icjP[ii]];}
+        if ((*data)->bottom[smap->icjP[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->icjP[ii]];}
+        (*data)->depty[ii] = eta_hi - bot_hi;
     }
-    if (setting->bcType != 3)
+    // boundary face depth
+    for (ii = 0; ii < param->nx; ii++)
     {
-        writeText("Loading inflow boundary condition ...", irank);
-        readOneBC((*bc)->inflow, "inflow.dat", setting, setting->inflowN);
+        // ym
+        eta_hi = (*data)->eta[smap->jMin[ii]];
+        bot_hi = (*data)->bottom[smap->jMin[ii]];
+        if ((*data)->eta[smap->jMou[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->jMou[ii]];}
+        if ((*data)->bottom[smap->jMou[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->jMou[ii]];}
+        (*data)->depty[smap->jMou[ii]] = eta_hi - bot_hi;
+        // yp
+        eta_hi = (*data)->eta[smap->jPin[ii]];
+        bot_hi = (*data)->bottom[smap->jPin[ii]];
+        if ((*data)->eta[smap->jPou[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->jPou[ii]];}
+        if ((*data)->bottom[smap->jPou[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->jPou[ii]];}
+        (*data)->depty[smap->jPou[ii]] = eta_hi - bot_hi;
     }
-    if (setting->useWind == 1)
+    for (ii = 0; ii < param->ny; ii++)
     {
-        writeText("Loading wind boundary condition ...", irank);
-        readOneBC((*bc)->windspd, "windspd.dat", setting, setting->windspdN);
-        readOneBC((*bc)->winddir, "winddir.dat", setting, setting->winddirN);
+        // xm
+        eta_hi = (*data)->eta[smap->iMin[ii]];
+        bot_hi = (*data)->bottom[smap->iMin[ii]];
+        if ((*data)->eta[smap->iMou[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->iMou[ii]];}
+        if ((*data)->bottom[smap->iMou[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->iMou[ii]];}
+        (*data)->deptx[smap->iMou[ii]] = eta_hi - bot_hi;
+        // xp
+        eta_hi = (*data)->eta[smap->iPin[ii]];
+        bot_hi = (*data)->bottom[smap->iPin[ii]];
+        if ((*data)->eta[smap->iPou[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->iPou[ii]];}
+        if ((*data)->bottom[smap->iPou[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->iPou[ii]];}
+        (*data)->deptx[smap->iPou[ii]] = eta_hi - bot_hi;
     }
-    if (setting->useConstTidePS == 0)
+    // zero depth at outer boundaries
+    // To Be implemented, ZhiLi20200622
+
+    // zero negative depth
+    for (ii = 0; ii < param->n2ct; ii++)
     {
-        writeText("Loading tidal salinity boundary condition ...", irank);
-        readOneBC((*bc)->tidalPS, "salinityBC.dat", setting, setting->tidalPSN);
+        if ((*data)->deptx[ii] < 0)    {(*data)->deptx[ii] = 0.0;}
+        if ((*data)->depty[ii] < 0)    {(*data)->depty[ii] = 0.0;}
     }
-    if (setting->useConstTideMS == 0)
-    {
-        writeText("Loading tidal salinity boundary condition ...", irank);
-        readOneBC((*bc)->tidalMS, "salinityBC.dat", setting, setting->tidalMSN);
-    }
-    printf("useEvap = %d\n",setting->useEvap);
-    if (setting->useEvap == 1)
-    {
-        writeText("Loading evaporation boundary condition ...", irank);
-        readOneBC((*bc)->evap, "evap.dat", setting, setting->evapN);
-    }
-    else if (setting->useEvap == 2)
-    {
-        for (ii = 0; ii < setting->Nt; ii++)
-        {
-            if (ii >= setting->eTstart & ii < setting->eTend)   {(*bc)->evap[ii] = setting->qEvap;}
-            else    {(*bc)->evap[ii] = 0.0;}
-        }
-    }
-    if (setting->useRain == 1)
-    {
-        writeText("Loading rainfall boundary condition ...", irank);
-        readOneBC((*bc)->rain, "rain.dat", setting, setting->rainN);
-    }
-    else if (setting->useRain == 2)
-    {
-        for (ii = 0; ii < setting->Nt; ii++)
-        {
-            if (ii >= setting->rTstart & ii < setting->rTend)   {(*bc)->rain[ii] = setting->qRain;}
-            else    {(*bc)->rain[ii] = 0.0;}
-        }
-    }
-    // flopy
-//    for (ii = 0; ii < setting->Nt; ii++)
-//    {(*bc)->tideP[ii] = -0.5;}
 }
 
-// =============== initialize drag coefficient ================
-void initCD(Data **data, Config *setting)
-{
-  int ii;
-  for (ii = 0; ii < setting->N2ct; ii++)
-  {
-    (*data)->CDXP[ii] = setting->CDx;
-    (*data)->CDYP[ii] = setting->CDy;
-  }
-}
 
-// =============== set initial conditions ===============
-void initFieldValues(Data **data, Bath *bath, IC *ic, Config *setting, int irank)
+// >>>>> Initial condition for groundwater solver <<<<<
+void ic_subsurface(Data **data, Map *gmap, Config *param)
 {
-  int ii, col;
-    double dsurf;
-    for (ii = 0; ii < setting->N2ci; ii++)
-    {
-        // surface
-        if (setting->useConstSurf0 == 1)
-        {(*data)->surf[ii] = ic->surf0 + bath->offset[0];}
-        else
-        {(*data)->surf[ii] = ic->allSurf0[ii+irank*setting->N2ci] + bath->offset[0];}
-        // velocity
-        if (setting->useConstU0 == 1)
-        {(*data)->uuXP[ii] = ic->U0;}
-        else
-        {(*data)->uuXP[ii] = ic->allU0[ii+irank*setting->N2ci];}
-        if (setting->useConstV0 == 1)
-        {(*data)->vvYP[ii] = ic->V0;}
-        else
-        {(*data)->vvYP[ii] = ic->allV0[ii+irank*setting->N2ci];}
-        // scalar
-      if (setting->useScalar == 1)
-      {
-        if (setting->useConstInitS == 1)
-        {(*data)->S[ii] = ic->S0;}
-        else
-        {(*data)->S[ii] = ic->allS0[ii+irank*setting->N2ci];}
-      }
-    }
-    // spatially-varied initial surface, ZhiLi20180808
-//    if (setting->bcType == 3 && setting->useConstSurf0 == 1 && bc->tideP[0] != bc->tideM[0])
-//    {
-//        dsurf = (bc->tideP[0] - bc->tideM[0]) / setting->NY;
-//        for (ii = 0; ii < setting->N2ci; ii ++)
-//        {
-//            col = floor(ii / setting->NX);
-//            (*data)->surf[ii] = bc->tideM[0] + (irank*setting->ny + col)*dsurf + bath->offset[0];
-//        }
-//    }
-}
-
-// =============== read the restart file ===============
-//void readRestartFile(IC **ic, Config **setting)
-//{
-//  int N, n = 3, ii, jj, r = 1, n2ci;
-//  double *oldConfig = malloc(n*sizeof(double));
-//  ReadFile(oldConfig, (*setting)->restartFile, n);
-//  // compute the new model time
-//  (*setting)->tNStart = oldConfig[0];
-//  (*setting)->tNEnd = (*setting)->tNStart + (*setting)->dt*(*setting)->Nt;
-//  // check if the grid size changes, if not then interpolate
-//  if (oldConfig[1] != (*setting)->dx)
-//  {
-//    r = oldConfig[1] / (*setting)->dx;
-//    n2ci = (*setting)->N2CI / r / r;
-//    N = n2ci * 4 + n;
-//    double *allRestartIC = malloc(N*sizeof(double));
-//    ReadFile(allRestartIC, (*setting)->restartFile, N);
-//    // interpolate
-//    interpRestart(allRestartIC, (*ic)->restartSurf0, n, n2ci+n, r, (*setting)->NX);
-//    interpRestart(allRestartIC, (*ic)->restartU0, n2ci+n, 2*n2ci+n, r, (*setting)->NX);
-//    interpRestart(allRestartIC, (*ic)->restartV0, 2*n2ci+n, 3*n2ci+n, r, (*setting)->NX);
-//    interpRestart(allRestartIC, (*ic)->restartS0, 3*n2ci+n, 4*n2ci+n, r, (*setting)->NX);
-//  }
-//  else
-//  {
-//    N = (*setting)->N2CI * 4 + n;
-//    double *allRestartIC = malloc(N*sizeof(double));
-//    ReadFile(allRestartIC, (*setting)->restartFile, N);
-//    jj = 0;
-//    for (ii = n; ii < (*setting)->N2CI+n; ii++)
-//    {(*ic)->restartSurf0[jj] = allRestartIC[ii]; jj++;}
-//    jj = 0;
-//    for (ii = (*setting)->N2CI+n; ii < 2*(*setting)->N2CI+n; ii++)
-//    {(*ic)->restartU0[jj] = allRestartIC[ii]; jj++;}
-//    jj = 0;
-//    for (ii = 2*(*setting)->N2CI+n; ii < 3*(*setting)->N2CI+n; ii++)
-//    {(*ic)->restartV0[jj] = allRestartIC[ii]; jj++;}
-//    jj = 0;
-//    for (ii = 3*(*setting)->N2CI+n; ii < 4*(*setting)->N2CI+n; ii++)
-//    {(*ic)->restartS0[jj] = allRestartIC[ii]; jj++;}
-//  }
-//
-//}
-
-// =============== read one specific BC field ===============
-void readOneBC(double *arr, char filename[], Config *setting, int N)
-{
-  int ind1, ind2, itval, ii;
-  char *fullname = malloc(50);
-  strcpy(fullname, setting->inputFolder);
-  strcat(fullname, filename);
-  // load all data for this bc
-  double *allBC = malloc(2*N*sizeof(double));
-  double *t = malloc(N*sizeof(double));
-  double *value = malloc(N*sizeof(double));
-  ReadFile(allBC, fullname, 2*N);
-  // split time and value
-  dataSplit(t, value, allBC, N);
-  // find the index of the starting and ending elements
-  itval = t[1] - t[0];
-  ind1 = searchInd(t, setting->tNStart, itval, N);
-  ind2 = searchInd(t, setting->tNEnd, itval, N);
-  if (ind1 == ind2)
-  {printf("WARNING: Run time is shorter than the BC time intervals...\n");}
-  // truncate the bc for the given range
-  double *trunkBC = malloc((ind2-ind1)*sizeof(double));
-  for (ii = 0; ii < ind2-ind1; ii++)
-  {trunkBC[ii] = value[ii+ind1];}
-  // interpolate to the required data interval
-  dataInterp(arr, t, value, ind1, setting->Nt, setting->dt, setting->tNStart);
-  // free temporary arrays
-  free(allBC);
-  free(t);
-  free(value);
-  free(trunkBC);
-}
-
-// =============== allocate memory for groundwater ===============
-void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting)
-{
-    double a, n, htop, wcs, wcr;
     int ii;
-    wcs = setting->porosity;
-    wcr = setting->Sres * setting->porosity;
-    *ground = malloc(sizeof(Ground));
-    (*ground)->allh = malloc(setting->N3CI*sizeof(double));
-    (*ground)->allwc = malloc(setting->N3CI*sizeof(double));
-    (*ground)->h = malloc(setting->N3cf*sizeof(double));
-    (*ground)->hOld = malloc(setting->N3cf*sizeof(double));
-    (*ground)->wc = malloc(setting->N3cf*sizeof(double));
-    (*ground)->wcf = malloc(setting->N3ci*sizeof(double));
-    (*ground)->dwc = malloc(setting->N3ci*sizeof(double));
-    (*ground)->wcflag = malloc(setting->N3ci*sizeof(int));
-    (*ground)->Cx = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Cy = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Cz = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Kx = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Ky = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Kz = malloc(setting->N3ci*sizeof(double));
-    (*ground)->V = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnCt = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnXP = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnXM = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnYP = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnYM = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnZP = malloc(setting->N3ci*sizeof(double));
-    (*ground)->GnZM = malloc(setting->N3ci*sizeof(double));
-    (*ground)->B = malloc(setting->N3ci*sizeof(double));
-    (*ground)->nlay = malloc(setting->N2ci*sizeof(double));
-    (*ground)->Quu = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Qvv = malloc(setting->N3ct*sizeof(double));
-    (*ground)->Qww = malloc(setting->N3ct*sizeof(double));
-    (*ground)->S = malloc(setting->N3cf*sizeof(double));
-    (*ground)->Sm = malloc(setting->N3cf*sizeof(double));
-    (*ground)->allS = malloc(setting->N3CI*sizeof(double));
-    (*ground)->qe = malloc(setting->N3ci*sizeof(double));
-
-    for (ii = 0; ii < setting->N3cf; ii++)
+    double h_incre, zwt;
+    (*data)->qtop = param->qtop;
+    (*data)->qbot = param->qbot;
+    (*data)->htop = param->htop;
+    (*data)->hbot = param->hbot;
+    // initialize soil properties
+    for (ii = 0; ii < param->n3ct; ii++)
     {
-      (*ground)->h[ii] = setting->H0;
-      (*ground)->wc[ii] = waterContent((*ground)->h[ii], setting);
-
-      // (*ground)->wc[ii] = 0.065;
-      // (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+        // homogeneous soil properties for now, Zhi Li 20200724
+        (*data)->vga[ii] = param->soil_a;
+        (*data)->vgn[ii] = param->soil_n;
+        (*data)->wcr[ii] = param->wcr;
+        (*data)->wcs[ii] = param->wcs;
+        (*data)->Ksx[ii] = param->Ksx;
+        (*data)->Ksy[ii] = param->Ksy;
+        (*data)->Ksz[ii] = param->Ksz;
+        // Maina heterogeneous problem
+        // if (gmap->kk[ii] > 600 & gmap->kk[ii] < 1200)
+        // if (gmap->kk[ii] > 120 & gmap->kk[ii] < 240)
+        // {
+        //     (*data)->vga[ii] = 1.04;
+        //     (*data)->vgn[ii] = 1.395;
+        //     (*data)->wcr[ii] = 0.106;
+        //     (*data)->wcs[ii] = 0.469;
+        //     (*data)->Ksz[ii] = 0.00000151;
+        // }
     }
-
-    // If H0 == 0, domain is fully saturated, wc=porosity, head is hydrostatic
-    if (setting->H0 == 0.0)
+    // if init_wc within [wcr, wcs], initialize domain with init_wc
+    if (param->init_wc >= param->wcr & param->init_wc <= param->wcs)
     {
-        for (ii = 0; ii < setting->N3ci; ii++)
+        for (ii = 0; ii < param->n3ct; ii++)
+        {(*data)->wc[ii] = param->init_wc;}
+        // if fully saturated, use hydrostatic h
+        if (param->init_wc == param->wcs)
         {
-            (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii]);
-            (*ground)->wc[ii] = setting->porosity;
-        }
-    }
-    // If H0 > 0, water table is H0 below the surface, head is hydrostatic below water table
-    else if (setting->H0 > 100.0)
-    {
-        setting->H0 = setting->H0 - 100.0;
-        for (ii = 0; ii < setting->N3ci; ii++)
-        {
-            // Fully saturated below water table
-            if (gmap->bot3d[ii] + 0.5*gmap->dz3d[ii] < bath->bottomZ[gmap->top2D[ii]] - setting->H0)
+            for (ii = 0; ii < param->n3ct; ii++)
             {
-                (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
-                (*ground)->wc[ii] = setting->porosity;
-            }
-            // Above the water table
-            else
-            {
-                if (data->depth[gmap->top2D[ii]] > 0.0)
-                {(*ground)->wc[ii] = wcs;}
-                else
+                if (gmap->actv[ii] == 1)
                 {
-                    (*ground)->wc[ii] = (wcs-wcr)*(bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii] + 0.5*gmap->dz3d[ii])/setting->H0 + wcr;
+                    h_incre = (*data)->bottom[gmap->top2d[ii]] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii];
+                    (*data)->h[ii] = (*data)->dept[gmap->top2d[ii]] + h_incre;
                 }
-                if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
-                if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
-                (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+                else
+                {(*data)->h[ii] = 0.0;}
             }
         }
+        // if unsaturated, get h from retention curve
+        else
+        {
+            for (ii = 0; ii < param->n3ct; ii++)
+            {(*data)->h[ii] = compute_hwc(*data, ii, param);}
+        }
     }
-    // If H0 < 0, water table is fixed at H0
+    // else if init_h < 0, initialize domain with init_h
+    else if (param->init_h < 0)
+    {
+        for (ii = 0; ii < param->n3ct; ii++)
+        {
+            (*data)->h[ii] = param->init_h;
+            (*data)->wc[ii] = compute_wch(*data, ii, param);
+        }
+    }
+    // else, initialize with prescribed water table
     else
     {
-        for (ii = 0; ii < setting->N3ci; ii++)
+        // if init_wt_rel > 0, wt is relative to surface
+        if (param->init_wt_rel > 0)
         {
-            // Fully saturated below water table
-            if (gmap->bot3d[ii] + 0.5*gmap->dz3d[ii] < setting->H0)
+            for (ii = 0; ii < param->n3ct; ii++)
             {
-                (*ground)->h[ii] = fabs(setting->H0 - gmap->bot3d[ii]) + 0.5*gmap->dz3d[ii];
-                (*ground)->wc[ii] = setting->porosity;
-            }
-            // Above the water table
-            else
-            {
-                // If water table below surface
-                if (bath->bottomZ[gmap->top2D[ii]] > setting->H0)
+                zwt = (*data)->bottom[gmap->top2d[ii]] - param->init_wt_rel;
+                if (gmap->bot3d[ii] < zwt)
                 {
-                    if (data->depth[gmap->top2D[ii]] > 0.0)
-                    {(*ground)->wc[ii] = wcs;}
-                    else
-                    {
-                        (*ground)->wc[ii] = (wcs-wcr)*(bath->bottomZ[gmap->top2D[ii]]-gmap->bot3d[ii] + 0.5*gmap->dz3d[ii])/ \
-                            (bath->bottomZ[gmap->top2D[ii]]-setting->H0) + wcr;
-                    }
-                    if ((*ground)->wc[ii] > wcs)    {(*ground)->wc[ii] = wcs;}
-                    if ((*ground)->wc[ii] < wcr)    {(*ground)->wc[ii] = wcr;}
-                    (*ground)->h[ii] = headFromWC((*ground)->wc[ii], setting);
+                    (*data)->wc[ii] = param->wcs;
+                    (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                 }
-                // If water table above surface, its fully saturated
                 else
                 {
-                    (*ground)->h[ii] = fabs(bath->bottomZ[gmap->top2D[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii]);
-                    (*ground)->wc[ii] = setting->porosity;
+                    (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    // (*data)->wc[ii] = param->wcr + 0.03;
+                    // (*data)->h[ii] = compute_hwc(*data, ii, param);
+                }
+            }
+        }
+        // else, wt is at fixed elevation
+        else
+        {
+            for (ii = 0; ii < param->n3ct; ii++)
+            {
+                if (gmap->bot3d[ii] < param->init_wt_abs)
+                {
+                    (*data)->wc[ii] = param->wcs;
+                    (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                }
+                else
+                {
+                    (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
             }
         }
     }
-
-    // initialize
-    for (ii = 0; ii < setting->N3ct; ii++)
+    // fixed head boundary condition
+    for (ii = 0; ii < param->n3ci; ii++)
     {
-        (*ground)->Cx[ii] = 0.0;
-        (*ground)->Cy[ii] = 0.0;
-        (*ground)->Cz[ii] = 0.0;
-        (*ground)->Quu[ii] = 0.0;
-        (*ground)->Qvv[ii] = 0.0;
-        (*ground)->Qww[ii] = 0.0;
+        if (gmap->istop[ii] == 1 & param->bctype_GW[5] == 1)
+        {(*data)->h[gmap->icjckM[ii]] = (*data)->htop;}
+        if (gmap->kk[ii] == param->nz-1 & param->bctype_GW[4] == 1)
+        {(*data)->h[gmap->icjckP[ii]] = (*data)->hbot;}
+        (*data)->vloss[ii] = 0.0;
     }
-
-    for (ii = 0; ii < setting->N3ci; ii++)
+    // initialize other relavant fields
+    for (ii = 0; ii < param->n3ct; ii++)
     {
-        (*ground)->V[ii] = setting->dx * setting->dy * 1.0;
-        (*ground)->B[ii] = 0.0;
-        (*ground)->qe[ii] = 0.0;
-        (*ground)->wcf[ii] = (*ground)->wc[ii];
-        (*ground)->dwc[ii] = 0.0;
-        (*ground)->wcflag[ii] = 0;
+        (*data)->hn[ii] = (*data)->h[ii];
+        (*data)->hp[ii] = (*data)->h[ii];
+        (*data)->hwc[ii] = compute_hwc(*data, ii, param);
+        (*data)->wcn[ii] = (*data)->wc[ii];
+        (*data)->wcp[ii] = (*data)->wc[ii];
+        (*data)->wch[ii] = compute_wch(*data, ii, param);
+        (*data)->Kx[ii] = compute_K(*data, (*data)->Ksx, ii, param);
+        (*data)->Ky[ii] = compute_K(*data, (*data)->Ksy, ii, param);
+        (*data)->Kz[ii] = compute_K(*data, (*data)->Ksz, ii, param);
+        (*data)->qx[ii] = 0.0;
+        (*data)->qy[ii] = 0.0;
+        (*data)->qz[ii] = 0.0;
+        (*data)->Vg[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
     }
-	for (ii = 0; ii < setting->N3cf; ii++)
-	{
-		(*ground)->hOld[ii] = (*ground)->h[ii];
-		(*ground)->S[ii] = setting->subS0;
-        (*ground)->Sm[ii] = 0.0;
-	}
 
 }

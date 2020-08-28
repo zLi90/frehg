@@ -1,3 +1,4 @@
+// Build maps (connections) between grid cells
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
@@ -9,311 +10,357 @@
 // - 2017-05-04 by Zhi Li -
 // -----------------------------------------------------------------------------
 
-#include "configuration.h"
-#include "map.h"
-#include "mpifunctions.h"
-#include "utilities.h"
+#include"configuration.h"
+#include"initialize.h"
+#include"map.h"
+#include"mpifunctions.h"
+#include"utility.h"
 
-void createMaps(Maps **map, Config *setting)
+void build_surf_map(Map **map, Config *param);
+void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Config *param, int irank);
+
+// >>>>> Build connections for surface domain <<<<<
+void build_surf_map(Map **map, Config *param)
 {
-  int ii, jj, kk, col;
-  *map = malloc(sizeof(Maps));
-  (*map)->cntr = malloc(setting->N2ci*sizeof(int));
-  (*map)->trps = malloc(setting->N2ci*sizeof(int));
-  (*map)->sprt = malloc(setting->N2ci*sizeof(int));
-  (*map)->iPjc = malloc(setting->N2ci*sizeof(int));
-  (*map)->iMjc = malloc(setting->N2ci*sizeof(int));
-  (*map)->icjP = malloc(setting->N2ci*sizeof(int));
-  (*map)->icjM = malloc(setting->N2ci*sizeof(int));
-  (*map)->iPPjc = malloc(setting->N2ci*sizeof(int));
-  (*map)->iMMjc = malloc(setting->N2ci*sizeof(int));
-  (*map)->icjPP = malloc(setting->N2ci*sizeof(int));
-  (*map)->icjMM = malloc(setting->N2ci*sizeof(int));
-  (*map)->iPjP = malloc(1*sizeof(int));
-  (*map)->iPjM = malloc(1*sizeof(int));
-  (*map)->iMjP = malloc(1*sizeof(int));
-  (*map)->iMjM = malloc(1*sizeof(int));
-  (*map)->ii2d = malloc(setting->N2ci*sizeof(int));
-  (*map)->jj2d = malloc(setting->N2ci*sizeof(int));
-  (*map)->iPbd = malloc(setting->ny*sizeof(int));
-  (*map)->iPgt = malloc(setting->ny*sizeof(int));
-  (*map)->iMbd = malloc(setting->ny*sizeof(int));
-  (*map)->iMgt = malloc(setting->ny*sizeof(int));
-  (*map)->jPbd = malloc(setting->nx*sizeof(int));
-  (*map)->jPgt = malloc(setting->nx*sizeof(int));
-  (*map)->jMbd = malloc(setting->nx*sizeof(int));
-  (*map)->jMgt = malloc(setting->nx*sizeof(int));
-  // set index for the center map
-  for (ii = 0; ii < setting->N2ci; ii++)
-  {(*map)->cntr[ii] = ii;}
-  // set index for the transposed map
-  for (kk = 0; kk < setting->N2ci; kk++)
-  {
-    ii = floor(kk / setting->ny);
-    jj = kk % setting->ny;
-    (*map)->trps[kk] = jj*setting->nx + ii;
-    ii = floor(kk / setting->nx);
-    jj = kk % setting->nx;
-    (*map)->sprt[kk] = jj*setting->ny + ii;
-  }
-  // set index for the jP and jM maps
-  for (ii = 0; ii < setting->N2ci-setting->nx; ii++)
-  {
-    (*map)->icjP[ii] = ii + setting->nx;
-    (*map)->icjM[ii+setting->nx] = ii;
-  }
-  for (ii = 0; ii < setting->nx; ii++)
-  {
-    (*map)->icjP[ii+setting->N2ci-setting->nx] = ii + setting->N2ci;
-    (*map)->icjM[ii] = ii + setting->N2ci + setting->nx;
-  }
-  // set index for the jPP and jMM maps, ZhiLi20180504
-  for (ii = 0; ii < setting->N2ci-setting->nx; ii++)
-  {
-    (*map)->icjPP[ii] = (*map)->icjP[(*map)->icjP[ii]];
-    (*map)->icjMM[ii+2*setting->nx] = (*map)->icjM[(*map)->icjM[ii+2*setting->nx]];
-  }
-  for (ii = 0; ii < setting->nx; ii++)
-  {
-    (*map)->icjPP[ii+setting->N2ci-setting->nx] = (*map)->icjP[ii+setting->N2ci-setting->nx];
-    (*map)->icjMM[ii] = (*map)->icjM[ii];
-  }
-  // set index for the iP and iM maps
-  for (ii = 0; ii < setting->N2ci; ii++)
-  {
-    col = floor(ii/setting->nx);
-    if (ii % setting->nx == setting->nx-1)
-    {(*map)->iPjc[ii] = setting->N2ci + 2*setting->nx + col; (*map)->iMjc[ii] = ii - 1;}
-    else if (ii % setting->nx == 0)
-    {(*map)->iMjc[ii] = setting->N2ci + 2*setting->nx + setting->ny + col; (*map)->iPjc[ii] = ii + 1;}
-    else
-    {(*map)->iPjc[ii] = ii + 1;   (*map)->iMjc[ii] = ii - 1;}
-  }
-  // set index for the iPP and iMM maps, ZhiLi20180504
-  for (ii = 0; ii < setting->N2ci; ii++)
-  {
-    if (ii % setting->nx == setting->nx-1)
-    {(*map)->iPPjc[ii] = (*map)->iPjc[ii]; (*map)->iMMjc[ii] = (*map)->iMjc[(*map)->iMjc[ii]];}
-    else if (ii % setting->nx == 0)
-    {(*map)->iMMjc[ii] = (*map)->iMjc[ii]; (*map)->iPPjc[ii] = (*map)->iPjc[(*map)->iPjc[ii]];}
-    else
-    {(*map)->iPPjc[ii] = (*map)->iPjc[(*map)->iPjc[ii]];   (*map)->iMMjc[ii] = (*map)->iMjc[(*map)->iMjc[ii]];}
-  }
-  // set corner maps
-  (*map)->iMjM[0] = setting->N2ct - 1;
-  (*map)->iPjM[0] = setting->N2ct - 2;
-  (*map)->iPjP[0] = setting->N2ct - 3;
-  (*map)->iMjP[0] = setting->N2ct - 4;
-  // set the 2d (ii,jj) maps
-  for (ii = 0; ii < setting->N2ci; ii++)
-  {
-    col = floor(ii/setting->nx);
-    (*map)->ii2d[ii] = ii - col*setting->nx;
-    (*map)->jj2d[ii] = col;
-  }
-  // set the maps for the jP and jM ghost cells
-  for (ii = 0; ii < setting->nx; ii++)
-  {
-    (*map)->jPbd[ii] = (*map)->cntr[setting->N2ci-setting->nx+ii];
-    (*map)->jMbd[ii] = (*map)->cntr[ii];
-    (*map)->jPgt[ii] = (*map)->icjP[setting->N2ci-setting->nx+ii];
-    (*map)->jMgt[ii] = (*map)->icjM[ii];
-  }
-  // set the maps for the iP and iM ghost cells
-  for (ii = 0; ii < setting->ny; ii++)
-  {
-    (*map)->iPbd[ii] = (*map)->cntr[((ii+1)*setting->nx)-1];
-    (*map)->iMbd[ii] = (*map)->cntr[ii*setting->nx];
-    (*map)->iPgt[ii] = (*map)->iPjc[((ii+1)*setting->nx)-1];
-    (*map)->iMgt[ii] = (*map)->iMjc[ii*setting->nx];
-  }
-//    for (ii = 0; ii < setting->N2ci; ii++)
-//    {printf("map ii = %d\n",(*map)->cntr[ii]);}
+    int ii;
+    *map = malloc(sizeof(Map));
+    (*map)->cntr = malloc(param->n2ci*sizeof(int));
+    (*map)->ii = malloc(param->n2ci*sizeof(int));
+    (*map)->jj = malloc(param->n2ci*sizeof(int));
+    (*map)->iPjc = malloc(param->n2ci*sizeof(int));
+    (*map)->iMjc = malloc(param->n2ci*sizeof(int));
+    (*map)->icjP = malloc(param->n2ci*sizeof(int));
+    (*map)->icjM = malloc(param->n2ci*sizeof(int));
+    (*map)->iPjP = malloc(param->n2ci*sizeof(int));
+    (*map)->iMjM = malloc(param->n2ci*sizeof(int));
+    (*map)->iPjM = malloc(param->n2ci*sizeof(int));
+    (*map)->iMjP = malloc(param->n2ci*sizeof(int));
+    (*map)->iPin = malloc(param->ny*sizeof(int));
+    (*map)->iPou = malloc(param->ny*sizeof(int));
+    (*map)->iMin = malloc(param->ny*sizeof(int));
+    (*map)->iMou = malloc(param->ny*sizeof(int));
+    (*map)->jPin = malloc(param->nx*sizeof(int));
+    (*map)->jPou = malloc(param->nx*sizeof(int));
+    (*map)->jMin = malloc(param->nx*sizeof(int));
+    (*map)->jMou = malloc(param->nx*sizeof(int));
+
+    // set map indexes
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        (*map)->cntr[ii] = ii;
+        (*map)->jj[ii] = floor(ii/param->nx);
+        (*map)->ii[ii] = ii - (*map)->jj[ii] * param->nx;
+        // iP map
+        if ((*map)->ii[ii] == param->nx-1)
+        {(*map)->iPjc[ii] = param->n2ci + 2*param->nx + (*map)->jj[ii];}
+        else
+        {(*map)->iPjc[ii] = ii + 1;}
+        // iM map
+        if ((*map)->ii[ii] == 0)
+        {(*map)->iMjc[ii] = param->n2ci + 2*param->nx + param->ny + (*map)->jj[ii];}
+        else
+        {(*map)->iMjc[ii] = ii - 1;}
+        // jP map
+        if ((*map)->jj[ii] == param->ny-1)
+        {(*map)->icjP[ii] = param->n2ci + (*map)->ii[ii];}
+        else
+        {(*map)->icjP[ii] = ii + param->nx;}
+        // jM map
+        if ((*map)->jj[ii] == 0)
+        {(*map)->icjM[ii] = param->n2ci + param->nx + (*map)->ii[ii];}
+        else
+        {(*map)->icjM[ii] = ii - param->nx;}
+    }
+
+    // diagonal maps
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        // iPjP map
+        if ((*map)->ii[ii] == param->nx-1)
+        {
+            if ((*map)->jj[ii] == param->ny-1)
+            {(*map)->iPjP[ii] = param->n2ct - 3;}
+            else
+            {(*map)->iPjP[ii] = (*map)->iPjc[(*map)->icjP[ii]];}
+        }
+        else if ((*map)->jj[ii] == param->ny-1)
+        {(*map)->iPjP[ii] = (*map)->icjP[ii] + 1;}
+        else
+        {(*map)->iPjP[ii] = (*map)->iPjc[(*map)->icjP[ii]];}
+        // iMjM map
+        if ((*map)->ii[ii] == 0)
+        {
+            if ((*map)->jj[ii] == 0)
+            {(*map)->iMjM[ii] = param->n2ct - 1;}
+            else
+            {(*map)->iMjM[ii] = (*map)->iMjc[(*map)->icjM[ii]];}
+        }
+        else if ((*map)->jj[ii] == 0)
+        {(*map)->iMjM[ii] = (*map)->icjM[ii] - 1;}
+        else
+        {(*map)->iMjM[ii] = (*map)->iMjc[(*map)->icjM[ii]];}
+        // iPjM map
+        if ((*map)->ii[ii] == param->nx-1)
+        {
+            if ((*map)->jj[ii] == 0)
+            {(*map)->iPjM[ii] = param->n2ct - 2;}
+            else
+            {(*map)->iPjM[ii] = (*map)->iPjc[(*map)->icjM[ii]];}
+        }
+        else if ((*map)->jj[ii] == 0)
+        {(*map)->iPjM[ii] = (*map)->icjM[ii] + 1;}
+        else
+        {(*map)->iPjM[ii] = (*map)->iPjc[(*map)->icjM[ii]];}
+        // iMjP map
+        if ((*map)->ii[ii] == 0)
+        {
+            if ((*map)->jj[ii] == param->ny-1)
+            {(*map)->iMjP[ii] = param->n2ct - 4;}
+            else
+            {(*map)->iMjP[ii] = (*map)->iMjc[(*map)->icjP[ii]];}
+        }
+        else if ((*map)->jj[ii] == param->ny-1)
+        {(*map)->iMjP[ii] = (*map)->icjP[ii] - 1;}
+        else
+        {(*map)->iMjP[ii] = (*map)->iMjc[(*map)->icjP[ii]];}
+    }
+    // boundary cells for mpi exchange
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*map)->jPin[ii] = param->nx*(param->ny-1) + ii;
+        (*map)->jPou[ii] = (*map)->icjP[(*map)->jPin[ii]];
+        (*map)->jMin[ii] = ii;
+        (*map)->jMou[ii] = (*map)->icjM[(*map)->jMin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*map)->iPin[ii] = (ii+1) * param->nx - 1;
+        (*map)->iPou[ii] = (*map)->iPjc[(*map)->iPin[ii]];
+        (*map)->iMin[ii] = ii * param->nx;
+        (*map)->iMou[ii] = (*map)->iMjc[(*map)->iMin[ii]];
+    }
+
 }
 
-
-// ========== Create Map for Subsurface ==========
-void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting, int root, int irank, int nrank)
+// >>>>> Build connections for subsurface domain <<<<<
+void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Config *param, int irank)
 {
-    int ii, jj, kk, ll, pp, ind, maxLay, N3ca = 0;
-    double columnH, nnlay, htopmin = 0.01;
-    int ngtiP = 0, ngtiM = 0, ngtjP = 0, ngtjM = 0;
-    int indgtiP = 0, indgtiM = 0, indgtjP = 0, indgtjM = 0;
-    // initialize gmap, number of layer in each column, and top-layer thickness
-    *gmap = malloc(sizeof(Gmaps));
-    (*gmap)->allMaxLayer = malloc(setting->np*sizeof(int));
-    (*gmap)->maxLay = malloc(1*sizeof(int));
-    (*gmap)->nlay = malloc(setting->N2ci*sizeof(int));
-    (*gmap)->htop = malloc(setting->N2ci*sizeof(double));
-    for (ii = 0; ii < setting->N2ci; ii++)
-    {
-        (*gmap)->nlay[ii] = 0;
-        (*gmap)->htop[ii] = -1;
-    }
-    // compute total number of subsurface cells
-    maxLay = 0;
-    for (ll = 0; ll < setting->N2ci; ll++)
-    {
-        columnH = bath->bottomZ[ll] - setting->zbot;
-        if (columnH < 0) {printf("WARNING: Column height is negative!\n");}
+    int ii, jj;
+    double *bath_min, *bath_max, *bath_max_global, *bath_max_arr, *bath_min_global, *bath_min_arr;
 
-        if (floor(columnH/setting->layZ) == columnH/setting->layZ)
-        {(*gmap)->nlay[ll] = floor(columnH / setting->layZ);}
+    *map = malloc(sizeof(Map));
+    bath_min = malloc(sizeof(double));
+    bath_max = malloc(sizeof(double));
+    bath_max_global = malloc(sizeof(double));
+    bath_max_arr = malloc(param->mpi_ny*param->mpi_nx*sizeof(double));
+    bath_min_global = malloc(sizeof(double));
+    bath_min_arr = malloc(param->mpi_ny*param->mpi_nx*sizeof(double));
+    // calculate number of layers
+    bath_max[0] = getMax(bath, param->n2ci);
+    bath_min[0] = getMin(bath, param->n2ci);
+    if (param->use_mpi == 1)
+    {
+        mpi_gather_double(bath_max_arr, bath_max, 1, 0);
+        bath_max_global[0] = getMax(bath_max_arr, param->mpi_ny*param->mpi_nx);
+        mpi_bcast_double(bath_max_global, 1, 0);
+        mpi_gather_double(bath_min_arr, bath_min, 1, 0);
+        bath_min_global[0] = getMin(bath_min_arr, param->mpi_ny*param->mpi_nx);
+        mpi_bcast_double(bath_min_global, 1, 0);
+    }
+    else
+    {
+        bath_max_global[0] = bath_max[0];
+        bath_min_global[0] = bath_min[0];
+    }
+    param->botZ += offset[0];
+    if (param->dz_incre == 1.0)
+    {
+        param->nz = ceil((bath_max_global[0] - param->botZ) / param->dz);
+        (*map)->bot1d = malloc(param->nz*sizeof(double));
+        for (ii = 0; ii < param->nz; ii++)
+        {(*map)->bot1d[ii] = bath_max_global[0] - (ii+1)*param->dz;}
+    }
+    else
+    {
+        // variable dz
+    }
+    if (irank == 0) {printf("   >> Total number of subsurface layer = %d\n",param->nz);}
+
+    param->N3CI = param->NX * param->NY * param->nz;
+
+    if ((*map)->bot1d[param->nz-1] > bath_min_global[0])
+    {mpi_print("WARNING: Bottom of subsurface domain > min bathymetry!",irank);}
+
+    // update domain dimensions
+    param->n3ci = param->n2ci * param->nz;
+    param->n3ct = param->n2ct * (param->nz+2);
+
+    // calculate 3D dz, actv map and cntr map
+    (*map)->cntr = malloc(param->n3ci*sizeof(int));
+    (*map)->ii = malloc(param->n3ci*sizeof(int));
+    (*map)->jj = malloc(param->n3ci*sizeof(int));
+    (*map)->kk = malloc(param->n3ci*sizeof(int));
+    (*map)->actv = malloc(param->n3ct*sizeof(int));
+    (*map)->bot3d = malloc(param->n3ci*sizeof(double));
+    (*map)->dz3d = malloc(param->n3ci*sizeof(double));
+    (*map)->istop = malloc(param->n3ci*sizeof(int));
+    (*map)->top2d = malloc(param->n3ci*sizeof(int));
+    for (ii = 0; ii < param->n3ct; ii++)    {(*map)->actv[ii] = 0;}
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        (*map)->cntr[ii] = ii;
+        (*map)->top2d[ii] = floor(ii / param->nz);
+        (*map)->ii[ii] = smap->ii[(*map)->top2d[ii]];
+        (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
+        (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
+        (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
+        (*map)->dz3d[ii] = param->dz;
+        (*map)->istop[ii] = 0;
+    }
+    // adjust dz with respect to bathymetry
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        if ((*map)->bot3d[ii] >= bath[(*map)->top2d[ii]] - 1e-5)
+        {
+            (*map)->actv[ii] = 0;
+            if ((*map)->bot3d[ii] - bath[(*map)->top2d[ii]] < param->dz)
+            {
+                (*map)->bot3d[ii] = bath[(*map)->top2d[ii]];
+            }
+        }
         else
         {
-            if (columnH - floor(columnH/setting->layZ)*setting->layZ > 0.5*setting->layZ)
-            {(*gmap)->nlay[ll] = floor(columnH/setting->layZ) + 1;}
-            else
-            {(*gmap)->nlay[ll] = floor(columnH/setting->layZ);}
+            (*map)->actv[ii] = 1;
+            // if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
+            // {
+            //     if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.5*param->dz)
+            //     {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
+            //     else
+            //     {
+            //         (*map)->actv[ii] = 0;
+            //         (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+            //     }
+            // }
+            (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
+
         }
-        (*gmap)->htop[ll] = setting->layZ;
-        if ((*gmap)->htop[ll] < htopmin) {(*gmap)->htop[ll] = htopmin;}
-        if ((*gmap)->nlay[ll] > maxLay) {maxLay = (*gmap)->nlay[ll];}
-        N3ca += (*gmap)->nlay[ll];
     }
-	(*gmap)->maxLay[0] = maxLay;
-
-    // if parallel, get the max layer of the entire domain
-    if (setting->useMPI == 1)
+    // get the top cell index
+    for (ii = 0; ii < param->n3ci; ii++)
     {
-        combineAllRanksLayer((*gmap)->allMaxLayer, (*gmap)->maxLay, setting, root);
-        (*gmap)->maxLay[0] = getMaxInt((*gmap)->allMaxLayer, setting->np);
-        broadcastAllRanksLayer((*gmap)->maxLay, root);
-    }
-
-    // update the layer information
-    printf("Max number of layers = %d\n",(*gmap)->maxLay[0]);
-    (*gmap)->ngtjP = (*gmap)->maxLay[0] * setting->nx;
-	(*gmap)->ngtjM = (*gmap)->maxLay[0] * setting->nx;
-	(*gmap)->ngtiP = (*gmap)->maxLay[0] * setting->ny;
-	(*gmap)->ngtiM = (*gmap)->maxLay[0] * setting->ny;
-    // compute total number of subsurface cells
-    //for (ii = 0; ii < setting->nx; ii++)
-    //{ngtjP += (*gmap)->nlay[map->jPbd[ii]];    ngtjM += (*gmap)->nlay[map->jMbd[ii]];}
-    //for (ii = 0; ii < setting->ny; ii++)
-    //{ngtiP += (*gmap)->nlay[map->iPbd[ii]];    ngtiM += (*gmap)->nlay[map->iMbd[ii]];}
-	// N3ci = all interior grids for subsurface domain
-    setting->N3ci = (*gmap)->maxLay[0] * setting->nx * setting->ny;
-	// N3ct = all grids for subsurface domain (interior + ghost)
-    setting->N3ct = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + (*gmap)->ngtiP + (*gmap)->ngtiM;
-	// N3CI = all interior grids for all ranks
-	setting->N3CI = setting->N3ci * setting->np;
-	// N3cf = all subsurface + surface grids for the current rank
-    setting->N3cf = setting->N3ct + setting->N2ci;
-	// N3ca = all active interior subsurface grids
-	setting->N3ca = N3ca;
-
-    // initialize Gmap fields
-    (*gmap)->cntr = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->actv = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->iPjckc = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->iMjckc = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->icjPkc = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->icjMkc = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->icjckP = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->icjckM = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->ii = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->jj = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->kk = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->istop = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->top2D = malloc(setting->N3ci*sizeof(int));
-    (*gmap)->dz3d = malloc(setting->N3ci*sizeof(double));
-    (*gmap)->bot3d = malloc(setting->N3ci*sizeof(double));
-    (*gmap)->bot2d = malloc(setting->N2ci*sizeof(double));
-    // outer loop over 2D domain
-    ind = 0;
-    for (ll = 0; ll < setting->N2ci; ll++)
-    {
-        jj = floor(ll / setting->nx);
-        ii = ll - jj * setting->nx;
-        (*gmap)->bot2d[ll] = bath->bottomZ[ll];
-        // inner loop over each column
-        for (kk = 0; kk < (*gmap)->maxLay[0]; kk++)
+        if (ii == 0)    {if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {(*map)->istop[ii] = 1;}}
+        else
         {
-            (*gmap)->ii[ind] = ii;
-            (*gmap)->jj[ind] = jj;
-            (*gmap)->kk[ind] = kk;
-            (*gmap)->cntr[ind] = ind;
-			if (kk < (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
-			{(*gmap)->actv[ind] = 0;}
-			else
-			{(*gmap)->actv[ind] = 1;}
-            // iP
-            if (ii != setting->nx-1)
-            {(*gmap)->iPjckc[ind] = ind + (*gmap)->maxLay[0];}
-            else
-            {
-				(*gmap)->iPjckc[ind] = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + indgtiP;
-				indgtiP += 1;
-			}
-            // iM
-            if (ii != 0)
-            {(*gmap)->iMjckc[ind] = ind - (*gmap)->maxLay[0];}
-            else
-            {
-				(*gmap)->iMjckc[ind] = setting->N3ci + (*gmap)->ngtjP + (*gmap)->ngtjM + (*gmap)->ngtiP + indgtiM;
-				indgtiM += 1;
-			}
-            // jP
-            if (jj != setting->ny-1)
-            {(*gmap)->icjPkc[ind] = ind + setting->nx * (*gmap)->maxLay[0];}
-            else
-            {
-				(*gmap)->icjPkc[ind] = setting->N3ci + indgtjP;
-				indgtjP += 1;
-			}
-            // jM
-            if (jj != 0)
-            {(*gmap)->icjMkc[ind] = ind - setting->nx * (*gmap)->maxLay[0];}
-            else
-            {
-				(*gmap)->icjMkc[ind] = setting->N3ci + (*gmap)->ngtjP + indgtjM;
-				indgtjM += 1;
-			}
-            // kP
-            if (kk != (*gmap)->maxLay[0]-1 & kk >= (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
-            {(*gmap)->icjckP[ind] = ind + 1;}
-            else
-            {(*gmap)->icjckP[ind] = -1;}
-            // kM
-            if (kk != 0 & kk > (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
-            {(*gmap)->icjckM[ind] = ind - 1;}
-			else if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
-			{(*gmap)->icjckM[ind] = setting->N3ct + ll;}
-            else
-            {(*gmap)->icjckM[ind] = -1;}
-
-			// identify if a cell is on top layer
-            if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll])
-            {(*gmap)->istop[ind] = 1;   (*gmap)->top2D[ind] = ll;}
-            else if (kk == (*gmap)->maxLay[0] - (*gmap)->nlay[ll] + 1)
-            {(*gmap)->istop[ind] = 2;   (*gmap)->top2D[ind] = ll;}
-            else
-            {(*gmap)->istop[ind] = 0;   (*gmap)->top2D[ind] = ll;}
-            // calculate dz vector
-            if ((*gmap)->actv[ind] == 1)
-            {
-                (*gmap)->dz3d[ind] = setting->layZ;
-                // if ((*gmap)->istop[ind] == 1)
-                // {(*gmap)->dz3d[ind] = (*gmap)->htop[(*gmap)->top2D[ind]];}
-                // else
-                // {(*gmap)->dz3d[ind] = setting->layZ;}
-            }
-            else
-            {(*gmap)->dz3d[ind] = -1;}
-            // update bottom elevation of each active cell
-            if ((*gmap)->actv[ind] == 1)
-            {
-                if ((*gmap)->istop[ind] == 1)
-                {(*gmap)->bot3d[ind] = bath->bottomZ[(*gmap)->top2D[ind]] - (*gmap)->dz3d[ind];}
-                else
-                {(*gmap)->bot3d[ind] = (*gmap)->bot3d[(*gmap)->icjckM[ind]] - setting->layZ;}
-            }
-            else
-            {(*gmap)->bot3d[ind] = 100;}
-            // update the counter
-            ind++;
-
+            if ((*map)->actv[ii] == 1 & (*map)->actv[ii-1] == 0)    {(*map)->istop[ii] = 1;}
+            else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
         }
     }
+
+
+    // calculate iP, iM, jP, jM, kP, kM maps
+    (*map)->iPjckc = malloc(param->n3ci*sizeof(int));
+    (*map)->iMjckc = malloc(param->n3ci*sizeof(int));
+    (*map)->icjPkc = malloc(param->n3ci*sizeof(int));
+    (*map)->icjMkc = malloc(param->n3ci*sizeof(int));
+    (*map)->icjckP = malloc(param->n3ci*sizeof(int));
+    (*map)->icjckM = malloc(param->n3ci*sizeof(int));
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        jj = (*map)->top2d[ii];
+        // iP and iM maps
+        if ((*map)->ii[ii] == param->nx-1)
+        {(*map)->iPjckc[ii] = param->n3ci + 2*param->nx*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
+        else
+        {(*map)->iPjckc[ii] = (*map)->cntr[ii] + param->nz;}
+        if ((*map)->ii[ii] == 0)
+        {(*map)->iMjckc[ii] = param->n3ci + 2*param->nx*param->nz + param->ny*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
+        else
+        {(*map)->iMjckc[ii] = (*map)->cntr[ii] - param->nz;}
+        // jP and jM maps
+        if ((*map)->jj[ii] == param->ny-1)
+        {(*map)->icjPkc[ii] = param->n3ci + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
+        else
+        {(*map)->icjPkc[ii] = (*map)->cntr[ii] + param->nx*param->nz;}
+        if ((*map)->jj[ii] == 0)
+        {(*map)->icjMkc[ii] = param->n3ci + param->nx*param->nz + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
+        else
+        {(*map)->icjMkc[ii] = (*map)->cntr[ii] - param->nx*param->nz;}
+        // kP and kM maps
+        if ((*map)->kk[ii] == param->nz-1)
+        {(*map)->icjckP[ii] = param->n2ct*param->nz + (*map)->top2d[ii];}
+        else
+        {(*map)->icjckP[ii] = (*map)->cntr[ii] + 1;}
+        if ((*map)->kk[ii] == 0)
+        {(*map)->icjckM[ii] = param->n2ct*(param->nz+1) + (*map)->top2d[ii];}
+        else
+        {(*map)->icjckM[ii] = (*map)->cntr[ii] - 1;}
+    }
+
+    // calculate boundary maps
+    (*map)->iPin = malloc(param->ny*param->nz*sizeof(int));
+    (*map)->iPou = malloc(param->ny*param->nz*sizeof(int));
+    (*map)->iMin = malloc(param->ny*param->nz*sizeof(int));
+    (*map)->iMou = malloc(param->ny*param->nz*sizeof(int));
+    (*map)->jPin = malloc(param->nx*param->nz*sizeof(int));
+    (*map)->jPou = malloc(param->nx*param->nz*sizeof(int));
+    (*map)->jMin = malloc(param->nx*param->nz*sizeof(int));
+    (*map)->jMou = malloc(param->nx*param->nz*sizeof(int));
+    (*map)->kPin = malloc(param->nx*param->ny*sizeof(int));
+    (*map)->kPou = malloc(param->nx*param->ny*sizeof(int));
+    (*map)->kMin = malloc(param->nx*param->ny*sizeof(int));
+    (*map)->kMou = malloc(param->nx*param->ny*sizeof(int));
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        if ((*map)->ii[ii] == param->nx-1)
+        {
+            (*map)->iPin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
+            (*map)->iPou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iPjckc[ii];
+        }
+        if ((*map)->ii[ii] == 0)
+        {
+            (*map)->iMin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
+            (*map)->iMou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iMjckc[ii];
+        }
+        if ((*map)->jj[ii] == param->ny-1)
+        {
+            (*map)->jPin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
+            (*map)->jPou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjPkc[ii];
+        }
+        if ((*map)->jj[ii] == 0)
+        {
+            (*map)->jMin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
+            (*map)->jMou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjMkc[ii];
+        }
+        if ((*map)->kk[ii] == param->nz-1)
+        {
+            (*map)->kPin[(*map)->top2d[ii]] = ii;
+            (*map)->kPou[(*map)->top2d[ii]] = (*map)->icjckP[ii];
+        }
+        if ((*map)->kk[ii] == 0)
+        {
+            (*map)->kMin[(*map)->top2d[ii]] = ii;
+            (*map)->kMou[(*map)->top2d[ii]] = (*map)->icjckM[ii];
+        }
+    }
+
+    // boundary actv
+    for (ii = 0; ii < param->ny*param->nz; ii++)
+    {
+        (*map)->actv[(*map)->iPou[ii]] = (*map)->actv[(*map)->iPin[ii]];
+        (*map)->actv[(*map)->iMou[ii]] = (*map)->actv[(*map)->iMin[ii]];
+    }
+    // yp and ym boundaries
+    for (ii = 0; ii < param->nx*param->nz; ii++)
+    {
+        (*map)->actv[(*map)->jPou[ii]] = (*map)->actv[(*map)->jPin[ii]];
+        (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
+    }
+
+    free(bath_min);
+    free(bath_max);
+    free(bath_max_global);
+    free(bath_max_arr);
+    free(bath_min_global);
+    free(bath_min_arr);
+
 }

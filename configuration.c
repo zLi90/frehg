@@ -1,191 +1,110 @@
+// read configuration
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
 #include<math.h>
 #include<string.h>
 
-#include "configuration.h"
-#include "utilities.h"
 
-// -----------------------------------------------------------------------------
-// This file contains all user-defined parameters for the FREHD model. This
-// should be the only file user needs to modify. A complete description of
-// all the fields in setting could be found in configuration.h
-// - Zhi Li 2017-05-05 -
-// -----------------------------------------------------------------------------
+#include"utility.h"
 
-// ========= Assign setting values to its fields =========
-void ReadUserSettings(Config **setting, double *configArr, char *date, char *inputFolder, char *outputFolder, char *subgridFolder)
+
+void read_input(Config **param);
+
+
+// >>>>> Read all user settings <<<<<
+void read_input(Config **param)
 {
-    int ii, jj, kk = 0;
-    *setting = malloc(sizeof(Config));
-    // -------------------- GRID SETTINGS ----------------------------------------
-    (*setting)->dx = configArr[4];    (*setting)->dy = configArr[5];
-    (*setting)->NX = configArr[6];  (*setting)->NY = configArr[7];
-    // -------------------- OPERATION SETTINGS -----------------------------------
-    (*setting)->dt = configArr[8];    (*setting)->Nt = configArr[9]*86400/(*setting)->dt;
-    (*setting)->OutItvl = configArr[11]*3600/(*setting)->dt;
-    strcpy((*setting)->tStart, date);
-    strcpy((*setting)->saveFolder, outputFolder);
-    strcpy((*setting)->inputFolder, inputFolder);
-    (*setting)->useCellEdge = configArr[10];
-    (*setting)->savesurface = configArr[12];
-    (*setting)->saveuu = configArr[13];
-    (*setting)->savevv = configArr[14];
-    (*setting)->savedepth = configArr[15];
-    (*setting)->savescalar = configArr[16];
-    (*setting)->saveCD = configArr[17];
-    (*setting)->savesub = configArr[18];
-    // -------------------- BOUNDARY CONDITIONS ----------------------------------
-    (*setting)->bcType = configArr[19];
-    // --- Tide P ---
-    (*setting)->tideLocLengthP = configArr[20];;
-    int tideLocP[(*setting)->tideLocLengthP];
-    for (ii = 0; ii < (*setting)->tideLocLengthP; ii++)
-    {tideLocP[ii] = configArr[21] + ii;}
-    (*setting)->tideNP = configArr[22];
-    // --- Tide M ---
-    (*setting)->tideLocLengthM = configArr[23];;
-    int tideLocM[(*setting)->tideLocLengthM];
-    for (ii = 0; ii < (*setting)->tideLocLengthM; ii++)
-    {tideLocM[ii] = configArr[24] + ii;}
-    (*setting)->tideNM = configArr[25];
-    // --- Inflow ---
-    (*setting)->inflowLocLength = configArr[26];
-    int inflowLoc[(*setting)->inflowLocLength];
-    for (ii = configArr[27]; ii < configArr[28]; ii++)
-    {
-        for (jj = configArr[29]; jj < configArr[30]; jj++)
-        {inflowLoc[kk] = jj * (*setting)->NX + ii - 1;      kk += 1;}
-    }
-    (*setting)->inflowN = configArr[31];
-    // --- Wind ---
-    (*setting)->useWind = configArr[32];
-    (*setting)->northAngle = configArr[33];
-    (*setting)->windspdN = configArr[34];
-    (*setting)->winddirN = configArr[35];
-    // --- Scalar ---
-    (*setting)->useScalar = configArr[36];
-    (*setting)->scalarAdv = configArr[37];
-    (*setting)->useConstInflowS = configArr[38];
-    (*setting)->inflowS = configArr[39];
-    (*setting)->useConstTidePS = configArr[40];
-    (*setting)->tidePS = configArr[41];
-    (*setting)->tidalPSN = configArr[42];
-    (*setting)->useConstTideMS = configArr[43];
-    (*setting)->tideMS = configArr[44];
-    (*setting)->tidalMSN = configArr[45];
-    // -------------------- INITIAL CONDITIONS -----------------------------------
-    (*setting)->initU = configArr[46];
-    (*setting)->initV = configArr[47];
-    (*setting)->initSurf = configArr[48];
-    (*setting)->initS = configArr[49];
-    (*setting)->useConstSurf0 = configArr[50];
-    (*setting)->useConstU0 = configArr[51];
-    (*setting)->useConstV0 = configArr[52];
-    (*setting)->useConstInitS = configArr[53];
-    // -------------------- SUBGRID SETTINGS -------------------------------------
-    (*setting)->useSubgrid = configArr[54];
-    (*setting)->useSubDrag = configArr[55];
-    strcpy((*setting)->subgridFolder, subgridFolder);
-    (*setting)->dxf = configArr[56];
-    (*setting)->dyf = configArr[57];
-    (*setting)->dA = (*setting)->dxf * (*setting)->dyf;
-    (*setting)->subR = (*setting)->dx / (*setting)->dxf;
-    (*setting)->surfmax = configArr[58];
-    (*setting)->surfmin = configArr[59];
-    (*setting)->dsurf = configArr[60];
-    (*setting)->staggeredV = configArr[61];
-    (*setting)->useminA = configArr[62];
-    (*setting)->beta = configArr[63];
-    // -------------------- MPI SETTINGS -----------------------------------------
-    (*setting)->useMPI = configArr[64];
-    (*setting)->np = configArr[65];
-    // -------------------- PHYSICAL PROPERTIES ----------------------------------
-    (*setting)->g = configArr[66];
-    (*setting)->NUx = configArr[67];
-    (*setting)->NUy = configArr[68];
-    (*setting)->CDnotN = configArr[69];
-    (*setting)->CDx = configArr[70];
-    (*setting)->CDy = configArr[71];
-    (*setting)->manningN = configArr[72];
-    (*setting)->useThinLayer = configArr[73];
-    (*setting)->z0 = configArr[74];
-    (*setting)->hD = (*setting)->z0;
-    (*setting)->CDmax = configArr[75];
-    (*setting)->CwT = configArr[76];
-    (*setting)->rhoa = configArr[77];
-    (*setting)->Cw = configArr[78];
-    (*setting)->Kx = configArr[79];
-    (*setting)->Ky = configArr[80];
-    (*setting)->minDepth = configArr[81];
-    (*setting)->wtfh = configArr[82];
-    (*setting)->CFLl = configArr[83];
-    (*setting)->CFLh = configArr[84];
-    (*setting)->eps = configArr[85];
-    (*setting)->maxIter = configArr[86];
-  // -------------------- GROUNDWATER ----------------------------------
-    (*setting)->useSubsurface = configArr[87];
-    (*setting)->zbot = configArr[88];
-    (*setting)->layZ = configArr[89];
-    (*setting)->dtg = configArr[90];
-    (*setting)->porosity = configArr[91];
-    (*setting)->topBC = configArr[92];
-    (*setting)->botBC = configArr[93];
-    (*setting)->Kxx = configArr[94];
-    (*setting)->Kyy = configArr[95];
-    (*setting)->Kzz = configArr[96];
-    (*setting)->H0 = configArr[97];
-    (*setting)->useSubscalar = configArr[98];
-    (*setting)->subS0 = configArr[99];
-	(*setting)->Kmx = configArr[100];
-	(*setting)->Kmy = configArr[101];
-	(*setting)->Kmz = configArr[102];
-	(*setting)->a1 = configArr[103];
-	(*setting)->a2 = configArr[104];
-	(*setting)->Sres = configArr[105];
-    (*setting)->useUnSat = configArr[106];
-	// ------------------------ EVAP/RAIN --------------------------------
-	(*setting)->useRain = configArr[107];
-    (*setting)->qRain = configArr[108];
-    (*setting)->rTstart = configArr[109];
-    (*setting)->rTend = configArr[110];
-    (*setting)->rainN = configArr[111];
-	(*setting)->useEvap = configArr[112];
-	(*setting)->qEvap = configArr[113];
-    (*setting)->eTstart = configArr[114];
-    (*setting)->eTend = configArr[115];
-	(*setting)->evapN = configArr[116];
-    (*setting)->kkext = configArr[117];
-  // ---------------------------------------------------------------------------
-  // -------------------- NO USER CHANGE BELOW ---------------------------------
-  // ---------------------------------------------------------------------------
-  // ---------- Derived Values ----------
-  // sizes of data arrays
-  (*setting)->N2CI = (*setting)->NX*(*setting)->NY;
-  (*setting)->N2CT = ((*setting)->NX+2)*((*setting)->NY+2);
-  if ((*setting)->NY % (*setting)->np != 0)
-  {printf("WARNING: The computation domain cannot be evenly divided by nranks!\n");}
-  else
-  {
-    (*setting)->nx = (*setting)->NX;    (*setting)->ny = round((*setting)->NY/(*setting)->np);
-    (*setting)->N2ci = (*setting)->nx*(*setting)->ny;
-    (*setting)->N2ct = ((*setting)->nx+2)*((*setting)->ny+2);
-  }
-  // start and end time represented by date number
-  (*setting)->tNStart = dateNum((*setting)->tStart);
-  (*setting)->tNEnd = (*setting)->tNStart + (*setting)->dt*(*setting)->Nt;
-  // locations of boundary conditions
-  for (ii = 0; ii < (*setting)->tideLocLengthP; ii++)
-  {(*setting)->tideLocP[ii] = tideLocP[ii] + (*setting)->nx*((*setting)->ny-1);}
-  for (ii = 0; ii < (*setting)->tideLocLengthM; ii++)
-  {(*setting)->tideLocM[ii] = tideLocM[ii];}
-  for (ii = 0; ii < (*setting)->inflowLocLength; ii++)
-  {(*setting)->inflowLoc[ii] = inflowLoc[ii];}// + (*setting)->nx;}
-  // check if subgrid bathymetry can be created
-  if ((*setting)->useSubgrid == 1)
-  {
-    if (fmod((*setting)->dx,(*setting)->dxf) != 0 | fmod((*setting)->dy,(*setting)->dyf) != 0)
-    {printf("WARNING: The coarse grid cannot be divided by the fine grid!\n");}
-  }
+    *param = malloc(sizeof(Config));
+    // Directory
+    strcpy((*param)->finput, read_one_input("finput", "input"));
+    strcpy((*param)->foutput, read_one_input("foutput", "input"));
+    strcpy((*param)->sim_id, read_one_input("sim_id", "input"));
+
+    // Domain geometry
+    (*param)->NX = (int) read_one_input_double("NX", "input");
+    (*param)->NY = (int) read_one_input_double("NY", "input");
+    (*param)->botZ = read_one_input_double("botZ", "input");
+    (*param)->dx = read_one_input_double("dx", "input");
+    (*param)->dy = read_one_input_double("dy", "input");
+    (*param)->dz = read_one_input_double("dz", "input");
+    (*param)->dz_incre = read_one_input_double("dz_incre", "input");
+    (*param)->use_mpi = (int) read_one_input_double("use_mpi", "input");
+    (*param)->mpi_nx = (int) read_one_input_double("mpi_nx", "input");
+    (*param)->mpi_ny = (int) read_one_input_double("mpi_ny", "input");
+
+    // Time control
+    (*param)->dt = read_one_input_double("dt", "input");
+    (*param)->Tend = read_one_input_double("Tend", "input");
+    (*param)->NT = (int) read_one_input_double("NT", "input");
+    (*param)->dt_out = read_one_input_double("dt_out", "input");
+    if ((*param)->use_mpi == 1)
+    {(*param)->dt_root = malloc((*param)->mpi_nx*(*param)->mpi_ny*sizeof(double));}
+
+    // Bathymetry
+    (*param)->bath_file = (int) read_one_input_double("bath_file", "input");
+
+    // Parameters
+    (*param)->min_dept = read_one_input_double("min_dept", "input");
+    (*param)->wtfh = read_one_input_double("wtfh", "input");
+    (*param)->hD = read_one_input_double("hD", "input");
+    (*param)->manning = read_one_input_double("manning", "input");
+    (*param)->grav = read_one_input_double("grav", "input");
+    (*param)->viscx = read_one_input_double("viscx", "input");
+    (*param)->viscy = read_one_input_double("viscy", "input");
+
+    // Shallow water solver
+    (*param)->sim_shallowwater = (int) read_one_input_double("sim_shallowwater", "input");
+    (*param)->bctype_SW = read_one_input_array("bctype_SW", "input", 4);
+
+    (*param)->init_eta = read_one_input_double("init_eta", "input");
+
+    (*param)->n_tide = (int) read_one_input_double("n_tide", "input");
+    (*param)->tide_file = (int) read_one_input_double("tide_file", "input");
+    (*param)->init_tide = read_one_input_array_double("init_tide", "input", 2*(*param)->n_tide);
+    (*param)->tide_locX = read_one_input_array("tide_locX", "input", 2*(*param)->n_tide);
+    (*param)->tide_locY = read_one_input_array("tide_locY", "input", 2*(*param)->n_tide);
+
+    (*param)->evap_file = (int) read_one_input_double("evap_file", "input");
+    (*param)->q_evap = read_one_input_double("q_evap", "input");
+    (*param)->rain_file = (int) read_one_input_double("rain_file", "input");
+    (*param)->q_rain = read_one_input_double("q_rain", "input");
+
+    (*param)->inflow_loc = read_one_input_array("inflow_loc", "input", 4);
+    (*param)->n_inflow = (int) read_one_input_double("n_inflow", "input");
+
+    // subgrid model
+    (*param)->use_subgrid = (int) read_one_input_double("use_subgrid", "input");
+
+    // Groundwater solver
+    (*param)->sim_groundwater = (int) read_one_input_double("sim_groundwater", "input");
+    (*param)->use_full3d = (int) read_one_input_double("use_full3d", "input");
+    (*param)->dt_adjust = (int) read_one_input_double("dt_adjust", "input");
+    (*param)->use_corrector = (int) read_one_input_double("use_corrector", "input");
+    (*param)->post_allocate = (int) read_one_input_double("post_allocate", "input");
+    (*param)->use_mvg = (int) read_one_input_double("use_mvg", "input");
+    (*param)->aev = read_one_input_double("aev", "input");
+    (*param)->dt_max = read_one_input_double("dt_max", "input");
+    (*param)->dt_min = read_one_input_double("dt_min", "input");
+    (*param)->Co_max = read_one_input_double("Co_max", "input");
+    (*param)->Ksx = read_one_input_double("Ksx", "input");
+    (*param)->Ksy = read_one_input_double("Ksy", "input");
+    (*param)->Ksz = read_one_input_double("Ksz", "input");
+    (*param)->Ss = read_one_input_double("Ss", "input");
+    (*param)->wcs = read_one_input_double("wcs", "input");
+    (*param)->wcr = read_one_input_double("wcr", "input");
+    (*param)->soil_a = read_one_input_double("soil_a", "input");
+    (*param)->soil_n = read_one_input_double("soil_n", "input");
+    // groundwater initial condition
+    (*param)->init_wc = read_one_input_double("init_wc", "input");
+    (*param)->init_h = read_one_input_double("init_h", "input");
+    (*param)->init_wt_abs = read_one_input_double("init_wt_abs", "input");
+    (*param)->init_wt_rel = read_one_input_double("init_wt_rel", "input");
+    (*param)->qtop = read_one_input_double("qtop", "input");
+    (*param)->qbot = read_one_input_double("qbot", "input");
+    (*param)->htop = read_one_input_double("htop", "input");
+    (*param)->hbot = read_one_input_double("hbot", "input");
+    // groundwater boundary condition
+    (*param)->bctype_GW = read_one_input_array("bctype_GW", "input", 6);
+
 }

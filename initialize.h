@@ -1,60 +1,48 @@
-
-#include "bathymetry.h"
-#include "configuration.h"
-#include "map.h"
-#include "subgrid.h"
+// Header file for initialize.c
+#include"map.h"
+#include"configuration.h"
 
 #ifndef INITIALIZE_H
 #define INITIALIZE_H
 
+
+
 typedef struct Data
 {
-  double *uuXP, *uuYP, *vvXP, *vvYP, *surf, *surfOld, *Fuu, *Fvv, *cellV;
-  double *alluuXP, *allvvYP, *allsurf, *alldepth, *allS, *allCDXP, *allCDYP;
-  double *depth, *depthXP, *depthYP;
-  double *EnXP, *EnYP, *DragXP, *DragYP, *CDXP, *CDYP;
-  double *GnCt, *GnXP, *GnYP, *GnXM, *GnYM;
-  double *z, *wtfXP, *wtfYP, *S, *Sm, *rmvCFL;
-  double *advX, *advY, *CFLx, *CFLy;
-  double *Vloss, *allVloss, *Vloss1, *Vloss2, *Vloss3, *Vloss4, *Qseep, *Ssub, *dz, *rainC;
-  int *inflowLoc;
+    // bathymetry related fields
+    double *bottom, *bottom_root, *offset, *bottomXP, *bottomYP;
+    // surface domain
+    int *reset_seepage;
+    double *uu, *uy, *vv, *vx, *eta, *etan, *dept, *deptx, *depty, *qseepage;
+    double *uu_root, *vv_root, *eta_root, *dept_root, *seep_root;
+    double *uu_out, *vv_out, *eta_out, *dept_out, *seep_out;
+    double *Fu, *Fv, *Ex, *Ey, *Dx, *Dy, *CDx, *CDy, *wtfx, *wtfy, *cflx, *cfly, *cfl_active;
+    double *Vs, *Vsx, *Vsy, *Asx, *Asy, *Asz, *Aszx, *Aszy;
+    // subsurface domain
+    double *h, *hn, *hp, *hwc, *wc, *wcn, *wcp, *wch, *h_root, *wc_root, *dh6, *rsplit;
+    double *vloss, *vloss_root, *room, qtop, qbot, hbot, htop;
+    double *Kx, *Ky, *Kz, *qx, *qy, *qz, *qx_root, *qy_root, *qz_root, *Vg, *ch;
+    double *h_out, *wc_out, *qx_out, *qy_out, *qz_out;
+    double *wcs, *wcr, *vga, *vgn, *Ksz, *Ksx, *Ksy;
+    double *t_out, *qbc;
+    int *repeat;
+    // linear system
+    double *Sct, *Srhs, *Sxp, *Syp, *Sxm, *Sym;
+    double *Gct, *Grhs, *Gxp, *Gxm, *Gyp, *Gym, *Gzp, *Gzm;
+    // boundary conditions
+    double *tide, *tide1, *t_tide1, *tide2, *t_tide2;
+    double *rain, *evap, *q_rain, *t_rain, *q_evap, *t_evap, *rain_sum;
+    double *inflow, *t_inflow;
 }Data;
-
-typedef struct IC
-{
-  double surf0, U0, V0, S0, *allS0, *allSurf0, *allU0, *allV0, *restartU0, *restartV0, *restartSurf0, *restartS0;
-}IC;
-
-typedef struct BC
-{
-  double *tideP, *tideM, *inflow, *windspd, *winddir, *tidalPS, *tidalMS;
-  double *evap, *rain;
-}BC;
-
-typedef struct Ground
-{
-    double H0, SS, *allh0, *allh, *h, *hm, *hOld, *Cx, *Cy, *Cz, *Kx, *Ky, *Kz, *V, *B, *wc, *wcf, *allwc;
-    double *GnCt, *GnXP, *GnXM, *GnYP, *GnYM, *GnZP, *GnZM;
-    double *nlay, *Quu, *Qvv, *Qww, *dwc;
-    double *S, *Sm, *allS, *qe;
-    int *wcflag;
-}Ground;
-
 
 #endif
 
-void Init(Data **data, Maps **map, Ground **ground, Gmaps **gmap, IC **ic, BC **bc, Sub **sub, Bath *bath, Config *setting, int irank, int nrank);
-void enforceBathBC(Bath *bath, Maps *map, Config *setting, int irank, int nrank);
-void initDataArrays(Data **data, Config *setting);
-void initFieldValues(Data **data, Bath *bath, IC *ic, Config *setting, int irank);
-void initICArrays(IC **ic, Config *setting);
-void initBCArrays(BC **bc, Config *setting);
-void initCD(Data **data, Config *setting);
-void readIC(IC **ic, Bath *bath, Config *setting);
-void readBC(BC **bc, Config *setting, int irank);
-//void readRestartFile(IC **ic, Config **setting);
-void readOneBC(double *arr, char filename[], Config *setting, int N);
-void initGroundArrays(Ground **ground, Data *data, Gmaps *gmap, Bath *bath, Config *setting);
-
-
-//#endif
+void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank);
+void init_domain(Config **param);
+void init_Data(Data **data, Config *param);
+void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank);
+void bc_surface(Data **data, Map *smap, Config *param, int irank);
+void update_depth(Data **data, Map *smap, Config *param, int irank);
+void read_bathymetry(Data **data, Config *param, int irank, int nrank);
+void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank);
+void ic_subsurface(Data **data, Map *gmap, Config *param);

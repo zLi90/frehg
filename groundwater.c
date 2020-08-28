@@ -1,4 +1,4 @@
-
+// Functions for groundwater solver
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
@@ -6,19 +6,15 @@
 #include<string.h>
 #include<stdbool.h>
 
-// -----------------------------------------------------------------------------
-// Groundwater module that solves saturated groundwater flow equation following
-// MODFLOW.
-// - ZhiLi 2019-01-09 -
-// -----------------------------------------------------------------------------
-
 #include "configuration.h"
-#include "bathymetry.h"
 #include "initialize.h"
 #include "map.h"
 #include "mpifunctions.h"
-#include "fileio.h"
-#include "utilities.h"
+#include "utility.h"
+
+// #include "laspack/vector.h"
+// #include "laspack/qmatrix.h"
+// #include "laspack/rtc.h"
 
 #include "laspack/errhandl.h"
 #include "laspack/vector.h"
@@ -31,1219 +27,1285 @@
 #include "laspack/rtc.h"
 #include "laspack/itersolv.h"
 #include "laspack/mlsolv.h"
-#include "laspack/version.h"
-#include "laspack/copyrght.h"
 
-void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank);
-void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank);
-void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting, int irank, int nrank);
-void setupGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A);
-void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, Vector x, Vector z);
-void getHead(Ground **ground, Gmaps *gmap, Config *setting, Vector x);
-void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting);
-void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting);
-void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
-void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting);
-void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting);
-void groundScalarAdvection(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
-void groundScalarDiffusion(Ground **ground, Data *data, Gmaps *gmap, Config *setting);
-void groundScalarTransport(Ground **ground, Data **data, Gmaps *gmap, Maps *map, Config *setting, int irank, int nrank);
-double waterContent(double h, Config *setting);
-double updateDSDH(double h, Config *setting);
-double hydraulicCond(double wc, double Ks, Config *setting);
-double headFromWC(double wc, Config *setting);
-double faceCond(double K1, double K2);
+void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
+void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
+void groundwater_mat_coeff(Data **data, Map *gmap, Config *param);
+void groundwater_rhs(Data **data, Map *gmap, Config *param);
+void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, Vector b);
+void solve_groundwater_system(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param);
+void enforce_head_bc(Data **data, Map *gmap, Config *param);
+void groundwater_flux(Data **data, Map *gmap, Config *param);
+void check_room(Data **data, Map *gmap, Config *param);
+void update_water_content(Data **data, Map *gmap, Config *param);
+void enforce_moisture_bc(Data **data, Map *gmap, Config *param);
+void reallocate_water_content(Data **data, Map *gmap, Config *param);
+int check_adj_sat(Data *data, Map *gmap, Config *param, int ii);
+void check_head_gradient(Data **data, Map *gmap, Config *param, int ii);
+double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV);
+double allocate_recv(Data **data, Map *gmap, Config *param, int ii, double dV);
+void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int irank);
 
-// =========== Top-level groundwater exchange ==========
-void groundwaterExchange(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting, int irank, int nrank)
+// >>>>> Top level groundwater solver <<<<<
+void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int ii;
-    QMatrix AA;
-    Q_Constr(&AA, "A", setting->N3ci, False, Rowws, Normal, True);
-    Vector zz;
-    V_Constr(&zz, "z", setting->N3ci, Normal, True);
-    Vector xx;
-    V_Constr(&xx, "x", setting->N3ci, Normal, True);
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {(*ground)->hOld[ii] = (*ground)->h[ii];}
-    computeConductance(ground, *data, gmap, setting, irank, nrank);
-    groundMatrixCoeff(ground, data, gmap, setting, irank, nrank);
-    setupGroundMatrix(*ground, gmap, setting, AA);
-    solveGroundMatrix(*ground, gmap, setting, AA, xx, zz);
-    getHead(ground, gmap, setting, xx);
-    enforceSidewallBC(ground, gmap, setting);
-    // for (ii = 0; ii < setting->N3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & gmap->kk[ii] == 33 & irank == 0)
-    //     {printf("BEFORE : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
-    // }
-    if (setting->useMPI == 1)
-    {mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);}
-    // for (ii = 0; ii < setting->N3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & gmap->kk[ii] == 33 & irank == 0)
-    //     {printf("AFTER : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
-    // }
-    computeConductance(ground, *data, gmap, setting, irank, nrank);
-    Q_Destr(&AA);
-    V_Destr(&xx);
-    V_Destr(&zz);
+    // allocate linear system
+    QMatrix A;
+    Q_Constr(&A, "A", param->n3ci, False, Rowws, Normal, True);
+    Vector b;
+    V_Constr(&b, "b", param->n3ci, Normal, True);
+    Vector x;
+    V_Constr(&x, "x", param->n3ci, Normal, True);
 
-    computeFlowRate(ground, *data, gmap, setting);
-    computeSeepage(data, ground, map, gmap, setting);
-    updateWaterContent(ground, gmap, setting);
-    if (setting->useMPI == 1)
-    {mpiexchangeGround((*ground)->wc, gmap, setting, irank, nrank);}
-    adjustWaterContent(ground, data, gmap, setting);
-    if (setting->useMPI == 1)
+    if ((*data)->repeat[0] == 0)
     {
-        mpiexchangeGround((*ground)->h, gmap, setting, irank, nrank);
-        mpiexchangeGround((*ground)->wc, gmap, setting, irank, nrank);
-    }
-    // for (ii = 0; ii < setting->N3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 50 & gmap->jj[ii] == 29 & irank == 0)
-    //     {printf("FINAL : irank = %d ------ >>>>>> head = %f\n",irank,(*ground)->h[ii]);}
-    // }
-}
-
-// ===== Function --- Calculate conductivity =====
-double hydraulicCond(double wc, double Ks, Config *setting)
-{
-  double n, m, ah, K, S, Kr, wcr, wcs;
-  n = setting->a1;
-  m = 1.0 - 1.0 / n;
-  wcs = setting->porosity;
-  wcr = setting->Sres * setting->porosity;
-  S = (wc - wcr)/(wcs - wcr);
-  // ah = fabs(setting->a2 * h);
-  // S = pow(1 + pow(ah,n), -m);
-  if (S > 1.0)    {S = 1.0;}
-  Kr = pow(S,0.5) * pow(1-pow(1-pow(S,1.0/m),m), 2.0);
-  if (Kr > 1.0)  {Kr = 1.0;}
-  if (Kr < 1e-6)   {Kr = 0.0;}
-  K = Ks * Kr;
-  if (Ks == 0.0)    {K = 0.0;}
-  return K;
-}
-
-// ===== Average to get conductivity on face =====
-double faceCond(double K1, double K2)
-{return 0.5 * (K1 + K2);}
-
-// FUNCTION --- Calculate saturation
-double waterContent(double h, Config *setting)
-{
-    double n, m, ah, wc, wcr, wcs, S;
-    n = setting->a1;
-    m = 1.0 - 1.0 / n;
-    ah = fabs(setting->a2 * h);
-    wcr = setting->Sres * setting->porosity;
-    wcs = setting->porosity;
-    S = pow(1 + pow(ah,n), -m);
-    if (h > 0)  {wc = wcs;}
-    else    {wc = wcr + (wcs - wcr) * S;}
-    if (wc > wcs)   {wc = wcs;}
-    if (wc < wcr)   {wc = wcr;}
-    return wc;
-}
-
-// FUNCTION --- Calculate head from water content
-double headFromWC(double wc, Config *setting)
-{
-    double a, n, m, wcr, wcs, h, eps;
-    eps = 1e-7;
-    n = setting->a1;
-    a = setting->a2;
-    m = 1.0 - 1.0 / n;
-    wcr = setting->Sres * setting->porosity;
-    wcs = setting->porosity;
-    if (wc - wcr < eps) {wc = wcr + eps;}
-    h = -(1.0/a) * pow(pow((wcs - wcr)/(wc - wcr),(1.0/m)) - 1.0,(1.0/n));
-    return h;
-}
-
-// FUNCTION --- Calculate dS/dh
-double updateDSDH(double h, Config *setting)
-{
-    double n, m, ah, dSdh, wcr, wcs;
-    n = setting->a1;
-    m = 1.0 - 1.0 / n;
-    ah = fabs(setting->a2 * h);
-    wcr = setting->Sres * setting->porosity;
-    wcs = setting->porosity;
-    dSdh = (setting->a2 * n * m * (wcs-wcr) * pow(ah,n-1)) / pow((1+pow(ah,n)),m+1);
-    return dSdh;
-}
-
-// =============== Compute conductance ===============
-void computeConductance(Ground **ground, Data *data, Gmaps *gmap, Config *setting, int irank, int nrank)
-{
-    int ii;
-    double coef, dzavg, ah, n, Kc, Kp, Km, wcs, compS, compW;
-    // soil properties
-    wcs = setting->porosity;
-    coef = setting->dtg * setting->porosity;
-    // compressibility of rock and water
-    compS = 0.0000001;
-    compW = 0.0000000005;
-    // store layer information
-    for (ii = 0; ii < setting->N2ci; ii++)
-    {(*ground)->nlay[ii] = gmap->nlay[ii];}
-    // specific storage
-    (*ground)->SS = 1000.0 * setting->g * (compS + setting->porosity * compW);
-    // loop over all cells to compute conductance
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // ===== Cx =====
-        Kc = hydraulicCond((*ground)->wc[ii], setting->Kxx, setting);
-        if (gmap->iPjckc[ii] < setting->N3ci)
-        {Kp = hydraulicCond((*ground)->wc[gmap->iPjckc[ii]], setting->Kxx, setting);}
-        else
-        {Kp = Kc;}
-        (*ground)->Cx[ii] = setting->dtg * faceCond(Kc,Kp) / (setting->dx * setting->dx);
-        if (gmap->iMjckc[ii] >= setting->N3ci)
-        {(*ground)->Cx[gmap->iMjckc[ii]] = setting->dtg * Kc / (setting->dx * setting->dx);}
-        // ===== Cy =====
-        Kc = hydraulicCond((*ground)->wc[ii], setting->Kyy, setting);
-        if (gmap->icjPkc[ii] >= setting->N3ci & irank == nrank-1)
-        {Kp = Kc;}
-        else
-        {Kp = hydraulicCond((*ground)->wc[gmap->icjPkc[ii]], setting->Kyy, setting);}
-        (*ground)->Cy[ii] = setting->dtg * faceCond(Kc,Kp) / (setting->dy * setting->dy);
-        if (gmap->icjMkc[ii] >= setting->N3ci)
+        for (ii = 0; ii < param->n3ct; ii++)
         {
-            Km = hydraulicCond((*ground)->wc[gmap->icjMkc[ii]], setting->Kyy, setting);
-            if (irank == 0)     {Km = Kc;}
-            (*ground)->Cy[gmap->icjMkc[ii]] = setting->dtg * faceCond(Kc,Km) / (setting->dy * setting->dy);
+            (*data)->hn[ii] = (*data)->h[ii];
+            (*data)->hwc[ii] = compute_hwc(*data, ii, param);
+            (*data)->wcn[ii] = (*data)->wc[ii];
+            (*data)->wch[ii] = compute_wch(*data, ii, param);
+            (*data)->ch[ii] = compute_ch(*data, ii, param);
+
         }
-        // ===== Cz ======
-        // NOTE: Unlike Cx and Cy, Cz[ii] is its kM face (upward face)
+    }
+    else
+    {
+        for (ii = 0; ii < param->n3ct; ii++)
+        {
+            (*data)->h[ii] = (*data)->hn[ii];
+            (*data)->hwc[ii] = compute_hwc(*data, ii, param);
+            (*data)->wc[ii] = (*data)->wcn[ii];
+            (*data)->wch[ii] = compute_wch(*data, ii, param);
+            (*data)->ch[ii] = compute_ch(*data, ii, param);
+        }
+    }
+
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_subsurf((*data)->hn, gmap, 2, param, irank, nrank);
+        mpi_exchange_subsurf((*data)->wcn, gmap, 2, param, irank, nrank);
+    }
+
+    // >>> Predictor step
+    compute_K_face(data, gmap, param, irank, nrank);
+    groundwater_mat_coeff(data, gmap, param);
+    groundwater_rhs(data, gmap, param);
+    build_groundwater_system(*data, gmap, param, A, b);
+    solve_groundwater_system(data, gmap, A, b, x, param);
+    enforce_head_bc(data, gmap, param);
+    if (param->use_mpi == 1)
+    {mpi_exchange_subsurf((*data)->h, gmap, 2, param, irank, nrank);}
+
+    // >>> Corrector step
+    if (param->use_corrector == 1)
+    {
+        compute_K_face(data, gmap, param, irank, nrank);
+        groundwater_flux(data, gmap, param);
+        check_room(data, gmap, param);
+        update_water_content(data, gmap, param);
+    }
+    else
+    {for (ii = 0; ii < param->n3ci; ii++)    {(*data)->wc[ii] = compute_wch(*data, ii, param);}}
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        (*data)->hwc[ii] = compute_hwc(*data, ii, param);
+        (*data)->wch[ii] = compute_wch(*data, ii, param);
+    }
+    if (param->use_mpi == 1)
+    {mpi_exchange_subsurf((*data)->wc, gmap, 2, param, irank, nrank);}
+
+    // >>> Post-allocation step
+    if (param->use_corrector == 1)
+    {reallocate_water_content(data, gmap, param);}
+
+    (*data)->qbc[0] -= (*data)->qz[0] * param->dt;
+    (*data)->qbc[1] -= (*data)->qz[param->nz-1] * param->dt;
+
+    // >>> Final check of water content
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
         if (gmap->actv[ii] == 1)
         {
-            Kc = hydraulicCond((*ground)->wc[ii], setting->Kzz, setting);
-            if (gmap->istop[ii] == 1)
+            if ((*data)->wc[ii] > (*data)->wcs[ii])
             {
-                // if (data->depth[gmap->top2D[ii]] > 0.0)
-                // {
-                //     Kc = setting->Kzz;
-                //     (*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);
-                // }
-                // else
-                // {(*ground)->Cz[ii] = 0.0;}
-                Kc = setting->Kzz;
-                (*ground)->Cz[ii] = setting->dtg * Kc / (0.5 * gmap->dz3d[ii] * gmap->dz3d[ii]);
+                (*data)->vloss[ii] += ((*data)->wc[ii] - (*data)->wcs[ii]) * param->dx * param->dy * gmap->dz3d[ii];
+                (*data)->wc[ii] = (*data)->wcs[ii];
+            }
+            else if ((*data)->wc[ii] < (*data)->wcr[ii])
+            {
+                (*data)->vloss[ii] -= ((*data)->wcr[ii] - (*data)->wc[ii]) * param->dx * param->dy * gmap->dz3d[ii];
+                (*data)->wc[ii] = (*data)->wcr[ii];
+            }
+        }
+        else
+        {(*data)->wc[ii] = 0.0; (*data)->h[ii] = -100.0;}
+    }
+    enforce_moisture_bc(data, gmap, param);
+    if (param->use_mpi == 1)
+    {mpi_exchange_subsurf((*data)->wc, gmap, 2, param, irank, nrank);}
+
+    // >>> Adaptive time stepping
+    if (param->dt_adjust == 1)
+    {adaptive_time_step(*data, gmap, &param, 0, irank);}
+    // free memory
+    Q_Destr(&A);
+    V_Destr(&b);
+    V_Destr(&x);
+
+}
+
+// >>>>> Compute hydraulic conductivity on cell faces <<<<<
+void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank)
+{
+    int ii;
+    double Kp, Km;
+    // conductivities for interior cells
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        // Kx
+        Kp = compute_K(*data, (*data)->Ksx, gmap->iPjckc[ii], param);
+        Km = compute_K(*data, (*data)->Ksx, ii, param);
+        (*data)->Kx[ii] = 0.5 * (Kp + Km);
+        if (gmap->actv[ii] == 0 | gmap->actv[gmap->iPjckc[ii]] == 0)    {(*data)->Kx[ii] = 0.0;}
+        // Ky
+        Kp = compute_K(*data, (*data)->Ksy, gmap->icjPkc[ii], param);
+        Km = compute_K(*data, (*data)->Ksy, ii, param);
+        (*data)->Ky[ii] = 0.5 * (Kp + Km);
+        if (gmap->actv[ii] == 0 | gmap->actv[gmap->icjPkc[ii]] == 0)    {(*data)->Ky[ii] = 0.0;}
+        // Kz
+        Kp = compute_K(*data, (*data)->Ksz, gmap->icjckP[ii], param);
+        Km = compute_K(*data, (*data)->Ksz, ii, param);
+        if (gmap->istop[gmap->icjckP[ii]] == 1) {(*data)->Kz[ii] = Kp;}
+        else if (gmap->actv[ii] == 0)   {(*data)->Kz[ii] = 0.0;}
+        else if (gmap->icjckP[ii] > param->n3ci)    {(*data)->Kz[ii] = Km;}
+        else    {(*data)->Kz[ii] = 0.5 * (Kp + Km);}
+    }
+    // conductivities on iM, jM, kM faces
+    for (ii = 0; ii < param->ny*param->nz; ii++)
+    {
+        Kp = compute_K(*data, (*data)->Ksx, gmap->iMin[ii], param);
+        Km = compute_K(*data, (*data)->Ksx, gmap->iMou[ii], param);
+        (*data)->Kx[gmap->iMou[ii]] = 0.5 * (Kp + Km);
+        if (param->bctype_GW[0] == 0 & (irank+1) % param->mpi_nx == 0)
+        {(*data)->Kx[gmap->iPin[ii]] = 0;}
+        if (param->bctype_GW[1] == 0 & irank % param->mpi_nx == 0)
+        {(*data)->Kx[gmap->iMou[ii]] = 0;}
+        if (gmap->actv[gmap->iMin[ii]] == 0 | gmap->actv[gmap->iMou[ii]] == 0)
+        {(*data)->Kx[gmap->iMou[ii]] = 0;}
+
+    }
+    for (ii = 0; ii < param->nx*param->nz; ii++)
+    {
+        Kp = compute_K(*data, (*data)->Ksy, gmap->jMin[ii], param);
+        Km = compute_K(*data, (*data)->Ksy, gmap->jMou[ii], param);
+        (*data)->Ky[gmap->jMou[ii]] = 0.5 * (Kp + Km);
+        if (param->bctype_GW[2] == 0 & irank >= param->mpi_nx*(param->mpi_ny-1))
+        {(*data)->Ky[gmap->jPin[ii]] = 0;}
+        if (param->bctype_GW[3] == 0 & irank < param->mpi_nx)
+        {(*data)->Ky[gmap->jMou[ii]] = 0;}
+        if (gmap->actv[gmap->jMin[ii]] == 0 | gmap->actv[gmap->jMou[ii]] == 0)
+        {(*data)->Ky[gmap->jMou[ii]] = 0;}
+    }
+    for (ii = 0; ii < param->nx*param->ny; ii++)
+    {
+        (*data)->Kz[gmap->kMou[ii]] = 0.0;
+        if (param->bctype_GW[4] == 0)   {(*data)->Kz[gmap->kPin[ii]] = 0;}
+    }
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        if (gmap->istop[ii] == 1)
+        {
+            Kp = compute_K(*data, (*data)->Ksz, ii, param);
+            Km = param->Ksz;
+            if (param->sim_shallowwater == 1)
+            {
+                if ((*data)->dept[gmap->top2d[ii]] > 0)
+                {(*data)->Kz[gmap->icjckM[ii]] = Km;}
+                else if (param->bctype_GW[5] == 0)
+                {(*data)->Kz[gmap->icjckM[ii]] = 0.0;}
+                else
+                {(*data)->Kz[gmap->icjckM[ii]] = Kp;}
             }
             else
             {
-                Km = hydraulicCond((*ground)->wc[gmap->icjckM[ii]], setting->Kzz, setting);
-                (*ground)->Cz[ii] = setting->dtg * faceCond(Kc,Km) / (gmap->dz3d[ii] * 0.5*(gmap->dz3d[ii]+gmap->dz3d[gmap->icjckM[ii]]));
+                if (param->bctype_GW[5] == 1)   {(*data)->Kz[gmap->icjckM[ii]] = Km;}
+                else if (param->bctype_GW[5] == 0)  {(*data)->Kz[gmap->icjckM[ii]] = 0.0;}
+                else    {(*data)->Kz[gmap->icjckM[ii]] = Kp;}
             }
         }
-        else
-        {(*ground)->Cz[ii] = 0.0;}
-        // ===== cell volume =====
-        (*ground)->V[ii] = setting->dx * setting->dy * (*ground)->wc[ii] * gmap->dz3d[ii];
     }
-    // zero conductance for non-active faces
-    for (ii = 0; ii < setting->N3ci; ii++)
+    // Set K to zero for unsaturated side faces
+    if (param->use_full3d == 0)
     {
-        if (gmap->actv[ii] == 0)
+        for (ii = 0; ii < param->n3ci; ii++)
         {
-            (*ground)->Cx[ii] = 0.0;
-            (*ground)->Cx[gmap->iMjckc[ii]] = 0.0;
-            (*ground)->Cy[ii] = 0.0;
-            (*ground)->Cy[gmap->icjMkc[ii]] = 0.0;
-            (*ground)->Cz[ii] = 0.0;
-            // (*ground)->Cz[gmap->icjckP[ii]] = 0.0;
+            if (gmap->actv[ii] == 1 & (*data)->wc[ii] < param->wcs)
+            {
+                (*data)->Kx[ii] = 0.0;
+                (*data)->Kx[gmap->iMjckc[ii]] = 0.0;
+                (*data)->Ky[ii] = 0.0;
+                (*data)->Ky[gmap->icjMkc[ii]] = 0.0;
+            }
+        }
+    }
+
+    // ZhiLi20200821
+    if (strcmp(param->sim_id, " MaxP1"))
+    {
+        for (ii = 0; ii < param->n3ci; ii++)
+        {if (gmap->jj[ii] == 399)  {(*data)->Ky[ii] = 0.0;}}
+    }
+
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        if (gmap->ii[ii] != 1)
+        {
+            (*data)->Ky[ii] = 0.0;
+            (*data)->Kz[ii] = 0.0;
+            (*data)->Kz[gmap->icjckM[ii]] = 0.0;
+        }
+        if (gmap->jj[ii] >= 75)
+        {
+            (*data)->Ky[ii] = 0.0;
+            (*data)->Kz[ii] = 0.0;
+        }
+    }
+
+}
+
+// >>>>> Compute matrix coefficients <<<<<
+void groundwater_mat_coeff(Data **data, Map *gmap, Config *param)
+{
+    int ii;
+    double dzf;
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        // coeff xp
+        (*data)->Gxp[ii] = - (*data)->Kx[ii] * param->dt / (pow(param->dx,2.0));
+        // coeff xm
+        (*data)->Gxm[ii] = - (*data)->Kx[gmap->iMjckc[ii]] * param->dt / (pow(param->dx,2.0));
+        // coeff yp
+        (*data)->Gyp[ii] = - (*data)->Ky[ii] * param->dt / (pow(param->dy,2.0));
+        // coeff ym
+        (*data)->Gym[ii] = - (*data)->Ky[gmap->icjMkc[ii]] * param->dt / (pow(param->dy,2.0));
+        // coeff zp
+        dzf = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        (*data)->Gzp[ii] = - (*data)->Kz[ii] * param->dt / (gmap->dz3d[ii]*dzf);
+        // coeff zm
+        if (gmap->istop[ii] == 1)   {dzf = 0.5 * gmap->dz3d[ii];}
+        else    {dzf = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);}
+        (*data)->Gzm[ii] = - (*data)->Kz[gmap->icjckM[ii]] * param->dt / (gmap->dz3d[ii]*dzf);
+        // coeff ct
+        (*data)->Gct[ii] = (*data)->ch[ii] + param->Ss*(*data)->wcn[ii]/(*data)->wcs[ii];
+        (*data)->Gct[ii] -= ((*data)->Gxp[ii] + (*data)->Gxm[ii] + (*data)->Gyp[ii] + (*data)->Gym[ii]);
+        // ct on zp
+        if (gmap->kk[ii] == param->nz-1 & param->bctype_GW[4] != 1)
+        {(*data)->Gct[ii] = (*data)->Gct[ii];}
+        else
+        {(*data)->Gct[ii] -= (*data)->Gzp[ii];}
+        // ct on zm
+        if (gmap->istop[ii] == 1)
+        {
+            if (param->sim_shallowwater == 1 & (*data)->dept[gmap->top2d[ii]] > 0)
+            {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
+            else if (param->bctype_GW[5] == 1)
+            {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
         }
         else
+        {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
+    }
+}
+
+// >>>>> Compute right hand side <<<<<
+void groundwater_rhs(Data **data, Map *gmap, Config *param)
+{
+    int ii;
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        // base terms
+        (*data)->Grhs[ii] = ((*data)->ch[ii] + param->Ss*(*data)->wcn[ii]/(*data)->wcs[ii]) * (*data)->hn[ii];
+        (*data)->Grhs[ii] -= param->dt * ((*data)->Kz[ii] - (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];
+        // boundary terms
+        if (gmap->ii[ii] == param->nx-1)
+        {(*data)->Grhs[ii] -= (*data)->Gxp[ii] * (*data)->hn[gmap->iPjckc[ii]];}
+        if (gmap->ii[ii] == 0)
+        {(*data)->Grhs[ii] -= (*data)->Gxm[ii] * (*data)->hn[gmap->iMjckc[ii]];}
+        if (gmap->jj[ii] == (param->ny-1))
+        {(*data)->Grhs[ii] -= (*data)->Gyp[ii] * (*data)->hn[gmap->icjPkc[ii]];}
+        if (gmap->jj[ii] == 0)
+        {(*data)->Grhs[ii] -= (*data)->Gym[ii] * (*data)->hn[gmap->icjMkc[ii]];}
+        if (gmap->kk[ii] == param->nz-1)
         {
-            // set x boundaries as impermeable
-            if (gmap->iPjckc[ii] >= setting->N3ci)
-            {(*ground)->Cx[ii] = 0.0;}
-            if (gmap->iMjckc[ii] >= setting->N3ci)
-            {(*ground)->Cx[gmap->iMjckc[ii]] = 0.0;}
-            // set y boundareis as impermeable only if rank=0 or n-1
-            if (gmap->icjPkc[ii] >= setting->N3ci & irank == nrank-1)
-            {(*ground)->Cy[ii] = 0.0;}
-            if (gmap->icjMkc[ii] >= setting->N3ci & irank == 0)
-            {(*ground)->Cy[gmap->icjMkc[ii]] = 0.0;}
-            if (gmap->icjckP[ii] >= setting->N3ci)
-            {(*ground)->Cz[gmap->icjckP[ii]] = 0.0;}
+            if (param->bctype_GW[4] == 2)
+            {(*data)->Grhs[ii] += (*data)->qbot + param->dt * (*data)->Kz[ii] / gmap->dz3d[ii];}
+            else if (param->bctype_GW[4] == 1)
+            {(*data)->Grhs[ii] += (*data)->Gzp[ii] * (*data)->hn[gmap->icjckP[ii]];}
+        }
+        if (gmap->istop[ii] == 1)
+        {
+            if (param->sim_shallowwater == 1)
+            {
+                if ((*data)->dept[gmap->top2d[ii]] > 0)
+                {(*data)->Grhs[ii] += (*data)->Gzm[ii] * (*data)->dept[gmap->top2d[ii]];}
+                else
+                {
+                    if (param->bctype_GW[5] == 2)
+                    {
+                        if ((*data)->qtop > 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
+                        {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                        else if ((*data)->qtop < 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
+                        {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                        else
+                        {(*data)->Grhs[ii] += - param->dt * (*data)->Kz[gmap->icjckM[ii]] / gmap->dz3d[ii];}
+                    }
+                    else if (param->bctype_GW[5] == 1)
+                    {(*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->hn[gmap->icjckM[ii]];}
+                }
+            }
+            else
+            {
+                if (param->bctype_GW[5] == 2)
+                {
+                    // if ((*data)->qtop > 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
+                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                    // else if ((*data)->qtop < 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
+                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                    // else
+                    // {(*data)->Grhs[ii] += - param->dt * (*data)->Kz[gmap->icjckM[ii]] / gmap->dz3d[ii];}
+                    (*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];
+                    // printf("  >> Top flux = %f\n",86400.0*100.0*(*data)->qtop);
+                }
+                else if (param->bctype_GW[5] == 1)
+                {(*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->htop;}
+            }
         }
 
-        // for KolletP1
-        // if (gmap->jj[ii] == 10 & irank == 3)
-        // if (gmap->jj[ii] == 100)
-        // {(*ground)->Cy[ii] = 0.0;}
     }
-    // zero horizontal conductance between unsat cells
-    // for (ii = 0; ii < setting->N3ci; ii++)
+}
+
+// >>>>> Build linear system <<<<<
+void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, Vector b)
+{
+    size_t ii, jj, kk, n, dist;
+    int im;
+    double value, *row;
+    row = malloc(8*sizeof(double));
+
+    for (ii = 1; ii <= param->n3ci; ii++)
+    {
+
+        for (jj = 0; jj < 8; jj++)  {row[jj] = 0.0;}
+        im = ii - 1;
+        if (gmap->actv[im] == 0)
+        {
+            Q_SetLen(&A, ii, 1);
+            Q_SetEntry(&A, ii, 0, ii, 1.0);
+            V_SetCmp(&b, ii, data->hn[im]);
+            row[3] = 1.0;   row[7] = data->hn[im];
+        }
+        else
+        {
+            kk = 0;
+            n = 7;
+            if (gmap->ii[im] == 0)  {n -= 1;}
+            if (gmap->ii[im] == param->nx-1)    {n -= 1;}
+            if (gmap->jj[im] == 0)  {n -= 1;}
+            if (gmap->jj[im] == param->ny-1)    {n -= 1;}
+            if (gmap->istop[im] == 1)   {n -= 1;}
+            if (gmap->kk[im] == param->nz-1)    {n -= 1;}
+            Q_SetLen(&A, ii, n);
+            // set ym entry
+            dist = im - gmap->icjMkc[im];
+            if (ii-dist > 0 & ii-dist <= param->n3ci & gmap->actv[gmap->icjMkc[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii-dist, data->Gym[im]);    kk++;   row[0]=data->Gym[im];}
+            // set xm entry
+            dist = im - gmap->iMjckc[im];
+            if (ii-dist > 0 & ii-dist <= param->n3ci & gmap->actv[gmap->iMjckc[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii-dist, data->Gxm[im]);    kk++;   row[1]=data->Gxm[im];}
+            // set zm entry
+            dist = im - gmap->icjckM[im];
+            if (ii-dist > 0 & ii-dist <= param->n3ci & gmap->actv[gmap->icjckM[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii-dist, data->Gzm[im]);    kk++;   row[2]=data->Gzm[im];}
+            // set ct entry
+            Q_SetEntry(&A, ii, kk, ii, data->Gct[im]);
+            row[3]=data->Gct[im];
+            kk++;
+            // set zp entry
+            dist = gmap->icjckP[im] - im;
+            if (ii+dist > 0 & ii+dist <= param->n3ci & gmap->actv[gmap->icjckP[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii+dist, data->Gzp[im]);    kk++;   row[4]=data->Gzp[im];}
+            // set xp entry
+            dist = gmap->iPjckc[im] - im;
+            if (ii+dist > 0 & ii+dist <= param->n3ci & gmap->actv[gmap->iPjckc[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii+dist, data->Gxp[im]);    kk++;   row[5]=data->Gxp[im];}
+            // set yp entry
+            dist = gmap->icjPkc[im] - im;
+            if (ii+dist > 0 & ii+dist <= param->n3ci & gmap->actv[gmap->icjPkc[im]] == 1)
+            {Q_SetEntry(&A, ii, kk, ii+dist, data->Gyp[im]);    kk++;   row[6]=data->Gyp[im];}
+            // set right hand side
+            V_SetCmp(&b, ii, data->Grhs[im]);
+            row[7]=data->Grhs[im];
+
+        }
+        // printf("(%d,%d,%d) - [%f, %f, %f, (%f), %f, %f, %f][h] = [%f]\n",gmap->ii[im],gmap->jj[im],gmap->kk[im],row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]);
+        // if (gmap->kk[im] == param->nz-1)    {printf("------------------------\n");}
+
+    }
+}
+
+// >>>>> solve linear system <<<<<
+void solve_groundwater_system(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param)
+{
+    size_t ii;
+    V_SetAllCmp(&x, 0.0);
+    SetRTCAccuracy(0.00000001);
+    CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
+    for (ii = 0; ii < param->n3ci; ii++)    {(*data)->h[ii] = V_GetCmp(&x, ii+1);}
+}
+
+// >>>>> enforce head boundary conditions
+void enforce_head_bc(Data **data, Map *gmap, Config *param)
+{
+    int ii;
+    // xp and xm boundaries
+    for (ii = 0; ii < param->ny*param->nz; ii++)
+    {
+        (*data)->h[gmap->iPou[ii]] = (*data)->h[gmap->iPin[ii]];
+        (*data)->h[gmap->iMou[ii]] = (*data)->h[gmap->iMin[ii]];
+    }
+    // yp and ym boundaries
+    for (ii = 0; ii < param->nx*param->nz; ii++)
+    {
+        (*data)->h[gmap->jPou[ii]] = (*data)->h[gmap->jPin[ii]];
+        (*data)->h[gmap->jMou[ii]] = (*data)->h[gmap->jMin[ii]];
+    }
+    // zp boundary
+    if (param->bctype_GW[4] == 1)
+    {for (ii = 0; ii < param->nx*param->ny; ii++)    {(*data)->h[gmap->kPou[ii]] = (*data)->hbot;}}
+    else
+    {for (ii = 0; ii < param->nx*param->ny; ii++)    {(*data)->h[gmap->kPou[ii]] = (*data)->h[gmap->kMin[ii]];}}
+    // zm boundary
+    if (param->sim_shallowwater == 1)
+    {
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            if (gmap->istop[ii] == 1)
+            {
+                (*data)->h[gmap->icjckM[ii]] = (*data)->dept[gmap->top2d[ii]];
+                // if ((*data)->dept[gmap->top2d[ii]] > 0)  {(*data)->h[gmap->icjckM[ii]] = (*data)->dept[gmap->top2d[ii]];}
+                // else    {(*data)->h[gmap->icjckM[ii]] = (*data)->h[ii];}
+            }
+        }
+    }
+    else
+    {
+        if (param->bctype_GW[5] == 1)
+        {
+            for (ii = 0; ii < param->n3ci; ii++)
+            {if (gmap->istop[ii] == 1)  {(*data)->h[gmap->icjckM[ii]] = (*data)->htop;}}
+        }
+        else
+        {
+            for (ii = 0; ii < param->n3ci; ii++)
+            {if (gmap->istop[ii] == 1)  {(*data)->h[gmap->icjckM[ii]] = (*data)->h[ii];}}
+        }
+    }
+
+    // for (ii = 0; ii < param->n3ci; ii++)
     // {
-    //     if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs)
+    //     if (gmap->ii[ii] == 1 & gmap->jj[ii] == 21 & gmap->kk[ii] == 4 & (*data)->wc[ii] < 0.4)
     //     {
-    //         if ((*ground)->wc[gmap->iPjckc[ii]] < wcs)
-    //         {(*ground)->Cx[ii] = 0.0;}
-    //         if ((*ground)->wc[gmap->iMjckc[ii]] < wcs)
-    //         {(*ground)->Cx[gmap->iMjckc[ii]] = 0.0;}
-    //         if ((*ground)->wc[gmap->icjPkc[ii]] < wcs)
-    //         {(*ground)->Cy[ii] = 0.0;}
-    //         if ((*ground)->Cy[gmap->icjMkc[ii]] < wcs)
-    //         {(*ground)->Cy[gmap->icjMkc[ii]] = 0.0;}
+    //         printf(" -----(jj,kk)=(%d,%d)----- \n",gmap->jj[ii],gmap->kk[ii]);
+    //         // printf("    wc, hn, Km, Kp, actv = %f, %f, %f, %f, %d\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->Kz[gmap->icjckM[ii]],(*data)->Kz[ii],gmap->actv[ii]);
+    //         printf("ym, zm, ct, zp, yp, rhs = %f, %f, %f, %f, %f, %f\n",(*data)->Gym[ii],(*data)->Gzm[ii],(*data)->Gct[ii],(*data)->Gzp[ii],(*data)->Gyp[ii],(*data)->Grhs[ii]);
+    //         printf("    wc, hn->h = %f   %f->%f\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->h[ii]);
+    //         if (gmap->kk[ii] == param->nz-1)
+    //         {printf(" --------------------------------------------------- \n");}
     //     }
     // }
 }
 
-// =============== Compute the coefficients of the matrix A ===============
-void groundMatrixCoeff(Ground **ground, Data **data, Gmaps *gmap, Config *setting, int irank, int nrank)
+// >>>>> calculate flux between cells <<<<<
+void groundwater_flux(Data **data, Map *gmap, Config *param)
 {
-    int ii,jj,kk, unsat, lay, Nevap;
-    double depth, dwdh, wc, Kp, Km, Kc, Kpf, Kmf, allV, Vvoid, Ip, Ep, wcs, wcr, eps;
-    wcs = setting->porosity;
-    wcr = setting->Sres * setting->porosity;
-    eps = 1e-7;
-    for (ii = 0; ii < setting->N3ci; ii++)
+    int ii, jj;
+    double dzf;
+    for (ii = 0; ii < param->n3ci; ii++)
     {
-        if (gmap->actv[ii] == 1)
+        dzf = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        (*data)->qx[ii] = (*data)->Kx[ii] * ((*data)->h[gmap->iPjckc[ii]]-(*data)->h[ii]) / param->dx;
+        (*data)->qy[ii] = (*data)->Ky[ii] * ((*data)->h[gmap->icjPkc[ii]]-(*data)->h[ii]) / param->dy;
+        if (gmap->kk[ii] == param->nz-1)
         {
-            (*ground)->GnCt[ii] = (*ground)->SS;
-            if (setting->useUnSat == 1)
-            {
-                wc = waterContent((*ground)->h[ii], setting);
-                dwdh = updateDSDH((*ground)->h[ii], setting);
-                (*ground)->GnCt[ii] = (*ground)->GnCt[ii] * wc / setting->porosity + dwdh;
-            }
-            // XP
-            if ((*ground)->Cx[ii] > 0.0)
-            {
-                (*ground)->GnXP[ii] = (*ground)->Cx[ii];
-                (*ground)->GnCt[ii] += (*ground)->GnXP[ii];
-            }
-            else
-            {(*ground)->GnXP[ii] = 0.0;}
-            // XM
-            if ((*ground)->Cx[gmap->iMjckc[ii]] > 0.0)
-            {
-                (*ground)->GnXM[ii] = (*ground)->Cx[gmap->iMjckc[ii]];
-                (*ground)->GnCt[ii] += (*ground)->GnXM[ii];
-            }
-            else
-            {(*ground)->GnXM[ii] = 0.0;}
-            // YP
-            if ((*ground)->Cy[ii] > 0.0)
-            {
-                (*ground)->GnYP[ii] = (*ground)->Cy[ii];
-                (*ground)->GnCt[ii] += (*ground)->GnYP[ii];
-                // between ranks
-                if (gmap->icjPkc[ii] >= setting->N3ci & irank != nrank-1)
-                {(*ground)->GnYP[ii] = 0.0;}
-            }
-            else
-            {(*ground)->GnYP[ii] = 0.0;}
-            // YM
-            if ((*ground)->Cy[gmap->icjMkc[ii]] > 0.0)
-            {
-                (*ground)->GnYM[ii] = (*ground)->Cy[gmap->icjMkc[ii]];
-                (*ground)->GnCt[ii] += (*ground)->GnYM[ii];
-                // between ranks
-                if (gmap->icjMkc[ii] >= setting->N3ci & irank != 0)
-                {(*ground)->GnYM[ii] = 0.0;}
-            }
-            else
-            {(*ground)->GnYM[ii] = 0.0;}
-            // ZP
-            if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci)
-            {
-                (*ground)->GnZP[ii] = (*ground)->Cz[gmap->icjckP[ii]];
-                (*ground)->GnCt[ii] += (*ground)->GnZP[ii];
-            }
-            else
-            {(*ground)->GnZP[ii] = 0.0;}
-            // ZM
-            if (gmap->actv[ii] == 1)
-            {
-                (*ground)->GnZM[ii] = (*ground)->Cz[ii];
-                (*ground)->GnCt[ii] += (*ground)->GnZM[ii];
-            }
-            else
-            {(*ground)->GnZM[ii] = 0.0;}
+            if (param->bctype_GW[4] == 2)   {(*data)->qz[ii] = (*data)->qbot;}
+            else if (param->bctype_GW[4] == 3)   {(*data)->qz[ii] = - (*data)->Kz[ii];}
+            else    {(*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];}
         }
         else
+        {(*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];}
+    }
+    for (ii = 0; ii < param->ny*param->nz; ii++)
+    {
+        (*data)->qx[gmap->iMou[ii]] = (*data)->Kx[gmap->iMou[ii]]
+                    * ((*data)->h[gmap->iMin[ii]]-(*data)->h[gmap->iMou[ii]]) / param->dx;
+    }
+    for (ii = 0; ii < param->nx*param->nz; ii++)
+    {
+        (*data)->qy[gmap->jMou[ii]] = (*data)->Ky[gmap->jMou[ii]]
+                    * ((*data)->h[gmap->jMin[ii]]-(*data)->h[gmap->jMou[ii]]) / param->dy;
+    }
+    for (jj = 0; jj < param->n3ci; jj++)
+    {
+        if (gmap->istop[jj] == 1)
         {
-            (*ground)->GnCt[ii] = (*ground)->SS;
-            (*ground)->GnXP[ii] = 0.0;
-            (*ground)->GnXM[ii] = 0.0;
-            (*ground)->GnYP[ii] = 0.0;
-            (*ground)->GnYM[ii] = 0.0;
-            (*ground)->GnZP[ii] = 0.0;
-            (*ground)->GnZM[ii] = 0.0;
-        }
-
-
-        // Source term B
-        wc = waterContent((*ground)->h[ii], setting);
-        dwdh = updateDSDH((*ground)->h[ii], setting);
-        (*ground)->B[ii] = (*ground)->h[ii]*(*ground)->SS*wc/setting->porosity + dwdh*(*ground)->h[ii];
-
-        // Calculate permeability for top and bottom faces
-        Kc = hydraulicCond((*ground)->wc[ii], setting->Kzz, setting);
-
-        if (gmap->icjckP[ii] < setting->N3ci & gmap->icjckP[ii] >= 0)
-        {Kp = hydraulicCond((*ground)->wc[gmap->icjckP[ii]], setting->Kzz, setting);}
-        else
-        {Kp = Kc;}
-        if (gmap->istop[ii] != 1)
-        {Km = hydraulicCond((*ground)->wc[gmap->icjckM[ii]], setting->Kzz, setting);}
-        else
-        {
-            if ((*data)->depth[gmap->top2D[ii]] > 0)     {Km = setting->Kzz;}
-            else    {Km = Kc;}
-        }
-
-        Kpf = faceCond(Kc,Kp);
-        Kmf = faceCond(Kc,Km);
-
-        // B for top layer
-        if (gmap->istop[ii] == 1)
-        {
-            // Coupled surface-subsurface model
-            if (setting->topBC == 0)
+            ii = gmap->icjckM[jj];
+            dzf = 0.5 * gmap->dz3d[jj];
+            if (param->sim_shallowwater == 1)
             {
-                // If depth <= 0, same as zero flux BC
-                // add evaporation later
-                if ((*data)->depth[gmap->top2D[ii]] <= 0)
+                if ((*data)->dept[gmap->top2d[jj]] > 0)
+                {(*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];}
+                else if (param->bctype_GW[5] == 2)
                 {
-                    (*ground)->B[ii] -= setting->dtg * Kpf / gmap->dz3d[ii];
-                    (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
-                }
-                else
-                {
-                    // Calculate infiltration capacity
-                    // Ip = setting->Kzz * setting->dtg;
-                    Ip = setting->dtg * setting->Kzz * (2.0*((*data)->depth[gmap->top2D[ii]] - (*ground)->h[ii]) / gmap->dz3d[ii] - 1.0);
-                    // Check if the soil column is fully saturated
-                    unsat = 0;
-                    lay = ii;
-                    while (gmap->icjckP[lay] > 0)
-                    {
-                        if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
-                        lay += 1;
-                    }
-                    // If Ip > depth and soil column is unsaturated, use Neumann BC
-                    if ((*data)->depth[gmap->top2D[ii]] <= Ip & unsat == 1)
-                    {
-                        // (*ground)->B[ii] += ((*data)->depth[gmap->top2D[ii]]-setting->dtg * Kpf) / gmap->dz3d[ii];
-                        (*ground)->B[ii] += (*data)->depth[gmap->top2D[ii]] / gmap->dz3d[ii] / setting->porosity - setting->dtg * Kpf / gmap->dz3d[ii];
-                        (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
-                    }
-                    // Otherwise, use Dirichlet BC
+                    if ((*data)->qtop < 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
+                    {(*data)->qz[ii] += (*data)->qtop;}
+                    else if ((*data)->qtop > 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
+                    {(*data)->qz[ii] += (*data)->qtop;}
                     else
                     {
-                        (*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];
-                        (*ground)->B[ii] += (*ground)->Cz[ii] * (*data)->depth[gmap->top2D[ii]];
+                        (*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];
+                        if ((*data)->qz[ii] < 0.0)  {(*data)->qz[ii] = 0.0;}
                     }
+                    // else
+                    // {(*data)->qz[ii] = 0.0;}
                 }
-            }
-            // Zero flux on top
-            else if (setting->topBC == 1)
-            {
-                (*ground)->B[ii] -= setting->dtg * Kpf / gmap->dz3d[ii];
-                (*ground)->GnCt[ii] -= (*ground)->GnZM[ii];
-            }
-            // Zero head on top
-            else if (setting->topBC == 2)
-            {(*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];}
-            else    {printf("WARNING: Undefined topBC type!\n");}
-        }
-
-        // B for Bottom layer
-        if (gmap->icjckP[ii] == -1)
-        {
-            // No flow bottom
-            if (setting->botBC == 0)
-            {(*ground)->B[ii] += setting->dtg * Kmf / gmap->dz3d[ii];}
-            // Free drainage
-            else if (setting->botBC == 1)
-            {(*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];}
-            // Zero head at bottom
-            else if (setting->botBC == 2)
-            {
-                (*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];
-                (*ground)->GnCt[ii] += 2.0 * setting->dtg * Kpf / (gmap->dz3d[ii]*gmap->dz3d[ii]);
-            }
-            else    {printf("WARNING: Undefined topBC type!\n");}
-        }
-
-        // Gravity term for interior layers
-        if (gmap->actv[ii] == 1 & gmap->istop[ii] != 1 & gmap->icjckP[ii] != -1)
-        {(*ground)->B[ii] += setting->dtg * (Kmf - Kpf) / gmap->dz3d[ii];}
-
-        // B for side boundaries between ranks
-        if (gmap->icjPkc[ii] >= setting->N3ci & irank != nrank-1)
-        {(*ground)->B[ii] += (*ground)->Cy[ii] * (*ground)->h[gmap->icjPkc[ii]];}
-        if (gmap->icjMkc[ii] >= setting->N3ci & irank != 0)
-        {(*ground)->B[ii] += (*ground)->Cy[gmap->icjMkc[ii]] * (*ground)->h[gmap->icjMkc[ii]];}
-
-        // Evaporation on bare soil
-        (*ground)->qe[ii] = 0.0;
-        if (gmap->actv[ii] == 1 & setting->useEvap > 0 & (*data)->depth[gmap->top2D[ii]] <= 1e-2)
-        {
-            // if above evap extinction depth
-            if (gmap->bot3d[ii] >= gmap->bot2d[gmap->top2D[ii]] - setting->kkext)
-            {
-                // distribute evap flux to each cell
-                Nevap = floor(setting->kkext / gmap->dz3d[ii]);
-                if (Nevap == 0)     {Nevap = 1;}
-                // Calculate maximum evap
-                Ep = fabs(setting->Kzz * (-2.0*(*ground)->h[ii] / gmap->dz3d[ii] - 1.0));
-                // Adjust evap rate based on maximum evap
-                // NOTE: need to change this to bc->evap[tt]
-                if (setting->qEvap > Ep * setting->porosity)
-                {(*ground)->qe[ii] = Ep / Nevap;}
+                else if (param->bctype_GW[5] == 3)
+                {(*data)->qz[ii] = -(*data)->Kz[ii];}
+                else if (param->bctype_GW[5] == 1)
+                {(*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];}
                 else
-                {(*ground)->qe[ii] = setting->qEvap / Nevap / setting->porosity;}
-
-                // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 1 & gmap->kk[ii] < 3 & gmap->actv[ii] == 1)
-                // {printf("INIT EVAP: >>> Eq = %f, Ncell = %d, qe = %f\n",Ep,Nevap,1e5*(*ground)->qe[ii]);}
-
-                // add to Richards as a source term if there is enough water to evaporate
-                if ((*ground)->wc[ii]*gmap->dz3d[ii] - (*ground)->qe[ii]*setting->dtg >= wcr*gmap->dz3d[ii])
-                {(*ground)->B[ii] -= (*ground)->qe[ii]*setting->dtg / gmap->dz3d[ii];}
-                // if not enough water, just evaporate all water the cell has
-                else
-                {(*ground)->B[ii] -= (*ground)->wc[ii] - wcr;}
-            }
-        }
-
-        if (gmap->actv[ii] == 0)
-        {(*ground)->B[ii] = (*ground)->SS;}
-
-    }
-}
-
-// =============== Generate Matrix A and z ===============
-void setupGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A)
-{
-    // Assume no flow BC for XP, XM, YP, YM and ZP boundary
-    // Assume Direchlet BC for ZM boundary
-    // Q_SetLen(matrix, row, num_elem)
-    // Q_SetEntry(matrix, row, index, col, value)
-    size_t ii, kk, N, dist, row;
-    int jj;
-	row = 0;
-    for (ii = 1; ii <= setting->N3ci; ii++)
-    {
-		//if (gmap->actv[ii] == 1)
-		//{
-		    jj = ii - 1;
-		    N = 1;
-		    kk = 0;
-		    // compute number of elements in this row
-		    if (ground->GnZP[jj] != 0) {N += 1;}
-		    if (ground->GnZM[jj] != 0 & gmap->istop[jj] != 1) {N += 1;}
-		    if (ground->GnXP[jj] != 0) {N += 1;}
-		    if (ground->GnXM[jj] != 0) {N += 1;}
-		    if (ground->GnYP[jj] != 0) {N += 1;}
-		    if (ground->GnYM[jj] != 0) {N += 1;}
-		    Q_SetLen(&A, ii, N);
-		    // set YM entry
-		    if (ground->GnYM[jj] != 0)
-		    {
-		        dist = jj - gmap->icjMkc[jj];
-		        Q_SetEntry(&A, ii, kk, ii-dist, -ground->GnYM[jj]);
-		        kk++;
-		    }
-		    // set XM entry
-		    if (ground->GnXM[jj] != 0)
-		    {
-		        dist = jj - gmap->iMjckc[jj];
-		        Q_SetEntry(&A, ii, kk, ii-dist, -ground->GnXM[jj]);
-		        kk++;
-		    }
-		    // set ZM entry
-		    if (ground->GnZM[jj] != 0 & gmap->istop[jj] != 1)
-		    {
-		        Q_SetEntry(&A, ii, kk, ii-1, -ground->GnZM[jj]);
-		        kk++;
-		    }
-		    // set Ct entry
-		    Q_SetEntry(&A, ii, kk, ii, ground->GnCt[jj]);
-		    kk++;
-		    // set ZP entry
-		    if (ground->GnZP[jj] != 0)
-		    {
-		        Q_SetEntry(&A, ii, kk, ii+1, -ground->GnZP[jj]);
-		        kk++;
-		    }
-		    // set XP entry
-		    if (ground->GnXP[jj] != 0)
-		    {
-		        dist = gmap->iPjckc[jj] - jj;
-		        if (ii+dist < setting->N3ci)
-		        {Q_SetEntry(&A, ii, kk, ii+dist, -ground->GnXP[jj]);}
-		        kk++;
-		    }
-		    // set YP entry
-		    if (ground->GnYP[jj] != 0)
-		    {
-		        dist = gmap->icjPkc[jj] - jj;
-		        if (ii+dist < setting->N3ci)
-		        {Q_SetEntry(&A, ii, kk, ii+dist, -ground->GnYP[jj]);}
-		        kk++;
-		    }
-		//}
-    }
-}
-
-// =============== Solve the linear system Ax = z ===============
-void solveGroundMatrix(Ground *ground, Gmaps *gmap, Config *setting, QMatrix A, Vector x, Vector z)
-{
-
-    size_t ii;
-    // create the z Vector
-    for (ii = 1; ii <= setting->N3ci; ii++)
-    {V_SetCmp(&z, ii, ground->B[ii-1]);}
-    // initialize x
-    V_SetAllCmp(&x, 0.0);
-    // set stopping criteria
-    SetRTCAccuracy(setting->eps);
-    // solve the linear system
-    //JacobiIter(&A, &x, &z, setting->maxIter, NULL, 1.1);
-    CGIter(&A, &x, &z, setting->maxIter, SSORPrecond, 1);
-}
-
-// =============== Assign x back to head ===============
-void getHead(Ground **ground, Gmaps *gmap, Config *setting, Vector x)
-{
-    size_t ii;
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {(*ground)->h[ii] = V_GetCmp(&x, ii+1);}
-    // for (ii = 0; ii < setting->N3ci; ii++)
-    // {
-    //     // if (gmap->ii[ii] == 1){
-    //     // printf("ii,jj,kk,actv,h = %zu,%d,%d,%d,%f\n",ii,gmap->jj[ii], \
-    //     //        gmap->kk[ii],gmap->actv[ii],(*ground)->h[ii]);}
-    //     // if (gmap->kk[ii] == 5) {printf("-------------------- \n");}
-    // }
-
-}
-
-// =============== Neumann BC for h along sidewall ===============
-void enforceSidewallBC(Ground **ground, Gmaps *gmap, Config *setting)
-{
-	int ii;
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		if (gmap->ii[ii] == 0)	{(*ground)->h[gmap->iMjckc[ii]] = (*ground)->h[ii];}
-		if (gmap->ii[ii] == setting->nx-1)	{(*ground)->h[gmap->iPjckc[ii]] = (*ground)->h[ii];}
-		if (gmap->jj[ii] == 0)	{(*ground)->h[gmap->icjMkc[ii]] = (*ground)->h[ii];}
-		if (gmap->jj[ii] == setting->ny-1)	{(*ground)->h[gmap->icjPkc[ii]] = (*ground)->h[ii];}
-	}
-}
-
-// ========== Compute flow rate for subsurface faces ==========
-void computeFlowRate(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
-{
-    int ii, ff, iface;
-    double Ip, Czp, netQ;
-    double *Qout = malloc(6*sizeof(double));
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // assume no lateral exchange
-        // Quu
-        if (gmap->actv[ii] == 1 & gmap->actv[gmap->iPjckc[ii]] == 1 & \
-                gmap->iPjckc[ii] < setting->N3ci)
-        {(*ground)->Quu[ii] = (*ground)->Cx[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->iPjckc[ii]]);}
-        else
-        {(*ground)->Quu[ii] = 0.0;}
-        // Qvv
-       // if (gmap->actv[ii] == 1 & gmap->actv[gmap->icjPkc[ii]] == 1 & \
-       //         gmap->icjPkc[ii] < setting->N3ci)
-       // {(*ground)->Qvv[ii] = (*ground)->Cy[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->icjPkc[ii]]);}
-       // else
-       // {(*ground)->Qvv[ii] = 0.0;}
-        if ((*ground)->Cy[ii] != 0.0)
-        {(*ground)->Qvv[ii] = (*ground)->Cy[ii] * ((*ground)->h[ii] - (*ground)->h[gmap->icjPkc[ii]]);}
-        if (gmap->icjMkc[ii] >= setting->N3ci & (*ground)->Cy[gmap->icjMkc[ii]] != 0.0)
-        {(*ground)->Qvv[gmap->icjMkc[ii]] = (*ground)->Cy[ii] * ((*ground)->h[gmap->icjMkc[ii]] - (*ground)->h[ii]);}
-        // Qww
-        if (gmap->actv[ii] == 1)
-        {
-            // Flow rate at top surface
-            if (gmap->istop[ii] == 1)
-            {
-                // If top boundary is connected to surface solver
-                if (setting->topBC == 0)
+                {(*data)->qz[ii] = 0.0;}
+                // surface-subsurface exchange flux
+                if ((*data)->reset_seepage[gmap->top2d[jj]] == 1)
                 {
-                    Ip = setting->dtg * setting->Kzz * (2.0*(data->depth[gmap->top2D[ii]] - (*ground)->h[ii]) / gmap->dz3d[ii] - 1.0);
-                    // Infiltration
-                    if (Ip >= 0)
-                    {
-                        if (data->depth[gmap->top2D[ii]] == 0)
-                        {(*ground)->Qww[ii] = 0.0;}
-                        else
-                        {
-                            if (data->depth[gmap->top2D[ii]] <= Ip)
-                            {(*ground)->Qww[ii] = -data->depth[gmap->top2D[ii]] / gmap->dz3d[ii] / setting->porosity;}
-                            else
-                            {(*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - 0.5*gmap->dz3d[ii]);}
-                        }
-                    }
-                    // Return flow
+                    (*data)->qseepage[gmap->top2d[jj]] = 0.0;
+                    (*data)->reset_seepage[gmap->top2d[jj]] = 0;
+                }
+                (*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii];
+                // if (jj==5)
+                // {
+                //     printf("jj=%d, h=%f, dept=%f, K=%f, seepage=%f\n",gmap->jj[jj],(*data)->h[jj],
+                //         (*data)->h[ii],(*data)->Kz[ii],(*data)->qseepage[gmap->top2d[jj]]*param->dt);
+                // }
+            }
+            else
+            {
+                if (param->bctype_GW[5] == 1)
+                {(*data)->qz[ii] = (*data)->Kz[ii] * ((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->Kz[ii];}
+                else if (param->bctype_GW[5] == 2)
+                {
+                    if ((*data)->qtop < 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
+                    {(*data)->qz[ii] = (*data)->qtop;}
+                    else if ((*data)->qtop > 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
+                    {(*data)->qz[ii] = (*data)->qtop;}
                     else
-                    {
-                        (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - data->depth[gmap->top2D[ii]]) - 0.5*gmap->dz3d[ii]);
-                        if ((*ground)->Qww[ii] < 0)
-                        {(*ground)->Qww[ii] = 0.0;}
-                    }
+                    {(*data)->qz[ii] = 0.0;}
+                }
+                else if (param->bctype_GW[5] == 3)
+                {(*data)->qz[ii] = -(*data)->Kz[ii];}
+                else
+                {(*data)->qz[ii] = 0.0;}
 
-                }
-                // Zero flux on top
-                else if (setting->topBC == 1)
-                {(*ground)->Qww[ii] = 0.0;}
-                // Zero head on top
-                else if (setting->topBC == 2)
-                {(*ground)->Qww[ii] = (*ground)->Cz[ii] * ((*ground)->h[ii] - 0.5*gmap->dz3d[ii]);}
-                else    {printf("WARNING: Undefined topBC type!\n");}
-            }
-            // Flow rate at interior layers
-            else
-            {
-                (*ground)->Qww[ii] = (*ground)->Cz[ii] * (((*ground)->h[ii] - (*ground)->h[gmap->icjckM[ii]]) - gmap->dz3d[ii]);
-                // Flow rate at bottom boundary
-                if (gmap->icjckP[ii] == -1)
-                {
-                    Czp = 2.0 * setting->dtg * setting->Kzz / (gmap->dz3d[ii]*gmap->dz3d[ii]);
-                    // No flow bottom
-                    if (setting->botBC == 0)
-                    {(*ground)->Qww[gmap->icjckP[ii]] = 0.0;}
-                    // Free drainage
-                    else if (setting->botBC == 1)
-                    {(*ground)->Qww[gmap->icjckP[ii]] = -setting->dtg * setting->Kzz / gmap->dz3d[ii];}
-                    // Zero head
-                    else if (setting->botBC == 2)
-                    {(*ground)->Qww[gmap->icjckP[ii]] = -Czp*(*ground)->h[gmap->icjckM[ii]] - setting->dtg*setting->Kzz/gmap->dz3d[ii];}
-                }
             }
         }
-        else
-        {(*ground)->Qww[ii] = 0.0;}
     }
 
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // Force outflow < cell volume
-        netQ = 0.0;
-        iface = 0;
-        for (ff = 0; ff < 6; ff++)
-        {Qout[ff] = 0.0;}
-
-        if ((*ground)->Qww[ii] > 0.0 & gmap->istop[ii] != 1)   {Qout[iface] = (*ground)->Qww[ii];}
-        iface += 1;
-        if (gmap->icjckP[ii] != -1 & (*ground)->Qww[gmap->icjckP[ii]] < 0.0)   {Qout[iface] = -(*ground)->Qww[gmap->icjckP[ii]];}
-        iface += 1;
-        if ((*ground)->Quu[ii] > 0.0)   {Qout[iface] = (*ground)->Quu[ii];}
-        iface += 1;
-        if ((*ground)->Quu[gmap->iMjckc[ii]] < 0.0)   {Qout[iface] = -(*ground)->Quu[gmap->iMjckc[ii]];}
-        iface += 1;
-        if ((*ground)->Qvv[ii] > 0.0)   {Qout[iface] = (*ground)->Qvv[ii];}
-        iface += 1;
-        if ((*ground)->Qvv[gmap->icjMkc[ii]] < 0.0)   {Qout[iface] = -(*ground)->Qvv[gmap->icjMkc[ii]];}
-
-        for (ff = 0; ff < 6; ff++)
-        {netQ += Qout[ff];}
-
-        if (netQ > (*ground)->wc[ii] & (*ground)->wc[ii] >= setting->Sres * setting->porosity)
-        {
-            if (Qout[0] > 0)    {(*ground)->Qww[ii] = (*ground)->wc[ii] * Qout[0] / netQ;}
-            if (Qout[1] > 0)    {(*ground)->Qww[gmap->icjckP[ii]] = -(*ground)->wc[ii] * Qout[1] / netQ;}
-            if (Qout[2] > 0)    {(*ground)->Quu[ii] = (*ground)->wc[ii] * Qout[2] / netQ;}
-            if (Qout[3] > 0)    {(*ground)->Quu[gmap->iMjckc[ii]] = -(*ground)->wc[ii] * Qout[3] / netQ;}
-            if (Qout[4] > 0)    {(*ground)->Qvv[ii] = (*ground)->wc[ii] * Qout[4] / netQ;}
-            if (Qout[5] > 0)    {(*ground)->Qvv[gmap->icjMkc[ii]] = -(*ground)->wc[ii] * Qout[5] / netQ;}
-        }
-        else if ((*ground)->wc[ii] < setting->Sres * setting->porosity)
-        {
-            if (Qout[0] > 0)    {(*ground)->Qww[ii] = 0.0;}
-            if (Qout[1] > 0)    {(*ground)->Qww[gmap->icjckP[ii]] = 0.0;}
-            if (Qout[2] > 0)    {(*ground)->Quu[ii] = 0.0;}
-            if (Qout[3] > 0)    {(*ground)->Quu[gmap->iMjckc[ii]] = 0.0;}
-            if (Qout[4] > 0)    {(*ground)->Qvv[ii] = 0.0;}
-            if (Qout[5] > 0)    {(*ground)->Qvv[gmap->icjMkc[ii]] = 0.0;}
-        }
-
-       // if ((*ground)->Qww[ii] > (*ground)->wc[ii])
-       // {(*ground)->Qww[ii] = (*ground)->wc[ii];}
-       // else if (gmap->istop[ii] != 1 & -(*ground)->Qww[ii] > (*ground)->wc[gmap->icjckM[ii]])
-       // {(*ground)->Qww[ii] = -(*ground)->wc[gmap->icjckM[ii]];}
-    }
 }
 
-// ========== Compute flow rate from subsurface to surface ==========
-void computeSeepage(Data **data, Ground **ground, Maps *map, Gmaps *gmap, Config *setting)
-{
-    int ii, kk, lay, unsat;
-    double Vmax, wcs, eps;
-    wcs = setting->porosity;
-    eps = 1e-7;
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // find 2D index of top layer 3D cell
-        if (gmap->istop[ii] == 1)
-        {
-            kk = gmap->top2D[ii];
-            Vmax = (*ground)->Qww[ii] * setting->dx * setting->dy * gmap->dz3d[ii] * setting->porosity;
-
-            // Infiltration
-            if ((*ground)->Qww[ii] <= 0)
-            {
-                if ((*data)->depth[kk] > 0)     {(*data)->Qseep[kk] = Vmax / setting->dtg;}
-                else    {(*data)->Qseep[kk] = 0.0;}
-            }
-            // Return flow
-            else
-            {(*data)->Qseep[kk] = Vmax / setting->dtg;}
-            // Check if the soil column is fully saturated
-            unsat = 0;
-            lay = ii;
-            while (gmap->icjckP[lay] > 0)
-            {
-                if ((*ground)->wc[lay] < wcs-eps)   {unsat = 1;  break;}
-                lay += 1;
-            }
-            // Zero infiltration if fully saturated
-            if (unsat == 0 & (*data)->Qseep[kk] < 0)
-            {(*data)->Qseep[kk] = 0.0;}
-
-            // if (gmap->ii[ii] == 5 & gmap->jj[ii] == 71 & gmap->kk[ii] < 12)
-            // {printf("Seepage:>>>Qseep = %f, Qww = %f, depth = %f\n",(*data)->Qseep[kk],(*ground)->Qww[ii],(*data)->depth[kk]);}
-        }
-    }
-}
-
-// ========== Update water content ==========
-void updateWaterContent(Ground **ground, Gmaps *gmap, Config *setting)
+// check available room in each grid cell
+void check_room(Data **data, Map *gmap, Config *param)
 {
     int ii;
-    double a, m, n, wcs, wcr;
-    n = setting->a1;
-    a = setting->a2;
-    m = 1.0 - 1.0 / n;
-    wcr = setting->Sres * setting->porosity;
-    wcs = setting->porosity;
-    for (ii = 0; ii < setting->N3ci; ii++)
+    for (ii = 0; ii < param->n3ci; ii++)
     {
-        if (gmap->actv[ii] == 1)
-        {
-            (*ground)->wc[ii] += ((*ground)->Quu[gmap->iMjckc[ii]] - (*ground)->Quu[ii]);
-            (*ground)->wc[ii] += ((*ground)->Qvv[gmap->icjMkc[ii]] - (*ground)->Qvv[ii]);
-            (*ground)->wc[ii] += ((*ground)->Qww[gmap->icjckP[ii]] - (*ground)->Qww[ii]);
-            (*ground)->wc[ii] = (*ground)->wc[ii] / (1.0 + (*ground)->SS * ((*ground)->h[ii]-(*ground)->hOld[ii]) / setting->porosity);
-        }
-    }
-}
-
-// ========== Adjust wc and h to handle sat/unsat interface
-void adjustWaterContent(Ground **ground, Data **data, Gmaps *gmap, Config *setting)
-{
-    int ii, kk, flag, sat_col, lay, sat_cell;
-    double wcr, wcs, wch, hwc, dwc, eps, Qsum, Q6[6];
-    eps = 1e-7;
-    wcr = setting->Sres * setting->porosity;
-    wcs = setting->porosity;
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        // computer wc from h, h from wc
-        wch = waterContent((*ground)->h[ii], setting);
-        hwc = headFromWC((*ground)->wc[ii], setting);
-        // check if the grid cell is adjacent to a saturated cell
-        sat_cell = 0;
-        if (gmap->actv[ii] == 1)
-        {
-            if ((*ground)->Cx[ii] > 0 & (*ground)->wc[gmap->iPjckc[ii]] >= wcs)     {sat_cell = 1;}
-            else if ((*ground)->Cx[gmap->iMjckc[ii]] > 0 & (*ground)->wc[gmap->iMjckc[ii]] >= wcs)      {sat_cell = 1;}
-            else if ((*ground)->Cy[ii] > 0 & (*ground)->wc[gmap->icjPkc[ii]] >= wcs)    {sat_cell = 1;}
-            else if ((*ground)->Cy[gmap->icjMkc[ii]] > 0 & (*ground)->wc[gmap->icjMkc[ii]] >= wcs)    {sat_cell = 1;}
-            else if ((*ground)->Cz[ii] > 0)
-            {
-                if (gmap->istop[ii] == 1 & (*data)->depth[gmap->top2D[ii]] > 0)     {sat_cell = 1;}
-                else if (gmap->istop[ii] != 1 & (*ground)->wc[gmap->icjckM[ii]] >= wcs)     {sat_cell = 1;}
-            }
-            else
-            {if (gmap->icjckP[ii] != -1 & (*ground)->wc[gmap->icjckP[ii]] >= wcs)    {sat_cell = 1;}}
-        }
-
-       // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 1 & gmap->istop[ii] == 1 & gmap->actv[ii] == 1)
-       // {printf("kk : %d BEFORE<<<< h = %f, hwc = %f, wc = %f, wch = %f, Qseep = %f\n",gmap->kk[ii],(*ground)->h[ii], hwc,(*ground)->wc[ii], wch, (*data)->Qseep[gmap->top2D[ii]]);}
-
-       // Adjust water content or head based on the saturated status
-        (*ground)->wcflag[ii] = 0;
-        if (gmap->actv[ii] == 1 & (*ground)->wc[ii] < wcs - eps)
-        {
-            // If adjacent to an saturated cell, adjust wc
-            if (sat_cell == 1)
-            {
-                if (wch > (*ground)->wc[ii])
-                {
-                    (*ground)->wcflag[ii] = 1;
-                    (*ground)->dwc[ii] = (wch - (*ground)->wc[ii]);
-                    (*ground)->wc[ii] = wch;
-                }
-            }
-            else {(*ground)->h[ii] = hwc;    (*ground)->wcflag[ii] = 2;}
-        }
-        else if (gmap->actv[ii] == 1 & (*ground)->wc[ii] >= wcs - eps)
-        {
-            (*ground)->wcflag[ii] = 3;
-            (*ground)->dwc[ii] = (*ground)->wc[ii] - wcs;
-            (*ground)->wc[ii] = wcs;
-        }
-    }
-
-    // Move excess water between cells
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        Qsum = 0.0;
-        for (kk = 0; kk < 6; kk++)  {Q6[kk] = 0.0;}
-        (*ground)->wcf[ii] = (*ground)->wc[ii];
-        // If need to extract water from neighbor cells
-        if ((*ground)->wcflag[ii] == 1)
-        {
-            // check where the extra flow should come from
-            if ((*ground)->Quu[ii] < 0 & (*ground)->wc[gmap->iPjckc[ii]] >= wcs)    {Q6[0] = -(*ground)->Quu[ii]; Qsum+=Q6[0];}
-            if ((*ground)->Quu[gmap->iMjckc[ii]] > 0 & (*ground)->wc[gmap->iMjckc[ii]] >= wcs)    {Q6[1] = (*ground)->Quu[gmap->iMjckc[ii]]; Qsum+=Q6[1];}
-            if ((*ground)->Qvv[ii] < 0 & (*ground)->wc[gmap->icjPkc[ii]] >= wcs)    {Q6[2] = -(*ground)->Qvv[ii]; Qsum+=Q6[2];}
-            if ((*ground)->Qvv[gmap->icjMkc[ii]] > 0 & (*ground)->wc[gmap->icjMkc[ii]] >= wcs)    {Q6[3] = (*ground)->Qvv[gmap->icjMkc[ii]]; Qsum+=Q6[3];}
-            if (gmap->istop[ii] == 1)
-            {if ((*ground)->Qww[ii] < 0 & (*data)->depth[gmap->top2D[ii]] >= 0)  {Q6[4] = -(*ground)->Qww[ii]; Qsum+=Q6[4];}}
-            else
-            {if ((*ground)->Qww[ii] < 0 & (*ground)->wc[gmap->icjckM[ii]] >= wcs)  {Q6[4] = -(*ground)->Qww[ii]; Qsum+=Q6[4];}}
-            if (gmap->icjckP[ii] != -1)
-            {if ((*ground)->Qww[gmap->icjckP[ii]] > 0 & (*ground)->wc[gmap->icjckP[ii]] >= wcs)  {Q6[5] = (*ground)->Qww[ii]; Qsum+=Q6[5];}}
-            // adjust water content of neighbor cells
-            if (Qsum > 0)
-            {
-                if (Q6[0] > 0)
-                {(*ground)->wcf[gmap->iPjckc[ii]] = (*ground)->wc[gmap->iPjckc[ii]] - (*ground)->dwc[ii] * Q6[0] / Qsum;}
-                if (Q6[1] > 0)
-                {(*ground)->wcf[gmap->iMjckc[ii]] = (*ground)->wc[gmap->iMjckc[ii]] - (*ground)->dwc[ii] * Q6[1] / Qsum;}
-                if (Q6[2] > 0)
-                {(*ground)->wcf[gmap->icjPkc[ii]] = (*ground)->wc[gmap->icjPkc[ii]] - (*ground)->dwc[ii] * Q6[2] / Qsum;}
-                if (Q6[3] > 0)
-                {(*ground)->wcf[gmap->icjMkc[ii]] = (*ground)->wc[gmap->icjMkc[ii]] - (*ground)->dwc[ii] * Q6[3] / Qsum;}
-                if (Q6[4] > 0)
-                {
-                    if (gmap->istop[ii] == 1)
-                    {
-                        (*data)->Qseep[gmap->top2D[ii]] -= (*ground)->dwc[ii] * (Q6[4]/Qsum) * gmap->dz3d[ii] * setting->dx * setting->dy / setting->dtg;
-                        if (fabs((*data)->Qseep[gmap->top2D[ii]]) > (*data)->depth[gmap->top2D[ii]] * setting->dx * setting->dy / setting->dtg)
-                        {(*data)->Qseep[gmap->top2D[ii]] = -(*data)->depth[gmap->top2D[ii]] * setting->dx * setting->dy / setting->dtg;}
-                    }
-                    else
-                    {(*ground)->wcf[gmap->icjckM[ii]] = (*ground)->wc[gmap->icjckM[ii]] - (*ground)->dwc[ii] * Q6[4] / Qsum;}
-                }
-                if (Q6[5] > 0)
-                {(*ground)->wcf[gmap->icjckP[ii]] = (*ground)->wc[gmap->icjckP[ii]] - (*ground)->dwc[ii] * Q6[5] / Qsum;}
-            }
-        }
-        // If need to send out water to neighbor cells
-        else if ((*ground)->wcflag[ii] == 3)
-        {
-            if ((*ground)->Quu[ii] > 0 & (*ground)->wc[gmap->iPjckc[ii]] < wcs)    {Q6[0] = (*ground)->Quu[ii]; Qsum+=Q6[0];}
-            if ((*ground)->Quu[gmap->iMjckc[ii]] < 0 & (*ground)->wc[gmap->iMjckc[ii]] < wcs)    {Q6[1] = -(*ground)->Quu[gmap->iMjckc[ii]]; Qsum+=Q6[1];}
-            if ((*ground)->Qvv[ii] > 0 & (*ground)->wc[gmap->icjPkc[ii]] < wcs)    {Q6[2] = (*ground)->Qvv[ii]; Qsum+=Q6[2];}
-            if ((*ground)->Qvv[gmap->icjMkc[ii]] < 0 & (*ground)->wc[gmap->icjMkc[ii]] < wcs)    {Q6[3] = -(*ground)->Qvv[gmap->icjMkc[ii]]; Qsum+=Q6[3];}
-            if (gmap->istop[ii] == 1)
-            {if ((*ground)->Qww[ii] > 0)  {Q6[4] = (*ground)->Qww[ii]; Qsum+=Q6[4];}}
-            else
-            {if ((*ground)->Qww[ii] > 0 & (*ground)->wc[gmap->icjckM[ii]] < wcs)  {Q6[4] = (*ground)->Qww[ii]; Qsum+=Q6[4];}}
-            if (gmap->icjckP[ii] != -1)
-            {if ((*ground)->Qww[gmap->icjckP[ii]] < 0 & (*ground)->wc[gmap->icjckP[ii]] < wcs)  {Q6[5] = -(*ground)->Qww[ii]; Qsum+=Q6[5];}}
-
-            if (Qsum > 0)
-            {
-                if (Q6[0] > 0)
-                {(*ground)->wcf[gmap->iPjckc[ii]] = (*ground)->wc[gmap->iPjckc[ii]] + (*ground)->dwc[ii] * Q6[0] / Qsum;}
-                if (Q6[1] > 0)
-                {(*ground)->wcf[gmap->iMjckc[ii]] = (*ground)->wc[gmap->iMjckc[ii]] + (*ground)->dwc[ii] * Q6[1] / Qsum;}
-                if (Q6[2] > 0)
-                {(*ground)->wcf[gmap->icjPkc[ii]] = (*ground)->wc[gmap->icjPkc[ii]] + (*ground)->dwc[ii] * Q6[2] / Qsum;}
-                if (Q6[3] > 0)
-                {(*ground)->wcf[gmap->icjMkc[ii]] = (*ground)->wc[gmap->icjMkc[ii]] + (*ground)->dwc[ii] * Q6[3] / Qsum;}
-                if (Q6[4] > 0)
-                {
-                    if (gmap->istop[ii] == 1)
-                    {(*data)->Qseep[gmap->top2D[ii]] += (*ground)->dwc[ii] * (Q6[4]/Qsum) * gmap->dz3d[ii] * setting->dx * setting->dy / setting->dtg;}
-                    else
-                    {(*ground)->wcf[gmap->icjckM[ii]] = (*ground)->wc[gmap->icjckM[ii]] + (*ground)->dwc[ii] * Q6[4] / Qsum;}
-                }
-                if (Q6[5] > 0)
-                {(*ground)->wcf[gmap->icjckP[ii]] = (*ground)->wc[gmap->icjckP[ii]] + (*ground)->dwc[ii] * Q6[5] / Qsum;}
-            }
-        }
-    }
-
-    for (ii = 0; ii < setting->N3ci; ii++)
-    {
-        (*ground)->wc[ii] = (*ground)->wcf[ii];
-        // evaporation!
-        if (setting->useEvap > 0 & (*ground)->qe[ii] > 0.0)
-        {(*ground)->wc[ii] -= (*ground)->qe[ii]*setting->dtg/gmap->dz3d[ii];}
-        // check if wc is between wcr and wcs
-        if ((*ground)->wc[ii] > wcs - eps)
-        {(*ground)->wc[ii] = wcs;}
-        else if ((*ground)->wc[ii] < wcr + eps)
-        {(*ground)->wc[ii] = wcr;}
-        // Volume change
-        (*ground)->V[ii] = setting->dx * setting->dy * (*ground)->wc[ii] * gmap->dz3d[ii];
-    }
-    // enforce sidewall boundary condition
-    for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		if (gmap->ii[ii] == 0)	{(*ground)->wc[gmap->iMjckc[ii]] = (*ground)->wc[ii];}
-		if (gmap->ii[ii] == setting->nx-1)	{(*ground)->wc[gmap->iPjckc[ii]] = (*ground)->wc[ii];}
-		if (gmap->jj[ii] == 0)	{(*ground)->wc[gmap->icjMkc[ii]] = (*ground)->wc[ii];}
-		if (gmap->jj[ii] == setting->ny-1)	{(*ground)->wc[gmap->icjPkc[ii]] = (*ground)->wc[ii];}
-	}
-}
-
-// ========== Subsurface scalar advection ==========
-void groundScalarAdvection(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
-{
-	int ii;
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		double SiP, SiM, SjP, SjM, SkP, SkM;
-		// scalar on iP face
-		if ((*ground)->Quu[ii] != 0)
-		{
-			if ((*ground)->Quu[ii] > 0) {SiP = (*ground)->S[ii];}
-			else {SiP = (*ground)->S[gmap->iPjckc[ii]];}
-		}
-		else
-		{SiP = 0;}
-		// scalar on iM face
-		if ((*ground)->Quu[gmap->iMjckc[ii]] != 0)
-		{
-			if ((*ground)->Quu[gmap->iMjckc[ii]] > 0) {SiM = (*ground)->S[gmap->iMjckc[ii]];}
-			else {SiM = (*ground)->S[ii];}
-		}
-		else
-		{SiM = 0;}
-        // scalar on jP face
-		if ((*ground)->Qvv[ii] != 0)
-		{
-			if ((*ground)->Qvv[ii] > 0) {SjP = (*ground)->S[ii];}
-			else {SjP = (*ground)->S[gmap->icjPkc[ii]];}
-		}
-		else
-		{SiM = 0;}
-		// scalar on jM face
-		if ((*ground)->Qvv[gmap->icjMkc[ii]] != 0)
-		{
-			if ((*ground)->Qvv[gmap->icjMkc[ii]] > 0) {SjM = (*ground)->S[gmap->icjMkc[ii]];}
-			else {SjM = (*ground)->S[ii];}
-		}
-		else
-		{SjM = 0;}
-		// scalar on kM face
-		if ((*ground)->Qww[ii] != 0)
-		{
-			if ((*ground)->Qww[ii] > 0) {SkM = (*ground)->S[ii];}
-			else
-      {
-        if (gmap->istop[ii] == 1)
-        {SkM = data->S[gmap->top2D[ii]];}
+        if (gmap->actv[ii] == 0)
+        {(*data)->room[ii] = 0.0;}
         else
-        {SkM = (*ground)->S[gmap->icjckM[ii]];}
-      }
-		}
-		else
-		{SkM = 0;}
-		// scalar on kP face
-		if ((*ground)->Qww[gmap->icjckP[ii]] != 0)
-		{
-			if ((*ground)->Qww[gmap->icjckP[ii]] > 0) {SkP = (*ground)->S[gmap->icjckP[ii]];}
-			else {SkP = (*ground)->S[ii];}
-		}
-		else
-		{SkP = 0;}
-		// Advective transport
-		(*ground)->Sm[ii] = (*ground)->Sm[ii] + setting->dtg * \
-			(-(*ground)->Quu[ii] * SiP + (*ground)->Quu[gmap->iMjckc[ii]] * SiM - \
-			(*ground)->Qvv[ii] * SjP + (*ground)->Qvv[gmap->icjMkc[ii]] * SjM - \
-			(*ground)->Qww[ii] * SkM + (*ground)->Qww[gmap->icjckP[ii]] * SkP);
-	}
-
+        {(*data)->room[ii] = ((*data)->wcs[ii]-(*data)->wc[ii]) * gmap->dz3d[ii]*param->dx*param->dy;}
+    }
 }
 
-// ========== Subsurface scalar diffusion ==========
-void groundScalarDiffusion(Ground **ground, Data *data, Gmaps *gmap, Config *setting)
+// >>>>> update water content <<<<<
+void update_water_content(Data **data, Map *gmap, Config *param)
 {
-	int ii;
-	double AiP, AiM, AjP, AjM, AkP, AkM;
-	double JiP, JiM, JjP, JjM, JkP, JkM;
-	double dz;
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		// compute face area
-		AiP = setting->dy * dz * setting->porosity;
-		AiM = setting->dy * dz * setting->porosity;
-		AjP = setting->dx * dz * setting->porosity;
-		AjM = setting->dx * dz * setting->porosity;
-		AkP = setting->dy * setting->dx * setting->porosity;
-		AkM = setting->dy * setting->dx * setting->porosity;
-		// iP face flux
-		if ((*ground)->Cx[ii] > 0 & gmap->iPjckc[ii] < setting->N3ci)
-		{JiP = AiP * ((*ground)->S[gmap->iPjckc[ii]] - (*ground)->S[ii]) / setting->dx;}
-		else
-		{JiP = 0;}
-		// iM face flux
-		if ((*ground)->Cx[gmap->iMjckc[ii]] > 0 & gmap->iMjckc[ii] < setting->N3ci)
-		{JiM = AiM * ((*ground)->S[ii] - (*ground)->S[gmap->iMjckc[ii]]) / setting->dx;}
-		else
-		{JiM = 0;}
-		// jP face flux
-		if ((*ground)->Cy[ii] > 0 & gmap->icjPkc[ii] < setting->N3ci)
-		{JjP = AjP * ((*ground)->S[gmap->icjPkc[ii]] - (*ground)->S[ii]) / setting->dy;}
-		else
-		{JjP = 0;}
-		// jM face flux
-		if ((*ground)->Cy[gmap->icjMkc[ii]] > 0 & gmap->icjMkc[ii] < setting->N3ci)
-		{JjM = AjM * ((*ground)->S[ii] - (*ground)->S[gmap->icjMkc[ii]]) / setting->dy;}
-		else
-		{JjM = 0;}
-		// kP face flux
-		if ((*ground)->Cz[gmap->icjckP[ii]] > 0 & gmap->icjckP[ii] >= 0)
-		{
-      dz = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
-      JkP = AkP * ((*ground)->S[ii] - (*ground)->S[gmap->icjckP[ii]]) / dz;
-    }
-		else
-		{JkP = 0;}
-		// kM face flux
-		if ((*ground)->Cz[ii] > 0)
-		{
-      dz = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
-      if (gmap->istop[ii] == 1)
-      {JkM = 2.0 * AkM * (data->S[gmap->top2D[ii]] - (*ground)->S[ii]) / gmap->dz3d[ii];}
-      else
-      {JkM = AkM * ((*ground)->S[gmap->icjckM[ii]] - (*ground)->S[ii]) / dz;}
-    }
-		else
-		{JkM = 0;}
-		// diffusive transport
-		(*ground)->Sm[ii] = (*ground)->Sm[ii] + setting->dtg * \
-			(setting->Kmx * (JiP - JiM) + setting->Kmy * (JjP - JjM) + setting->Kmx * (JkM - JkP));
-	}
-}
-
-// ========== Subsurface scalar transport ==========
-void groundScalarTransport(Ground **ground, Data **data, Gmaps *gmap, Maps *map, Config *setting, int irank, int nrank)
-{
-	int ii, jj, *N, flag;
-	double *Smax, *Smin, *Sarr;
-	N = malloc(setting->N3ci * sizeof(int));
-	Smax = malloc(setting->N3ci * sizeof(double));
-	Smin = malloc(setting->N3ci * sizeof(double));
-  // estimate scalar mass
-  for (ii = 0; ii < setting->N3ci; ii++)
-  {(*ground)->Sm[ii] = (*ground)->S[ii] * (*ground)->V[ii];}
-	// scalar limiter
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		int iP=0, iM=0, jP=0, jM=0, kP=0, kM=0;
-		N[ii] = 0;
-		if ((*ground)->Cx[ii] > 0 & gmap->iPjckc[ii] < setting->N3ci) {N[ii] += 1; iP = 1;}
-		if ((*ground)->Cx[gmap->iMjckc[ii]] > 0 & gmap->iMjckc[ii] < setting->N3ci) {N[ii] += 1; iM = 1;}
-		if ((*ground)->Cy[ii] > 0 & gmap->icjPkc[ii] < setting->N3ci) {N[ii] += 1; jP = 1;}
-		if ((*ground)->Cy[gmap->icjMkc[ii]] > 0 & gmap->icjMkc[ii] < setting->N3ci) {N[ii] += 1; jM = 1;}
-		if ((*ground)->Cz[ii] > 0) {N[ii] += 1; kM = 1;}
-		if (gmap->icjckP[ii] >= 0 & gmap->icjckP[ii] < setting->N3ci) {N[ii] += 1; kP = 1;}
-		if (N[ii] > 0)
-		{
-			int jj = 0;
-			Sarr = malloc(N[ii] * sizeof(double));
-			if (iP == 1) {Sarr[jj] = (*ground)->S[gmap->iPjckc[ii]];	jj++;}
-			if (iM == 1) {Sarr[jj] = (*ground)->S[gmap->iMjckc[ii]];	jj++;}
-			if (jP == 1) {Sarr[jj] = (*ground)->S[gmap->icjPkc[ii]];	jj++;}
-			if (jM == 1) {Sarr[jj] = (*ground)->S[gmap->icjMkc[ii]];	jj++;}
-			if (kP == 1) {Sarr[jj] = (*ground)->S[gmap->icjckP[ii]];	jj++;}
-			if (kM == 1) {Sarr[jj] = (*ground)->S[gmap->icjckM[ii]];	jj++;}
-			Smax[ii] = getMax(Sarr, N[ii]);
-			Smin[ii] = getMin(Sarr, N[ii]);
-			iP = 0;
-			iM = 0;
-			jP = 0;
-			jM = 0;
-			kP = 0;
-			kM = 0;
-			free(Sarr);
-		}
-	}
-	// advection
-	groundScalarAdvection(ground, *data, gmap, setting);
-	// diffusion
-	groundScalarDiffusion(ground, *data, gmap, setting);
-	// update scalar
-    flag = 0;
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		if ((*ground)->V[ii] > 0)
-		{(*ground)->S[ii] = (*ground)->Sm[ii] / (*ground)->V[ii];}
-		else
-		{(*ground)->S[ii] = 0;}
-
-		if (N[ii] > 0)
-		{
-      // CFL checking
-      if (gmap->istop[ii] == 1 & (*ground)->S[ii] > Smax[ii])
-      {flag = 1;}
-			if ((*ground)->S[ii] > Smax[ii]) {(*ground)->S[ii] = Smax[ii];}
-			if ((*ground)->S[ii] < Smin[ii]) {(*ground)->S[ii] = Smin[ii];}
-		}
-
-	}
-    if (flag == 1)
+    int ii, jj, i_sat;
+    double coeff, dqx, dqy, dqz, room_col;
+    for (ii = 0; ii < param->n3ci; ii++)
     {
-        printf("WARNING: Groundwater time step might be too big for scalar transport!\n");
+        // update water content
+        coeff = 1.0 + param->Ss * ((*data)->h[ii]-(*data)->hn[ii]) / (*data)->wcs[ii];
+        dqx = param->dt * ((*data)->qx[ii] - (*data)->qx[gmap->iMjckc[ii]]) / param->dx;
+        dqy = param->dt * ((*data)->qy[ii] - (*data)->qy[gmap->icjMkc[ii]]) / param->dy;
+        dqz = param->dt * ((*data)->qz[ii] - (*data)->qz[gmap->icjckM[ii]]) / gmap->dz3d[ii];
+        (*data)->wc[ii] = ((*data)->wcn[ii] + dqx + dqy + dqz) / coeff;
+        // if (ii == 5)
+        // {
+        //     printf(" !!!!! wcn->wc : %f->%f,  qm = %f, qp = %f, qtop = %f, qbot = %f\n",(*data)->wcn[ii],(*data)->wc[ii],
+        //         (*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
+        //         (*data)->qy[ii]*param->dt/param->dy,
+        //         (*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
+        //         (*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
+        // }
     }
-	// set top boundary condition
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		if (gmap->istop[ii] == 1)
-		{
-			jj = gmap->top2D[ii];
-			(*ground)->S[gmap->icjckM[ii]] = (*data)->S[jj];
-			(*data)->Ssub[jj] = (*ground)->S[ii];
-			if ((*ground)->Cz[ii] > 0)
-			{(*data)->dz[jj] = gmap->htop[jj];}
-			else
-			{(*data)->dz[jj] = 0;}
-		}
-	}
-	// set side boundary condition
-	for (ii = 0; ii < setting->N3ci; ii++)
-	{
-		if (gmap->ii[ii] == 0)	{(*ground)->S[gmap->iMjckc[ii]] = (*ground)->S[ii];}
-		if (gmap->ii[ii] == setting->nx-1)	{(*ground)->S[gmap->iPjckc[ii]] = (*ground)->S[ii];}
-		if (gmap->jj[ii] == 0)	{(*ground)->S[gmap->icjMkc[ii]] = (*ground)->S[ii];}
-		if (gmap->jj[ii] == setting->ny-1)	{(*ground)->S[gmap->icjPkc[ii]] = (*ground)->S[ii];}
-        if (gmap->ii[ii] == 0)	{(*ground)->Sm[gmap->iMjckc[ii]] = (*ground)->Sm[ii];}
-		if (gmap->ii[ii] == setting->nx-1)	{(*ground)->Sm[gmap->iPjckc[ii]] = (*ground)->Sm[ii];}
-		if (gmap->jj[ii] == 0)	{(*ground)->Sm[gmap->icjMkc[ii]] = (*ground)->Sm[ii];}
-		if (gmap->jj[ii] == setting->ny-1)	{(*ground)->Sm[gmap->icjPkc[ii]] = (*ground)->Sm[ii];}
-	}
+}
 
-	free(N);
-	free(Smax);
-	free(Smin);
+// enforce moisture boundary conditions
+void enforce_moisture_bc(Data **data, Map *gmap, Config *param)
+{
+    int ii;
+    // xp and xm boundaries
+    for (ii = 0; ii < param->ny*param->nz; ii++)
+    {
+        (*data)->wc[gmap->iPou[ii]] = (*data)->wc[gmap->iPin[ii]];
+        (*data)->wc[gmap->iMou[ii]] = (*data)->wc[gmap->iMin[ii]];
+    }
+    // yp and ym boundaries
+    for (ii = 0; ii < param->nx*param->nz; ii++)
+    {
+        (*data)->wc[gmap->jPou[ii]] = (*data)->wc[gmap->jPin[ii]];
+        (*data)->wc[gmap->jMou[ii]] = (*data)->wc[gmap->jMin[ii]];
+    }
+    // zp boundary
+    for (ii = 0; ii < param->nx*param->ny; ii++)
+    {
+        (*data)->wc[gmap->kPou[ii]] = (*data)->wc[gmap->kPin[ii]];
+        (*data)->wc[gmap->kMou[ii]] = (*data)->wc[gmap->kMin[ii]];
+    }
+}
 
-	// exchange between threads
-	if (setting->useMPI == 1)
-	{
-		mpiexchangeGround((*ground)->S, gmap, setting, irank, nrank);
-		mpiexchangeGround((*ground)->Sm, gmap, setting, irank, nrank);
-	}
+// >>>>> post-allocation of moisture <<<<<
+void reallocate_water_content(Data **data, Map *gmap, Config *param)
+{
+    int ii, adj_sat, dir, alloc_type1=0, alloc_type2=0, alloc_type3=0, alloc_type4=0;
+    double dV, wcp;
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        wcp = (*data)->wc[ii];
+        if (gmap->actv[ii] == 1)
+        {
+            (*data)->wch[ii] = compute_wch(*data, ii, param);
+            (*data)->hwc[ii] = compute_hwc(*data, ii, param);
+            // over-saturated cell
+            if ((*data)->wc[ii] >= (*data)->wcs[ii])
+            {
+                // send moisture
+                if (param->post_allocate == 1)
+                {
+                    dV = ((*data)->wc[ii] - (*data)->wcs[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
+                    if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
+                    {
+                        // printf("1 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wcs[ii]);
+                        (*data)->repeat[0] = 1;
+                    }
+                    check_head_gradient(data, gmap, param, ii);
+                    dV = allocate_send(data, gmap, param, ii, dV);
+                    if (dV > 0)    {dV = allocate_send(data, gmap, param, ii, dV);}
+                }
+                (*data)->wc[ii] = (*data)->wcs[ii];
+                alloc_type1 += 1;
+            }
+            // unsaturated cell
+            else
+            {
+                // check if a cell is adjacent to a saturated cell
+                adj_sat = check_adj_sat(*data, gmap, param, ii);
+                // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 2 & gmap->kk[ii] == 8)
+                // {
+                //     printf(" !!adj=%d!! wcn->wc->wch : %f->%f->%f,  h->hwc : %f->%f,  qm = %f, qp = %f, qtop = %f, qbot = %f\n",
+                //         adj_sat,(*data)->wcn[ii],(*data)->wc[ii],(*data)->wch[ii],
+                //         (*data)->h[ii],(*data)->hwc[ii],
+                //         (*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
+                //         (*data)->qy[ii]*param->dt/param->dy,
+                //         (*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
+                //         (*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
+                // }
+                // isolated unsaturated cell
+                if (adj_sat == 0)
+                {
+                    // if ((*data)->h[ii] < 0)
+                    if ((*data)->wc[ii] < 0.9999*(*data)->wcs[ii])
+                    {(*data)->h[ii] = (*data)->hwc[ii]; alloc_type2 += 1;}
+                }
+                // unsaturated cell adjacent to saturated cell
+                else
+                {
+                    // receive moisture
+                    if (param->post_allocate == 1)
+                    {
+                        if ((*data)->wch[ii] > (*data)->wc[ii])
+                        {
+                            dV = ((*data)->wch[ii] - (*data)->wc[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
+                            // if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
+                            // {(*data)->repeat[0] = 1;}
+                            // check_head_gradient(data, gmap, param, ii);
+                            // dV = allocate_recv(data, gmap, param, ii, dV);
+                            // if (dV > 0)    {dV = allocate_recv(data, gmap, param, ii, dV);}
+                            alloc_type3 += 1;
+
+                        }
+                        // send moisture
+                        else
+                        {
+                            dV = ((*data)->wc[ii] - (*data)->wch[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
+                            if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
+                            {
+                                // printf("3 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wch[ii]);
+                                (*data)->repeat[0] = 1;
+                            }
+                            check_head_gradient(data, gmap, param, ii);
+                            dV = allocate_send(data, gmap, param, ii, dV);
+                            if (dV > 0)    {dV = allocate_send(data, gmap, param, ii, dV);}
+                            alloc_type4 += 1;
+
+                        }
+                    }
+                    (*data)->wc[ii] = (*data)->wch[ii];
+                    (*data)->room[ii] = ((*data)->wcs[ii] - (*data)->wc[ii]) * param->dx*param->dy*gmap->dz3d[ii];
+                }
+            }
+
+        }
+
+    }
+    // for (ii = 0; ii < param->n3ci; ii++)
+    // {
+    //     if (gmap->ii[ii] == 1 & gmap->jj[ii] == 40 & gmap->kk[ii] > 13 & gmap->kk[ii] < 18)
+    //     {
+    //         printf(" ----- ii=%d, Final wc = %f,   h = %f\n",ii,(*data)->wc[ii],(*data)->h[ii]);
+    //         printf(" ========== \n\n");
+    //     }
+    // }
+    // printf(" >> Total number of alloc type1=%d, type2=%d, type3=%d, type4=%d\n",alloc_type1,alloc_type2,alloc_type3,alloc_type4);
+}
+
+// >>>>> Check if a grid cell is adjacent to a saturated cell <<<<<
+int check_adj_sat(Data *data, Map *gmap, Config *param, int ii)
+{
+    int adj_sat = 0;
+    if (gmap->actv[gmap->icjckP[ii]] == 1 & data->wc[gmap->icjckP[ii]] >= data->wcs[gmap->icjckP[ii]])
+    {adj_sat = 1;}
+    else if (data->Kx[ii] != 0 & data->wc[gmap->iPjckc[ii]] >= data->wcs[gmap->iPjckc[ii]])
+    {adj_sat = 1;}
+    else if (data->Kx[gmap->iMjckc[ii]] != 0 & data->wc[gmap->iMjckc[ii]] >= data->wcs[gmap->iMjckc[ii]])
+    {adj_sat = 1;}
+    else if (data->Ky[ii] != 0 & data->wc[gmap->icjPkc[ii]] >= data->wcs[gmap->icjPkc[ii]])
+    {adj_sat = 1;}
+    else if (data->Ky[gmap->icjMkc[ii]] != 0 & data->wc[gmap->icjMkc[ii]] >= data->wcs[gmap->icjMkc[ii]])
+    {adj_sat = 1;}
+    else
+    {
+        if (gmap->istop[ii] == 1)
+        {
+            if (param->sim_shallowwater == 1 & data->dept[gmap->top2d[ii]] > 0)    {adj_sat = 1;}
+            else if (param->sim_shallowwater == 0 & param->bctype_GW[5] == 1 & param->htop >= 0)   {adj_sat = 1;}
+        }
+        else
+        {
+            if (gmap->actv[gmap->icjckM[ii]] == 1 & data->wc[gmap->icjckM[ii]] >= data->wcs[gmap->icjckM[ii]])
+            {adj_sat = 1;}
+        }
+    }
+    return adj_sat;
+}
+
+// >>>>> check the direction of allocation
+void check_head_gradient(Data **data, Map *gmap, Config *param, int ii)
+{
+    int jj;
+    double dh, dzp, dzm, gradx, grady, gradz, grad_tot;
+    // get dh at the iP face
+    dh = ((*data)->h[gmap->iPjckc[ii]]-(*data)->h[ii]) / param->dx;
+    if (gmap->actv[gmap->iPjckc[ii]] == 1 & (*data)->Kx[ii] > 0)   {(*data)->dh6[0] = dh;}
+    else    {(*data)->dh6[0] = 0.0;}
+    // get dh at the iM face
+    dh = ((*data)->h[ii]-(*data)->h[gmap->iMjckc[ii]]) / param->dx;
+    if (gmap->actv[gmap->iMjckc[ii]] == 1 & (*data)->Kx[gmap->iMjckc[ii]] > 0) {(*data)->dh6[1] = dh;}
+    else    {(*data)->dh6[1] = 0.0;}
+    // get dh at the jP face
+    dh = ((*data)->h[gmap->icjPkc[ii]]-(*data)->h[ii]) / param->dy;
+    if (gmap->actv[gmap->icjPkc[ii]] == 1 & (*data)->Ky[ii] > 0)   {(*data)->dh6[2] = dh;}
+    else    {(*data)->dh6[2] = 0.0;}
+    // get dh at the jM face
+    dh = ((*data)->h[ii]-(*data)->h[gmap->icjMkc[ii]]) / param->dy;
+    if (gmap->actv[gmap->icjMkc[ii]] == 1 & (*data)->Ky[gmap->icjMkc[ii]] > 0) {(*data)->dh6[3] = dh;}
+    else    {(*data)->dh6[3] = 0.0;}
+    // get dh at the kP face
+    if (gmap->kk[ii] == param->nz-1)
+    {if (param->bctype_GW[4] == 1)   {dzp = 0.5 * gmap->dz3d[ii];}}
+    else    {dzp = 0.5 * (gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);}
+    if (dzp == 0.0) {dh = 0.0;}
+    else    {dh = ((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]) / dzp - 1.0;}
+    if (gmap->actv[gmap->icjckP[ii]] == 1 & (*data)->Kz[ii] > 0)    {(*data)->dh6[4] = dh;}
+    else    {(*data)->dh6[4] = 0.0;}
+    // get dh at the kM face
+    if (gmap->istop[ii] == 1)
+    {
+        if (param->sim_shallowwater == 1)
+        {if ((*data)->dept[gmap->top2d[ii]] > 0)    {dzm = 0.5 * gmap->dz3d[ii];}}
+        else
+        {if (param->bctype_GW[5] == 1)   {dzm = 0.5 * gmap->dz3d[ii];}}
+    }
+    else    {dzm = 0.5 * (gmap->dz3d[ii] + gmap->icjckM[ii]);}
+    if (dzm == 0.0) {dh = 0.0;}
+    else    {dh = ((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]]) / dzm - 1.0;}
+    if (gmap->actv[gmap->icjckM[ii]] == 1 & (*data)->Kz[gmap->icjckM[ii]] > 0)    {(*data)->dh6[5] = dh;}
+    else    {(*data)->dh6[5] = 0.0;}
+
+    (*data)->dh6[0] = 0.0;
+    (*data)->dh6[1] = 0.0;
+    (*data)->dh6[2] = 0.0;
+    (*data)->dh6[3] = 0.0;
+
+    // combine gradients in each direction
+    grad_tot = 0.0;
+    if ((*data)->dh6[0]*(*data)->dh6[1] >= 0)
+    {gradx = 0.5*((*data)->dh6[0]+(*data)->dh6[1]);     grad_tot += fabs(gradx);}
+    else    {gradx = 0.0;   grad_tot += (fabs((*data)->dh6[0]) + fabs((*data)->dh6[1]));}
+    if ((*data)->dh6[2]*(*data)->dh6[3] >= 0)
+    {grady = 0.5*((*data)->dh6[2]+(*data)->dh6[3]);     grad_tot += fabs(grady);}
+    else    {grady = 0.0;   grad_tot += (fabs((*data)->dh6[2]) + fabs((*data)->dh6[3]));}
+    if ((*data)->dh6[4]*(*data)->dh6[5] >= 0)
+    {gradz = 0.5*((*data)->dh6[4]+(*data)->dh6[5]);     grad_tot += fabs(gradz);}
+    else    {gradz = 0.0;   grad_tot += (fabs((*data)->dh6[4]) + fabs((*data)->dh6[5]));}
+    // get moisture split ratio
+    if (grad_tot > 0)
+    {
+        if (gradx > 0)  {(*data)->rsplit[0] = 0.0;  (*data)->rsplit[1] = gradx / grad_tot;}
+        else if (gradx < 0) {(*data)->rsplit[1] = 0.0;  (*data)->rsplit[0] = -gradx / grad_tot;}
+        else    {(*data)->rsplit[0] = fabs((*data)->dh6[0])/grad_tot;   (*data)->rsplit[1] = fabs((*data)->dh6[1])/grad_tot;}
+        if (grady > 0)  {(*data)->rsplit[2] = 0.0;  (*data)->rsplit[3] = grady / grad_tot;}
+        else if (grady < 0) {(*data)->rsplit[3] = 0.0;  (*data)->rsplit[2] = -grady / grad_tot;}
+        else    {(*data)->rsplit[2] = fabs((*data)->dh6[2])/grad_tot;   (*data)->rsplit[3] = fabs((*data)->dh6[3])/grad_tot;}
+        if (gradz > 0)  {(*data)->rsplit[4] = 0.0;  (*data)->rsplit[5] = gradz / grad_tot;}
+        else if (gradz < 0) {(*data)->rsplit[5] = 0.0;  (*data)->rsplit[4] = -gradz / grad_tot;}
+        else    {(*data)->rsplit[4] = fabs((*data)->dh6[4])/grad_tot;   (*data)->rsplit[5] = fabs((*data)->dh6[5])/grad_tot;}
+    }
+    else
+    {for (jj = 0; jj < 6; jj++)  {(*data)->rsplit[jj] = 0.0;}}
+}
+
+// >>>>> send moisture <<<<<
+double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV)
+{
+    int ll, rev = 0;
+    double dVxp=0, dVxm=0, dVyp=0, dVym=0, dVzp=0, dVzm=0, temp, Vres=0.0;
+    // send up
+    if ((*data)->rsplit[5] > 0)
+    {
+        dVzm = dV * (*data)->rsplit[5];
+        ll = ii;
+        while (gmap->istop[ll] != 1)
+        {
+            ll -= 1;
+            if ((*data)->room[ll] > 0)
+            {
+                if ((*data)->room[ll] > dVzm)
+                {
+                    (*data)->wc[ll] += dVzm / (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] -= dVzm;
+                    dV = 0.0;
+                    break;
+                }
+                else
+                {
+                    (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                    dVzm -= (*data)->room[ll];
+                    (*data)->room[ll] = 0.0;
+                }
+            }
+        }
+        // release excess moisture from top surface
+        if (dVzm > 0.0)
+        {
+            if (param->sim_shallowwater == 1)
+            {(*data)->dept[gmap->top2d[ll]] += dVzm / (param->dx*param->dy);   dVzm = 0.0;}
+            else
+            {if (param->bctype_GW[5] == 1)   {dVzm = 0.0;}}
+            dVzm = 0.0;
+        }
+    }
+    // send down
+    if ((*data)->rsplit[4] > 0)
+    {
+        dVzp = dV * (*data)->rsplit[4];
+        ll = ii;
+        while (gmap->kk[ll] != param->nz-1)
+        {
+            ll += 1;
+            if ((*data)->room[ll] > 0)
+            {
+                if ((*data)->room[ll] > dVzp)
+                {
+                    (*data)->wc[ll] += dVzp / (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] -= dVzp;
+                    dVzp = 0.0;
+                    break;
+                }
+                else
+                {
+                    (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                    dVzp -= (*data)->room[ll];
+                    (*data)->room[ll] = 0.0;
+                }
+            }
+        }
+        // release excess moisture from bottom boundary
+        if (dVzp > 0.0)
+        {if (param->bctype_GW[5] == 1)   {dVzp = 0.0;}}
+    }
+    // send in x direction
+    if ((*data)->rsplit[0] > 0)
+    {
+        dVxp = dV * (*data)->rsplit[0];
+        ll = gmap->iPjckc[ii];
+        if ((*data)->room[ll] > 0)
+        {
+            if ((*data)->room[ll] > dVxp)
+            {
+                (*data)->wc[ll] += dVxp / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] -= dVxp;
+                dVxp = 0.0;
+            }
+            else
+            {
+                (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                dVxp -= (*data)->room[ll];
+                (*data)->room[ll] = 0.0;
+            }
+        }
+    }
+    if ((*data)->rsplit[1] > 0)
+    {
+        dVxm = dV * (*data)->rsplit[1];
+        ll = gmap->iMjckc[ii];
+        if ((*data)->room[ll] > 0)
+        {
+            if ((*data)->room[ll] > dVxm)
+            {
+                (*data)->wc[ll] += dVxm / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] -= dVxm;
+                dVxm = 0.0;
+            }
+            else
+            {
+                (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                dVxm -= (*data)->room[ll];
+                (*data)->room[ll] = 0.0;
+            }
+        }
+    }
+    // send in y direction
+    if ((*data)->rsplit[2] > 0)
+    {
+        dVyp = dV * (*data)->rsplit[2];
+        ll = gmap->icjPkc[ii];
+        if ((*data)->room[ll] > 0)
+        {
+            if ((*data)->room[ll] > dVyp)
+            {
+                (*data)->wc[ll] += dVyp / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] -= dVyp;
+                dVyp = 0.0;
+            }
+            else
+            {
+                (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                dVyp -= (*data)->room[ll];
+                (*data)->room[ll] = 0.0;
+            }
+        }
+    }
+    if ((*data)->rsplit[3] > 0)
+    {
+        dVym = dV * (*data)->rsplit[3];
+        ll = gmap->icjMkc[ii];
+        if ((*data)->room[ll] > 0)
+        {
+            if ((*data)->room[ll] > dVym)
+            {
+                (*data)->wc[ll] += dVym / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] -= dVym;
+                dVym = 0.0;
+            }
+            else
+            {
+                (*data)->wc[ll] += (*data)->room[ll] / (param->dx*param->dy*gmap->dz3d[ll]);
+                dVym -= (*data)->room[ll];
+                (*data)->room[ll] = 0.0;
+            }
+        }
+    }
+    // Check if reversed send is needed
+    if (dVzp + dVzm > 0)
+    {
+        temp = (*data)->rsplit[5];
+        (*data)->rsplit[5] = (*data)->rsplit[4];
+        (*data)->rsplit[4] = temp;
+        Vres += (dVzp + dVzm);
+    }
+    if (dVxp + dVxm > 0)
+    {
+        temp = (*data)->rsplit[1];
+        (*data)->rsplit[1] = (*data)->rsplit[0];
+        (*data)->rsplit[0] = temp;
+        Vres += (dVxp + dVxm);
+    }
+    if (dVyp + dVym > 0)
+    {
+        temp = (*data)->rsplit[3];
+        (*data)->rsplit[3] = (*data)->rsplit[2];
+        (*data)->rsplit[2] = temp;
+        Vres += (dVyp + dVym);
+    }
+    return Vres;
+}
+
+
+// >>>>> send moisture <<<<<
+double allocate_recv(Data **data, Map *gmap, Config *param, int ii, double dV)
+{
+    int ll, dir, rev = 0;
+    double dVxp=0, dVxm=0, dVyp=0, dVym=0, dVzp=0, dVzm=0, temp, Vres=0.0;
+    // recv from up
+    if ((*data)->rsplit[5] > 0)
+    {
+        dVzm = dV * (*data)->rsplit[5];
+        ll = ii;
+        while (gmap->istop[ll] != 1)
+        {
+            ll -= 1;
+            if ((*data)->wc[ll] > (*data)->wcr[ll])
+            {
+                if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVzm / (param->dx*param->dy*gmap->dz3d[ll]))
+                {
+                    (*data)->wc[ll] -= dVzm / (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] += dVzm;
+                    dVzm = 0.0;
+                    break;
+                }
+                else
+                {
+                    dVzm -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->wc[ll] = (*data)->wcr[ll];
+                }
+            }
+            // limite recv to 1 adjacent cell, ZhiLi20200827
+            dVzm = 0.0;
+            break;
+        }
+        // extract moisture from surface domain
+        if (dVzm > 0.0)
+        {
+            if (param->sim_shallowwater == 1)
+            {
+                if ((*data)->dept[gmap->top2d[ll]] > dVzm / (param->dx*param->dy))
+                {(*data)->dept[gmap->top2d[ll]] -= dVzm / (param->dx*param->dy);   dVzm = 0.0;}
+                else
+                {(*data)->dept[gmap->top2d[ll]] = param->min_dept;}
+            }
+            else    {if (param->bctype_GW[5] == 1)   {dVzm = 0.0;}}
+            dVzm = 0.0;
+        }
+    }
+    // recv from bottom
+    if ((*data)->rsplit[4] > 0)
+    {
+        dVzp = dV * (*data)->rsplit[4];
+        ll = ii;
+        while (gmap->kk[ll] != param->nz-1)
+        {
+            ll += 1;
+            if ((*data)->wc[ll] > (*data)->wcr[ll])
+            {
+                if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVzp / (param->dx*param->dy*gmap->dz3d[ll]))
+                {
+                    (*data)->wc[ll] -= dVzp / (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] += dVzp;
+                    dVzp = 0.0;
+                    break;
+                }
+                else
+                {
+                    dVzp -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                    (*data)->wc[ll] = (*data)->wcr[ll];
+                    // Limit recv within 1 neighbor cell to avoid instability! ZhiLi20200621
+                    dVzp = 0.0;
+                }
+            }
+            // limite recv to 1 adjacent cell, ZhiLi20200827
+            dVzp = 0.0;
+            break;
+        }
+        if (dVzp > 0.0) {if (param->bctype_GW[4] == 1)   {dVzp = 0.0;}}
+    }
+    // send in x direction
+    if ((*data)->rsplit[0] > 0)
+    {
+        dVxp = dV * (*data)->rsplit[0];
+        ll = gmap->iPjckc[ii];
+        if ((*data)->wc[ll] > (*data)->wcr[ll])
+        {
+            if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVxp / (param->dx*param->dy*gmap->dz3d[ll]))
+            {
+                (*data)->wc[ll] -= dVxp / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += dVxp;
+                dVxp = 0.0;
+            }
+            else
+            {
+                dVxp -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->wc[ll] = (*data)->wcr[ll];
+            }
+        }
+    }
+    if ((*data)->rsplit[1] > 0)
+    {
+        dVxm = dV * (*data)->rsplit[1];
+        ll = gmap->iMjckc[ii];
+        if ((*data)->wc[ll] > (*data)->wcr[ll])
+        {
+            if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVxm / (param->dx*param->dy*gmap->dz3d[ll]))
+            {
+                (*data)->wc[ll] -= dVxm / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += dVxm;
+                dVxm = 0.0;
+            }
+            else
+            {
+                dVxm -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->wc[ll] = (*data)->wcr[ll];
+            }
+        }
+    }
+    // send in y direction
+    if ((*data)->rsplit[2] > 0)
+    {
+        dVyp = dV * (*data)->rsplit[2];
+        ll = gmap->icjPkc[ii];
+        if ((*data)->wc[ll] > (*data)->wcr[ll])
+        {
+            if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVyp / (param->dx*param->dy*gmap->dz3d[ll]))
+            {
+                (*data)->wc[ll] -= dVyp / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += dVyp;
+                dVyp = 0.0;
+            }
+            else
+            {
+                dVyp -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->wc[ll] = (*data)->wcr[ll];
+            }
+        }
+    }
+    if ((*data)->rsplit[3] > 0)
+    {
+        dVym = dV * (*data)->rsplit[3];
+        ll = gmap->icjMkc[ii];
+        if ((*data)->wc[ll] > (*data)->wcr[ll])
+        {
+            if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVym / (param->dx*param->dy*gmap->dz3d[ll]))
+            {
+                (*data)->wc[ll] -= dVym / (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += dVym;
+                dVym = 0.0;
+            }
+            else
+            {
+                dVym -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+                (*data)->wc[ll] = (*data)->wcr[ll];
+            }
+        }
+    }
+    // Check if reversed send is needed
+    if (dVzp + dVzm > 0)
+    {
+        temp = (*data)->rsplit[5];
+        (*data)->rsplit[5] = (*data)->rsplit[4];
+        (*data)->rsplit[4] = temp;
+        Vres += (dVzp + dVzm);
+    }
+    if (dVxp + dVxm > 0)
+    {
+        temp = (*data)->rsplit[1];
+        (*data)->rsplit[1] = (*data)->rsplit[0];
+        (*data)->rsplit[0] = temp;
+        Vres += (dVxp + dVxm);
+    }
+    if (dVyp + dVym > 0)
+    {
+        temp = (*data)->rsplit[3];
+        (*data)->rsplit[3] = (*data)->rsplit[2];
+        (*data)->rsplit[2] = temp;
+        Vres += (dVyp + dVym);
+    }
+    return Vres;
+}
+
+
+// >>>>> adjust dt for groundwater solver <<<<<
+void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int irank)
+{
+    double qin, qou, r_red, r_inc, dq, dq_max, dKdwc, dt_Co, dt_Comin;
+    int ii, unsat = 0, sat = 0;
+    r_red = 0.9;
+    r_inc = 1.1;
+    dq_max = 0.0;
+    dt_Comin = 1e8;
+    // check if both sat and unsat zones exist
+    for (ii = 0; ii < (*param)->n3ci; ii++)
+    {if (data->wc[ii] >= (*param)->wcs) {sat = 1;  break;}}
+    for (ii = 0; ii < (*param)->n3ci; ii++)
+    {if (data->wc[ii] < (*param)->wcs) {unsat = 1;  break;}}
+    // adjust dt
+    for (ii = 0; ii < (*param)->n3ci; ii++)
+    {
+        if (gmap->actv[ii] == 1)
+        {
+            qin = data->qx[ii] + data->qy[ii] + data->qz[ii];
+            qou = data->qx[gmap->iMjckc[ii]] + data->qy[gmap->icjMkc[ii]] + data->qz[gmap->icjckM[ii]];
+            dq = fabs(qin - qou) * (*param)->dt / gmap->dz3d[ii];
+            if (dq > dq_max)    {dq_max = dq;}
+            if (data->wc[ii] < (*param)->wcs)
+            {
+                dKdwc = compute_dKdwc(data, data->Ksz, ii, *param);
+                dt_Co = (*param)->Co_max * gmap->dz3d[ii] / dKdwc;
+                if (dt_Co < dt_Comin)   {dt_Comin = dt_Co;}
+            }
+        }
+    }
+    if (dq_max > 0.02)  {(*param)->dt = (*param)->dt * r_red;}
+    else if (dq_max < 0.01) {(*param)->dt = (*param)->dt * r_inc;}
+    if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
+    if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
+    // if (sat == 1 & unsat == 0) {(*param)->dt = (*param)->dt_max;}
+    // apply the Courant number criteria
+    // if ((*param)->dt > dt_Comin & sat == 1 & unsat == 1)   {(*param)->dt = dt_Comin;}
+    if ((*param)->dt > dt_Comin)   {(*param)->dt = dt_Comin;}
+    if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
+    if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
+    // printf("  >> dt by CO = %f\n",dt_Comin);
+    // unify dt for all processes
+    if ((*param)->use_mpi == 1)
+    {
+        mpi_gather_double(&(*param)->dt_root[0], &(*param)->dt, 1, root);
+        (*param)->dt = getMin((*param)->dt_root, (*param)->mpi_nx*(*param)->mpi_ny);
+        mpi_bcast_double(&(*param)->dt, 1, root);
+    }
 }

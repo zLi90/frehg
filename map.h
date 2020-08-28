@@ -1,27 +1,24 @@
-#include "bathymetry.h"
+// Header file for map.c
+
 
 #ifndef MAP_H
 #define MAP_H
 
-typedef struct Maps
-{
-  int *cntr, *trps, *sprt, *iPjc, *iMjc, *icjP, *icjM, *ii2d, *jj2d;
-  int *iPjP, *iPjM, *iMjP, *iMjM;
-  int *iPbd, *iPgt, *iMbd, *iMgt, *jPbd, *jPgt, *jMbd, *jMgt;
-  int *iPPjc, *iMMjc, *icjPP, *icjMM;
-}Maps;
 
-typedef struct Gmaps
+typedef struct Map
 {
-    int *cntr, *ii, *jj, *kk, *maxLay, ngtiP, ngtiM, ngtjP, ngtjM, *actv, *allMaxLayer, maxLay0;
-    int *nlay, *istop, *top2D;
-    int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM;
-    int *iPbd, *iPgt, *iMbd, *iMgt, *jPbd, *jPgt, *jMbd, *jMgt;
-    int *kPbd, *kPgt, *kMbd, *kMgt;
-    double *htop, *dz3d, *bot3d, *bot2d;
-}Gmaps;
+    // surface maps
+    int *cntr, *iPjc, *iMjc, *icjP, *icjM, *ii, *jj;
+    int *iPjP, *iPjM, *iMjP, *iMjM;
+    int *iPin, *iPou, *iMin, *iMou, *jPin, *jPou, *jMin, *jMou;
+    // subsurface maps
+    int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM, *kk;
+    int *actv, *istop, *top2d, *kPin, *kPou, *kMin, *kMou;
+    double *bot1d, *bot3d, *dz3d;
+}Map;
 
 #endif
 
-void createMaps(Maps **map, Config *setting);
-void createGmaps(Gmaps **gmap, Bath *bath, Maps *map, Config *setting, int root, int irank, int nrank);
+
+void build_surf_map(Map **map, Config *param);
+void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Config *param, int irank);
