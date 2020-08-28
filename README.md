@@ -8,4 +8,6 @@ The hydrodynamic part of Frehg is built based on:<br />
     Li, Z., Hodges, B.R. Modeling subgrid-scale topographic effects on shallow marsh hydrodynamics and salinity transport. Adv. Water Resour 129, 1-15 (2019) doi:10.1016/j.advwatres.2019.05.004 <br />
 
 The variably-saturated groundwater part of Frehg is built based on:<br />
-    Li, Z., Ozgen, I. and Maina, F.Z., (2020), A mass-conservative predictor-corrector solution to the 1D Richards equation with adaptive time control, Journal of Hydrology, under review
+    Li, Z., Ozgen, I. and Maina, F.Z., (2020), A mass-conservative predictor-corrector solution to the 1D Richards equation with adaptive time control, Journal of Hydrology, under review <br />
+
+A user manual should be available in the near future (hopefully...)
