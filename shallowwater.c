@@ -25,6 +25,7 @@
 #include "laspack/mlsolv.h"
 
 void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
+void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void momentum_source(Data **data, Map *smap, Config *param);
 void shallowwater_rhs(Data **data, Map *smap, Config *param);
 void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, int nrank);
@@ -75,7 +76,18 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
-    subsurface_source(data, smap, param);
+    update_depth(data, smap, param, irank);
+    // free memory
+    Q_Destr(&A);
+    V_Destr(&b);
+    V_Destr(&x);
+}
+
+// >>>>> Velocity update for shallowwater solver
+void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
+{
+    if (param->sim_groundwater == 1)
+    {subsurface_source(data, smap, param);}
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -101,7 +113,7 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     // Update velocity
     waterfall_location(data, smap, param);
     update_velocity(data, smap, param);
-    waterfall_velocity(data, smap, param);
+    // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
     if (param->use_mpi == 1)
     {
@@ -118,12 +130,8 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     }
     // Update bottom drag
     update_drag_coef(data, param);
-    if (param->sim_groundwater == 1)
-    {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
-    // free memory
-    Q_Destr(&A);
-    V_Destr(&b);
-    V_Destr(&x);
+    // if (param->sim_groundwater == 1)
+    // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
 }
 
 // >>>>> Momentum source term
@@ -179,16 +187,6 @@ void momentum_source(Data **data, Map *smap, Config *param)
         // momentum source
         (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
         (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
-        // if (smap->jj[ii] == 5 & smap->ii[ii] == 1)
-        // {
-        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
-        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
-        // }
-        // if (smap->jj[ii] == 4 & smap->ii[ii] == 1)
-        // {
-        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
-        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
-        // }
     }
 }
 
@@ -205,32 +203,6 @@ void shallowwater_rhs(Data **data, Map *smap, Config *param)
         // inflow as a source term
 
         // inflow from subsurface domain
-        // if (param->sim_groundwater == 1)
-        // {
-        //     if ((*data)->qseepage[ii] < 0)
-        //     {
-        //         if (-(*data)->qseepage[ii]*param->dt > (*data)->dept[ii])
-        //         {(*data)->Srhs[ii] += (*data)->dept[ii] * (*data)->Asz[ii];}
-        //         else
-        //         {(*data)->Srhs[ii] += (*data)->qseepage[ii] * param->dt * (*data)->Asz[ii];}
-        //         (*data)->reset_seepage[ii] = 1;
-        //     }
-        //     else
-        //     {
-        //         if ((*data)->qseepage[ii] * param->dt > param->min_dept)
-        //         {
-        //             (*data)->Srhs[ii] += (*data)->qseepage[ii] * param->dt * (*data)->Asz[ii];
-        //             (*data)->reset_seepage[ii] = 1;
-        //             if (smap->ii[ii] == 1 & smap->jj[ii] < 100)
-        //             {
-        //                 printf("(%d,%d) -- depth = %f,  seepage = %f\n",smap->ii[ii],smap->jj[ii],
-        //                         (*data)->dept[ii],(*data)->qseepage[ii] * param->dt);
-        //             }
-        //         }
-        //         else
-        //         {(*data)->reset_seepage[ii] = 0;}
-        //     }
-        // }
     }
 }
 
@@ -265,15 +237,20 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
         if ((*data)->Vsy[jm] > 0.0)
         {(*data)->Sym[ii] = coef * (*data)->Asy[jm] * (*data)->Asy[jm] * (*data)->Dy[jm] / (*data)->Vsy[jm];}
         (*data)->Sct[ii] = (*data)->Asz[ii] + (*data)->Sxp[ii] + (*data)->Sxm[ii] + (*data)->Syp[ii] + (*data)->Sym[ii];
+
         // avoid singularity of matrix
-        if ((*data)->dept[ii]==0.0 & (*data)->uu[ii]==0.0 & (*data)->uu[im]==0.0 & (*data)->vv[ii]==0.0 & (*data)->vv[jm]==0.0)
+        if ((*data)->dept[ii]==0.0)
         {
             (*data)->Sct[ii] = param->dx * param->dy;
             (*data)->Srhs[ii] = (*data)->eta[ii] * param->dx * param->dy;
-            (*data)->Sxp[ii] = 0.0;
-            (*data)->Sxm[ii] = 0.0;
-            (*data)->Syp[ii] = 0.0;
-            (*data)->Sym[ii] = 0.0;
+            if ((*data)->uu[ii]==0.0 & (*data)->uu[im]==0.0 & (*data)->vv[ii]==0.0 & (*data)->vv[jm]==0.0)
+            {
+                (*data)->Sxp[ii] = 0.0;
+                (*data)->Sxm[ii] = 0.0;
+                (*data)->Syp[ii] = 0.0;
+                (*data)->Sym[ii] = 0.0;
+            }
+
         }
         else if ((*data)->Sct[ii] == 0.0)
         {
@@ -393,12 +370,7 @@ void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, 
         // rhs
         V_SetCmp(&b, ii, data->Srhs[im]);
     }
-    // for (ii = 0; ii < param->n2ci; ii++)
-    // {
-    //     printf("(ii,jj,bath) = %d, %d, %f\n",smap->ii[ii],smap->jj[ii],data->bottom[ii]);
-    //     // printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f)\n",smap->ii[ii],smap->jj[ii], \
-    //         -data->Sym[ii],-data->Sxm[ii],data->Sct[ii],-data->Sxp[ii],-data->Syp[ii],data->Srhs[ii]);
-    // }
+
 }
 
 // >>>>> Solve the shallow water system
@@ -557,8 +529,12 @@ void evaprain(Data **data, Map *smap, Config *param)
         {
             if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
             {
-                if ((*data)->rain_sum[0] > param->min_dept)
-                {(*data)->eta[ii] += (*data)->rain_sum[0];}
+                if (smap->jj[ii] < 7)
+                {
+                    if ((*data)->rain_sum[0] > param->min_dept)
+                    {(*data)->eta[ii] += (*data)->rain_sum[0];}
+                }
+
             }
         }
     }
@@ -587,30 +563,22 @@ void evaprain(Data **data, Map *smap, Config *param)
 void subsurface_source(Data **data, Map *smap, Config *param)
 {
     int ii;
+    double diff, qz;
     for (ii = 0; ii < param->n2ci; ii++)
     {
+        diff = (*data)->eta[ii] - (*data)->bottom[ii];
         // infiltration
         if ((*data)->qseepage[ii] < 0)
         {
-            if (-(*data)->qseepage[ii]*param->dt > (*data)->dept[ii])
-            {
-                (*data)->eta[ii] -= (*data)->dept[ii];
-                (*data)->dept[ii] = 0.0;
-            }
-            else
-            {
-                (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
-                (*data)->dept[ii] += (*data)->qseepage[ii] * param->dt;
-            }
+            (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
             (*data)->reset_seepage[ii] = 1;
         }
         // seepage
         else
         {
-            if ((*data)->qseepage[ii] * param->dt > param->min_dept)
+            if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
             {
-                (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
-                (*data)->dept[ii] += (*data)->qseepage[ii] * param->dt;
+                (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
                 (*data)->reset_seepage[ii] = 1;
             }
             else
@@ -673,10 +641,10 @@ void update_velocity(Data **data, Map *smap, Config *param)
     for (ii = 0; ii < param->n2ci; ii++)
     {
         // zero velocity when face area is zero
-        if ((*data)->Asx[ii] == 0.0) {(*data)->uu[ii] = 0.0;}
-        if ((*data)->Asy[ii] == 0.0) {(*data)->vv[ii] = 0.0;}
+        if ((*data)->Asx[ii] < param->wtfh*param->dy) {(*data)->uu[ii] = 0.0;}
+        if ((*data)->Asy[ii] < param->wtfh*param->dx) {(*data)->vv[ii] = 0.0;}
         // zero velocity out of a dry cell
-        if ((*data)->dept[ii] == 0.0)
+        if ((*data)->dept[ii] < param->wtfh)
         {
             if ((*data)->uu[ii] > 0)    {(*data)->uu[ii] = 0.0;}
             if ((*data)->uu[smap->iMjc[ii]] < 0)    {(*data)->uu[smap->iMjc[ii]] = 0.0;}
@@ -710,15 +678,46 @@ void waterfall_velocity(Data **data, Map *smap, Config *param)
     {
         if ((*data)->wtfx[ii] != 0)
         {
-            (*data)->uu[ii] = (*data)->wtfx[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asx[ii]/param->dy);
-            if (fabs((*data)->uu[ii]) > cfl_max * param->dx / param->dt)
-            {(*data)->uu[ii] = (*data)->wtfx[ii] * cfl_max * param->dx / param->dt;}
+            // Weir equation
+            // (*data)->uu[ii] = (*data)->wtfx[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asx[ii]/param->dy);
+            // Kinematic Wave
+            if ((*data)->wtfx[ii] == 1)
+            {
+                (*data)->uu[smap->iMjc[ii]] = (*data)->wtfx[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asx[smap->iMjc[ii]]/param->dy);
+                // (*data)->uu[smap->iMjc[ii]] = pow(((*data)->bottom[smap->iMjc[ii]] - (*data)->bottom[ii])/param->dx, 0.5)
+                //     * (*data)->Asx[smap->iMjc[ii]]/param->dy/param->manning;
+                if (fabs((*data)->uu[smap->iMjc[ii]]) > cfl_max * param->dx / param->dt)
+                {(*data)->uu[smap->iMjc[ii]] = (*data)->wtfx[ii] * cfl_max * param->dx / param->dt;}
+            }
+            else if ((*data)->wtfx[ii] == -1)
+            {
+                (*data)->uu[ii] = (*data)->wtfx[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asx[ii]/param->dy);
+                // (*data)->uu[ii] = -pow(((*data)->bottom[smap->iPjc[ii]] - (*data)->bottom[ii])/param->dx, 0.5)
+                //     * (*data)->Asx[ii]/param->dy/param->manning;
+                if (fabs((*data)->uu[ii]) > cfl_max * param->dx / param->dt)
+                {(*data)->uu[ii] = (*data)->wtfx[ii] * cfl_max * param->dx / param->dt;}
+            }
         }
         if ((*data)->wtfy[ii] != 0)
         {
-            (*data)->vv[ii] = (*data)->wtfy[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asy[ii]/param->dx);
-            if (fabs((*data)->vv[ii]) > cfl_max * param->dy / param->dt)
-            {(*data)->vv[ii] = (*data)->wtfy[ii] * cfl_max * param->dy / param->dt;}
+            // (*data)->vv[ii] = (*data)->wtfy[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asy[ii]/param->dx);
+            if ((*data)->wtfy[ii] == 1)
+            {
+                // (*data)->vv[smap->icjM[ii]] = (*data)->wtfy[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asy[smap->icjM[ii]]/param->dx);
+                (*data)->vv[smap->icjM[ii]] = pow(((*data)->bottom[smap->icjM[ii]] - (*data)->bottom[ii])/param->dy, 0.5)
+                    * (*data)->Asy[smap->icjM[ii]]/param->dx/param->manning;
+                if (fabs((*data)->vv[smap->icjM[ii]]) > cfl_max * param->dy / param->dt)
+                {(*data)->vv[smap->icjM[ii]] = (*data)->wtfy[ii] * cfl_max * param->dy / param->dt;}
+            }
+            else if ((*data)->wtfy[ii] == -1)
+            {
+                (*data)->vv[ii] = (*data)->wtfy[ii] * Cw * sqrt(2.0*param->grav*(*data)->Asy[ii]/param->dx);
+                // (*data)->vv[ii] = -pow(((*data)->bottom[smap->icjP[ii]] - (*data)->bottom[ii])/param->dy, 0.5)
+                    // * (*data)->Asy[ii]/param->dx/param->manning;
+                if (fabs((*data)->vv[ii]) > cfl_max * param->dy / param->dt)
+                {(*data)->vv[ii] = (*data)->wtfy[ii] * cfl_max * param->dy / param->dt;}
+            }
+
         }
     }
 }
@@ -844,6 +843,7 @@ void update_subgrid_variable(Data **data, Map *smap, Config *param)
             else    {(*data)->Asz[ii] = 0.0;}
             (*data)->Asx[ii] = (*data)->deptx[ii] * param->dy;
             (*data)->Asy[ii] = (*data)->depty[ii] * param->dx;
+
         }
         for (ii = 0; ii < param->n2ci; ii++)
         {

@@ -427,6 +427,7 @@ void update_depth(Data **data, Map *smap, Config *param, int irank)
         if ((*data)->eta[smap->iPjc[ii]] > eta_hi)  {eta_hi = (*data)->eta[smap->iPjc[ii]];}
         if ((*data)->bottom[smap->iPjc[ii]] > bot_hi)   {bot_hi = (*data)->bottom[smap->iPjc[ii]];}
         (*data)->deptx[ii] = eta_hi - bot_hi;
+
         // y
         eta_hi = (*data)->eta[ii];
         bot_hi = (*data)->bottom[ii];
@@ -559,10 +560,13 @@ void ic_subsurface(Data **data, Map *gmap, Config *param)
                 }
                 else
                 {
-                    (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    (*data)->wc[ii] = compute_wch(*data, ii, param);
-                    // (*data)->wc[ii] = param->wcr + 0.03;
-                    // (*data)->h[ii] = compute_hwc(*data, ii, param);
+                    // (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    // (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    // (*data)->wc[ii] = param->wcr +
+                        // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
+                    (*data)->wc[ii] = param->wcr + 0.03;
+                    // (*data)->wc[ii] = 0.36;
+                    (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }
         }

@@ -130,7 +130,8 @@ double compute_K(Data *data, double *Ksat, int ii, Config *param)
 
     if (isnan(Keff))
     {
-        printf("deno = %f\n",deno);
+        printf("ii=%d, nume=%f, deno=%f, h=%f, s=%f, (wcs,wcr,wcm)=(%f,%f,%f)\n",
+            ii,nume,deno,h,s,data->wcs[ii],data->wcr[ii],wcm);
     }
 
     return Keff;
@@ -391,6 +392,8 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 (*data)->dept_out[ii] = (*data)->dept[ii];
                 (*data)->uu_out[ii] = (*data)->uu[ii];
                 (*data)->vv_out[ii] = (*data)->vv[ii];
+                if (param->sim_groundwater == 1)
+                {(*data)->seep_out[ii] = (*data)->qseepage[ii]*8.64e7;}
             }
         }
         if (param->sim_groundwater == 1)
