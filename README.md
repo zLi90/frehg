@@ -9,5 +9,9 @@ The hydrodynamic part of Frehg is built based on:<br />
 
 The variably-saturated groundwater part of Frehg is built based on:<br />
     Li, Z., Ozgen, I. and Maina, F.Z., (2020), A mass-conservative predictor-corrector solution to the 1D Richards equation with adaptive time control, Journal of Hydrology, under review <br />
+    
+![alt text](https://github.com/zLi90/frehg/blob/master/frehg_validation.png)
+    
+   
 
 A user manual should be available in the near future (hopefully...)
