@@ -12,7 +12,7 @@ The variably-saturated groundwater part of Frehg is built based on:<br />
     
 The following figure validates the frehg model against benchmark problems used by Sulis(2010). The black, red and blue curves are surface runoff of the saturated excess and the infiltration excess examples. The frehg model produces similar results with the CATHY and ParFlow models, with minor deviations likely due to unspecified initial water content in Sulis(2010).
     
-![alt text](https://github.com/zLi90/frehg/blob/master/frehg_validation.png)
+![alt text](https://github.com/zLi90/frehg/blob/master/frehg_validation1.png)
     
    
 
