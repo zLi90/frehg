@@ -129,11 +129,6 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
         {(*data)->s_surf[kk][ii] = (*data)->sm_surf[kk][ii] / (*data)->Vflux[ii];}
         else
         {(*data)->s_surf[kk][ii] = 0.0;}
-        // if (smap->ii[ii]==30 & smap->jj[ii]==37)
-        // {
-        //     printf("depth, vflux, dm, scalar = %f, %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->sm_surf[kk][ii],(*data)->s_surf[kk][ii]);
-        //     printf("---\n");
-        // }
         // apply the limiter
         if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0)
         {
@@ -150,13 +145,6 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
                 // printf("(%d,%d)\n",smap->ii[ii],smap->jj[ii]);
             }
         }
-
-        // if (smap->ii[ii]==45 & smap->jj[ii]==15)
-        // {
-        //     printf("s_surf, vflux, dept = %f, %f, %f\n",(*data)->s_surf[kk][ii],(*data)->Vflux[ii],(*data)->dept[ii]);
-        // }
-
-
     }
     // enforce scalar boundary condition
     for (ii = 0; ii < param->nx; ii++)
@@ -225,11 +213,6 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                 (*data)->s_subs[kk][gmap->icjckM[ii]] = (*data)->s_surf[kk][gmap->top2d[ii]];
                 (*data)->sm_subs[kk][gmap->icjckM[ii]] = (*data)->sm_subs[kk][gmap->top2d[ii]];
                 (*data)->s_surfkP[kk][gmap->top2d[ii]] = (*data)->s_subs[kk][ii];
-                // if (gmap->ii[ii]==45 & gmap->jj[ii]==31 & gmap->istop[ii]==1)
-                // {
-                //     printf("kk=%d, depth=%f, s_surf = %f\n",gmap->kk[ii], (*data)->dept[gmap->top2d[ii]], (*data)->s_subs[kk][gmap->icjckM[ii]]);
-                //     printf("---\n");
-                // }
             }
             else
             {
@@ -356,13 +339,6 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                     else
                     {
                         // nothing is needed
-                        // if (s_max[ii] < 20 || s_min[ii] < 20)
-                        // {
-                        //     printf("s, smax, smin = %f, %f, %f\n",(*data)->sm_subs[kk][ii] / (*data)->Vg[ii],s_max[ii],s_min[ii]);
-                        //     printf("s = %f,%f,%f,%f,%f\n",(*data)->s_subs[kk][gmap->iPjckc[ii]],(*data)->s_subs[kk][gmap->iMjckc[ii]], \
-                        //         (*data)->s_subs[kk][gmap->icjPkc[ii]],(*data)->s_subs[kk][gmap->icjMkc[ii]],(*data)->s_subs[kk][gmap->icjckP[ii]]);
-                        //     printf("----\n");
-                        // }
                     }
                 }
                 else
@@ -395,7 +371,6 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                         ((*data)->Vgflux[ii] - (*data)->qtop*param->dt*param->dx*param->dy);
                     if (s_rainevap > s_max[ii]) {s_max[ii] = s_rainevap;}
                 }
-                // printf("smax = %f\n",s_max[ii]);
             }
         }
     }
@@ -407,11 +382,6 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         {(*data)->s_subs[kk][ii] = (*data)->sm_subs[kk][ii] / (*data)->Vgflux[ii];}
         else
         {(*data)->s_subs[kk][ii] = 0.0;}
-        // if (gmap->ii[ii]==45 & gmap->jj[ii]==15 & gmap->istop[ii]==1)
-        // {
-        //     printf("---\n");
-        //     printf("depth, vgflux, scalar = %f, %f, %f\n",(*data)->dept[gmap->top2d[ii]]*1e4,(*data)->Vgflux[ii],(*data)->s_subs[kk][ii]);
-        // }
         // apply scalar limiter
         if ((*data)->s_subs[kk][ii] > s_max[ii] & s_max[ii] < s_lim_hi)
         {(*data)->s_subs[kk][ii] = s_max[ii];}
@@ -426,15 +396,8 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         else if ((*data)->s_subs[kk][ii] < 0)
         {
             mpi_print("WARNING: Scalar extremes < 0  detected for groundwater!", irank);
-            // printf("scalar (%d,%d,%d) = %f   actv=%d wc=%f\n",gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],(*data)->s_subs[kk][ii],gmap->actv[ii],(*data)->wc[ii]);
             (*data)->s_subs[kk][ii] = 0.0;
         }
-        // if (gmap->ii[ii]==45 & gmap->jj[ii]==15 & gmap->istop[ii]==1)
-        // {
-        //
-        //     printf("depth, vgflux, scalar = %f, %f, %f\n",(*data)->dept[gmap->top2d[ii]]*1e4,(*data)->Vgflux[ii],(*data)->s_subs[kk][ii]);
-        //     printf("---\n");
-        // }
     }
     // enforce boundary conditions
     for (ii = 0; ii < param->n3ci; ii++)

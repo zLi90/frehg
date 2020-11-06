@@ -74,7 +74,6 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
-    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[540],(*data)->eta[540]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -88,14 +87,8 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
 // >>>>> Velocity update for shallowwater solver
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
-    // printf("%f  %f\n",(*data)->eta[5941],(*data)->bottom[5941]);
     if (param->sim_groundwater == 1)
     {subsurface_source(data, smap, param);}
-    // if ((*data)->eta[5941] > (*data)->bottom[5941])
-    // {
-    //     printf("%f  %f\n",(*data)->eta[5941],(*data)->bottom[5941]);
-    //     printf("---\n");
-    // }
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -197,16 +190,6 @@ void momentum_source(Data **data, Map *smap, Config *param)
         // momentum source
         (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
         (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
-        // if (smap->jj[ii] == 5 & smap->ii[ii] == 1)
-        // {
-        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
-        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
-        // }
-        // if (smap->jj[ii] == 4 & smap->ii[ii] == 1)
-        // {
-        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
-        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
-        // }
     }
 }
 
@@ -370,15 +353,6 @@ void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vect
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
-
-//     for (ii = 0; ii < param->n2ci; ii++)
-//     {
-//         if (smap->ii[ii] == 1)
-//         {
-//             printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
-//                 -(*data)->Sym[ii],-(*data)->Sxm[ii],(*data)->Sct[ii],-(*data)->Sxp[ii],-(*data)->Syp[ii],(*data)->Srhs[ii],(*data)->eta[ii]);
-//         }
-//     }
 }
 
 // >>>>> Enforce boundary condition for free surface
@@ -402,7 +376,6 @@ void enforce_surf_bc(Data **data, Map *smap, Config *param, int irank, int nrank
             {
                 jj = (*data)->tideloc[kk][ii];
                 (*data)->eta[jj] = (*data)->current_tide[kk];
-                // printf("IRANK=%d  :  TIDE #%d -> tideloc=%d, elevation=%f, eta=%f\n",irank,kk,(*data)->tideloc[kk][ii],(*data)->current_tide[kk],(*data)->eta[jj]);
             }
         }
     }
@@ -608,11 +581,6 @@ void update_velocity(Data **data, Map *smap, Config *param)
     {
         (*data)->Fu[ii] = (*data)->uu[ii] * (*data)->Asx[ii];
         (*data)->Fv[ii] = (*data)->vv[ii] * (*data)->Asy[ii];
-        // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
-        // {
-        //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
-        //         (*data)->qseepage[ii]*param->dt*param->wcs);
-        // }
     }
 }
 
@@ -821,12 +789,6 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
         // volume change by flux
         (*data)->Vflux[ii] = (*data)->Vsn[ii] + param->dt * \
           ((*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii] + (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
-          // if (smap->ii[ii]==30 & smap->jj[ii]==37)
-          // {
-          //     printf("---\n");
-          //     printf("depth, vflux, Vsn, dFu, dFv = %f, %f, %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii], \
-          //           (*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii], (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
-          // }
         // subsurface source
         if (param->sim_groundwater == 1)
         {
@@ -859,10 +821,6 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
                 }
             }
         }
-        // if (smap->ii[ii]==30 & smap->jj[ii]==37)
-        // {
-        //     printf("depth, vflux, Vsn = %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii]);
-        // }
     }
 
 }

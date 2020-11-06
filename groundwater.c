@@ -255,38 +255,6 @@ void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank)
             }
         }
     }
-
-    // ZhiLi20200821
-    // if (strcmp(param->sim_id, " MaxP1"))
-    // {
-    //     for (ii = 0; ii < param->n3ci; ii++)
-    //     {if (gmap->jj[ii] >= 5)  {(*data)->Ky[ii] = 0.0;}}
-    //     // {if (gmap->jj[ii] >= 79)  {(*data)->Ky[ii] = 0.0;}}
-    // }
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->jj[ii] >= 5)  {(*data)->Ky[ii] = 0.0;}
-    //     else if (gmap->jj[ii] == 0) {(*data)->Ky[ii] = 0.0;}
-    // }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] <= 1 | gmap->ii[ii] >= 13)
-    //     {
-    //         (*data)->Kx[ii] = 0.0;
-    //         (*data)->Kx[gmap->iMjckc[ii]] = 0.0;
-    //         (*data)->Ky[ii] = 0.0;
-    //         (*data)->Kz[ii] = 0.0;
-    //         (*data)->Kz[gmap->icjckM[ii]] = 0.0;
-    //     }
-    //     if (gmap->jj[ii] >= 19 | gmap->jj[ii] == 0)
-    //     {
-    //         (*data)->Kx[ii] = 0.0;
-    //         (*data)->Ky[ii] = 0.0;
-    //         (*data)->Kz[ii] = 0.0;
-    //     }
-    // }
-
 }
 
 // >>>>> Compute matrix coefficients <<<<<
@@ -362,15 +330,7 @@ void groundwater_rhs(Data **data, Map *gmap, Config *param)
             if (param->sim_shallowwater == 1)
             {
                 if ((*data)->dept[gmap->top2d[ii]] > 0)
-                {
-                    (*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->dept[gmap->top2d[ii]];
-                    // if (gmap->ii[ii] == 45 & gmap->jj[ii] == 120 & gmap->istop[ii] == 1)
-                    // {
-                    //     printf(" !!!!! hn=%f, depth=%f       Gt,Gzm,Gzp=%f,%f,%f, rhs=%f\n",(*data)->hn[ii],(*data)->dept[gmap->top2d[ii]], \
-                    //         (*data)->Gct[ii],(*data)->Gzm[ii],(*data)->Gzp[ii],(*data)->Grhs[ii]);
-                    //     printf(" ---\n");
-                    // }
-                }
+                {(*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->dept[gmap->top2d[ii]];}
                 else
                 {
                     if (param->bctype_GW[5] == 2)
@@ -473,9 +433,6 @@ void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, V
             row[7]=data->Grhs[im];
 
         }
-        // printf("(%d,%d,%d) - [%f, %f, %f, (%f), %f, %f, %f][h] = [%f]\n",gmap->ii[im],gmap->jj[im],gmap->kk[im],row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]);
-        // if (gmap->kk[im] == param->nz-1)    {printf("------------------------\n");}
-
     }
 }
 
@@ -536,19 +493,6 @@ void enforce_head_bc(Data **data, Map *gmap, Config *param)
             {if (gmap->istop[ii] == 1)  {(*data)->h[gmap->icjckM[ii]] = (*data)->h[ii];}}
         }
     }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 1 & gmap->jj[ii] == 21 & gmap->kk[ii] == 4 & (*data)->wc[ii] < 0.4)
-    //     {
-    //         printf(" -----(jj,kk)=(%d,%d)----- \n",gmap->jj[ii],gmap->kk[ii]);
-    //         // printf("    wc, hn, Km, Kp, actv = %f, %f, %f, %f, %d\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->Kz[gmap->icjckM[ii]],(*data)->Kz[ii],gmap->actv[ii]);
-    //         printf("ym, zm, ct, zp, yp, rhs = %f, %f, %f, %f, %f, %f\n",(*data)->Gym[ii],(*data)->Gzm[ii],(*data)->Gct[ii],(*data)->Gzp[ii],(*data)->Gyp[ii],(*data)->Grhs[ii]);
-    //         printf("    wc, hn->h = %f   %f->%f\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->h[ii]);
-    //         if (gmap->kk[ii] == param->nz-1)
-    //         {printf(" --------------------------------------------------- \n");}
-    //     }
-    // }
 }
 
 // >>>>> calculate flux between cells <<<<<
@@ -639,23 +583,7 @@ void groundwater_flux(Data **data, Map *gmap, Config *param)
                     {(*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii];}
                     else if ((*data)->qz[ii] < 0)
                     {(*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii];}
-                    // if (gmap->top2d[jj] == 5941)
-                    // {
-                    //     printf("qseep, qz, evap = %f, %f, %f\n",1e3*(*data)->qseepage[gmap->top2d[jj]],1e3*(*data)->qz[ii],1e3*(*data)->evap[0]);
-                    // }
                 }
-
-
-                // if ((*data)->dept[gmap->top2d[ii]] <= 0 & (*data)->evap[0] > 0)
-                // {
-                //     // if (gmap->top2d[jj] == 3025)
-                //     // {
-                //     //     printf("qseep, qz, evap = %f, %f, %f\n",1e3*(*data)->qseepage[gmap->top2d[jj]],1e3*(*data)->qz[ii],1e3*(*data)->evap[0]);
-                //     // }
-                //     (*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii] - (*data)->evap[0]/(*data)->wcs[ii];
-                // }
-                // else
-                // {(*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii];}
 
             }
             else
@@ -708,16 +636,6 @@ void update_water_content(Data **data, Map *gmap, Config *param)
         dqy = param->dt * ((*data)->qy[ii] - (*data)->qy[gmap->icjMkc[ii]]) / param->dy;
         dqz = param->dt * ((*data)->qz[ii] - (*data)->qz[gmap->icjckM[ii]]) / gmap->dz3d[ii];
         (*data)->wc[ii] = ((*data)->wcn[ii] + dqx + dqy + dqz) / coeff;
-        // if (gmap->ii[ii] == 45 & gmap->jj[ii] == 120 & gmap->istop[gmap->icjckM[ii]] == 1)
-        // {
-        //     printf(" !!!!! wcn->wc : %f->%f,  hkM = %f, qm = %f, qp = %f, qtop = %f, qbot = %f\n",(*data)->wcn[ii],(*data)->wc[ii],
-        //         (*data)->h[gmap->icjckM[ii]],
-        //         1e3*(*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
-        //         1e3*(*data)->qy[ii]*param->dt/param->dy,
-        //         1e3*(*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
-        //         1e3*(*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
-        //     // printf(" ---\n");
-        // }
     }
 }
 
@@ -765,10 +683,7 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param)
                 {
                     dV = ((*data)->wc[ii] - (*data)->wcs[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
                     if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
-                    {
-                        // printf("1 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wcs[ii]);
-                        (*data)->repeat[0] = 1;
-                    }
+                    {(*data)->repeat[0] = 1;}
                     check_head_gradient(data, gmap, param, ii);
                     dV = allocate_send(data, gmap, param, ii, dV);
                     if (dV > 0)    {dV = allocate_send(data, gmap, param, ii, dV);}
@@ -781,16 +696,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param)
             {
                 // check if a cell is adjacent to a saturated cell
                 adj_sat = check_adj_sat(*data, gmap, param, ii);
-                // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 2 & gmap->kk[ii] == 8)
-                // {
-                //     printf(" !!adj=%d!! wcn->wc->wch : %f->%f->%f,  h->hwc : %f->%f,  qm = %f, qp = %f, qtop = %f, qbot = %f\n",
-                //         adj_sat,(*data)->wcn[ii],(*data)->wc[ii],(*data)->wch[ii],
-                //         (*data)->h[ii],(*data)->hwc[ii],
-                //         (*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
-                //         (*data)->qy[ii]*param->dt/param->dy,
-                //         (*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
-                //         (*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
-                // }
                 // isolated unsaturated cell
                 if (adj_sat == 0)
                 {
@@ -820,10 +725,7 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param)
                         {
                             dV = ((*data)->wc[ii] - (*data)->wch[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
                             if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
-                            {
-                                // printf("3 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wch[ii]);
-                                (*data)->repeat[0] = 1;
-                            }
+                            {(*data)->repeat[0] = 1;}
                             check_head_gradient(data, gmap, param, ii);
                             dV = allocate_send(data, gmap, param, ii, dV);
                             if (dV > 0)    {dV = allocate_send(data, gmap, param, ii, dV);}
@@ -839,18 +741,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param)
         }
 
     }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 45 & gmap->jj[ii] == 120 & gmap->istop[gmap->icjckM[ii]] == 1)
-    //     {
-    //         printf(" ----- ii=%d, Final wc = %f,   h = %f\n",ii,(*data)->wc[ii],(*data)->h[ii]);
-    //         printf(" -----        dz=%f, dept=%f, wckM=%f, hkM=%f, seepage=%f\n",gmap->dz3d[ii],(*data)->dept[gmap->top2d[ii]], \
-    //             (*data)->wc[gmap->icjckM[ii]],(*data)->h[gmap->icjckM[ii]],1e3*(*data)->qz[gmap->icjckM[gmap->icjckM[ii]]]);
-    //         printf(" ========== \n\n");
-    //     }
-    // }
-    // printf(" >> Total number of alloc type1=%d, type2=%d, type3=%d, type4=%d\n",alloc_type1,alloc_type2,alloc_type3,alloc_type4);
 }
 
 // >>>>> Check if a grid cell is adjacent to a saturated cell <<<<<
