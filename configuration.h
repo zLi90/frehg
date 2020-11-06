@@ -21,9 +21,11 @@ typedef struct Config
     double min_dept, wtfh, hD, manning;
     // Surface water
     int sim_shallowwater, eta_file, uv_file;
-    double init_eta, *init_tide, q_evap, q_rain;
-    int *bctype_SW, *inflow_loc;
-    int n_tide, n_tide1, n_tide2, n_inflow, *tide_locX, *tide_locY, tide_file, evap_file, rain_file;
+    double init_eta, *init_tide, *init_inflow, q_evap, q_rain;
+    int *bctype_SW, *inflow_locX, *inflow_locY;
+    int n_tide, n_inflow, *tide_locX, *tide_locY;
+    int *tide_dat_len, *inflow_dat_len;
+    int *tide_file, *inflow_file, evap_file, rain_file;
     // subgrid model
     int use_subgrid;
     // Groundwater
@@ -31,6 +33,11 @@ typedef struct Config
     double init_h, init_wc, init_wt_abs, init_wt_rel, qtop, qbot, htop, hbot, aev;
     double dt_max, dt_min, Co_max, Ksx, Ksy, Ksz, Ss, wcr, wcs, soil_a, soil_n;
     int *bctype_GW;
+    // Scalar
+    int n_scalar, *scalar_file, *scalar_dat_len;
+    double difux, difuy, difuz;
+    double *init_s_surf, *init_s_subs;
+    double *s_tide, *s_inflow;
 
 }Config;
 

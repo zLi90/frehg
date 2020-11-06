@@ -23,8 +23,9 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank);
 void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank);
 void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank);
 void bc_surface(Data **data, Map *smap, Config *param, int irank);
+void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc, int *locX, int *locY);
 void update_depth(Data **data, Map *smap, Config *param, int irank);
-void ic_subsurface(Data **data, Map *gmap, Config *param);
+void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank);
 
 // >>>>> Initialize FREHG <<<<<
 void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank)
@@ -42,12 +43,17 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     boundary_bath(data, *smap, *param, irank, nrank);
     // initialize data array
     init_Data(data, *param);
+    // boundary condition for shallow water solver
+    bc_surface(data, *smap, *param, irank);
+    get_current_bc(data, *param, 0.0);
+    mpi_print(" >>> Boundary data read !", irank);
     // initial condition for shallow water solver
     ic_surface(data, *smap, *param, irank, nrank);
     update_drag_coef(data, *param);
     // initial condition for groundwater solver
-    ic_subsurface(data, *gmap, *param);
-    // boundary condition for shallow water solver
+    ic_subsurface(data, *gmap, *param, irank, nrank);
+    mpi_print(" >>> Initial conditions applied !", irank);
+    // boundary condition for groundwater solver
     enforce_head_bc(data, *gmap, *param);
 
     mpi_print(" >>> Initialization completed !", irank);
@@ -85,7 +91,8 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
         if (param->use_subgrid == 0)
         {
             // load the bathymetry file
-            strcpy(fullname, "bath");
+            strcpy(fullname, param->finput);
+            strcat(fullname, "bath");
             load_data((*data)->bottom_root, fullname, param->N2CI);
             // calculate bathymetry offset
             z_min = getMin((*data)->bottom_root, param->N2CI);
@@ -179,6 +186,8 @@ void init_Data(Data **data, Config *param)
     (*data)->CDx = malloc(param->n2ct*sizeof(double));
     (*data)->CDy = malloc(param->n2ct*sizeof(double));
     (*data)->Vs = malloc(param->n2ct*sizeof(double));
+    (*data)->Vsn = malloc(param->n2ct*sizeof(double));
+    (*data)->Vflux = malloc(param->n2ci*sizeof(double));
     (*data)->Vsx = malloc(param->n2ct*sizeof(double));
     (*data)->Vsy = malloc(param->n2ct*sizeof(double));
     (*data)->Asz = malloc(param->n2ct*sizeof(double));
@@ -231,6 +240,8 @@ void init_Data(Data **data, Config *param)
     (*data)->qy = malloc(param->n3ct*sizeof(double));
     (*data)->qz = malloc(param->n3ct*sizeof(double));
     (*data)->Vg = malloc(param->n3ct*sizeof(double));
+    (*data)->Vgn = malloc(param->n3ct*sizeof(double));
+    (*data)->Vgflux = malloc(param->n3ci*sizeof(double));
     (*data)->room = malloc(param->n3ct*sizeof(double));
     (*data)->vloss = malloc(param->n3ci*sizeof(double));
     (*data)->h_root = malloc(n3_root*sizeof(double));
@@ -249,6 +260,34 @@ void init_Data(Data **data, Config *param)
     (*data)->qbc = malloc(2*sizeof(double));
     (*data)->qbc[0] = 0.0;
     (*data)->qbc[1] = 0.0;
+
+    // scalar
+    if (param->n_scalar > 0)
+    {
+        (*data)->s_surf = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_subs = malloc(param->n_scalar*sizeof(double *));
+        (*data)->sm_surf = malloc(param->n_scalar*sizeof(double *));
+        (*data)->sm_subs = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_surf_root = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_subs_root = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_surf_out = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_subs_out = malloc(param->n_scalar*sizeof(double *));
+        (*data)->sseepage = malloc(param->n_scalar*sizeof(double *));
+        (*data)->s_surfkP = malloc(param->n_scalar*sizeof(double *));
+        for (ii = 0; ii < param->n_scalar; ii++)
+        {
+            (*data)->s_surf[ii] = malloc(param->n2ct*sizeof(double));
+            (*data)->s_subs[ii] = malloc(param->n3ct*sizeof(double));
+            (*data)->sm_surf[ii] = malloc(param->n2ct*sizeof(double));
+            (*data)->sm_subs[ii] = malloc(param->n3ct*sizeof(double));
+            (*data)->s_surf_root[ii] = malloc(n2_root*sizeof(double));
+            (*data)->s_subs_root[ii] = malloc(n3_root*sizeof(double));
+            (*data)->s_surf_out[ii] = malloc(n2_root*sizeof(double));
+            (*data)->s_subs_out[ii] = malloc(n3_root*sizeof(double));
+            (*data)->sseepage[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->s_surfkP[ii] = malloc(param->n2ci*sizeof(double));
+        }
+    }
 
     // linear system solver
     (*data)->Sct = malloc(param->n2ci*sizeof(double));
@@ -271,10 +310,9 @@ void init_Data(Data **data, Config *param)
 // >>>>> Initial condition for shallow water solver <<<<<
 void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
-    int ii, jj, col, row, xrank, yrank;
+    int ii, jj, kk, col, row, xrank, yrank;
+    char fid[2];
     // initial boundary condition
-    (*data)->tide = malloc(param->n_tide*sizeof(double));
-    get_tide(data, param);
     (*data)->rain = malloc(1*sizeof(double));
     (*data)->rain_sum = malloc(1*sizeof(double));
     (*data)->evap = malloc(1*sizeof(double));
@@ -288,8 +326,9 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
     }
     else
     {
-        char fullname[20];
-        strcpy(fullname, "surf_ic");
+        char fullname[50];
+        strcpy(fullname, param->finput);
+        strcat(fullname, "surf_ic");
         load_data((*data)->eta_root, fullname, param->N2CI);
     }
     // initial velocity
@@ -300,12 +339,35 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
     }
     else
     {
-        char fullname1[20];
-        strcpy(fullname1, "uu_ic");
+        char fullname1[50];
+        strcpy(fullname1, param->finput);
+        strcat(fullname1, "uu_ic");
         load_data((*data)->uu_root, fullname1, param->N2CI);
-        char fullname2[20];
-        strcpy(fullname2, "vv_ic");
+        char fullname2[50];
+        strcpy(fullname2, param->finput);
+        strcat(fullname2, "vv_ic");
         load_data((*data)->vv_root, fullname2, param->N2CI);
+    }
+    // initial scalar
+    if (param->n_scalar > 0)
+    {
+        for (kk = 0; kk < param->n_scalar; kk++)
+        {
+            if (param->scalar_file[kk] == 0)
+            {
+                for (ii = 0; ii < param->N2CI; ii++)
+                {(*data)->s_surf_root[kk][ii] = param->init_s_surf[kk];}
+            }
+            else
+            {
+                char fullname[50];
+                strcpy(fullname, param->finput);
+                strcat(fullname, "scalar_surf_ic");
+                sprintf(fid, "%d", kk+1);
+                strcat(fullname, fid);
+                load_data((*data)->s_surf_root[kk], fullname, param->N2CI);
+            }
+        }
     }
     // assign value to irank
     for (ii = 0; ii < param->n2ci; ii++)
@@ -322,6 +384,8 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
         (*data)->vv[ii] = (*data)->vv_root[jj];
         if ((*data)->eta[ii] < (*data)->bottom[ii])
         {(*data)->eta[ii] = (*data)->bottom[ii];}
+        if (param->n_scalar > 0)
+        {for (kk = 0; kk < param->n_scalar; kk++)    {(*data)->s_surf[kk][ii] = (*data)->s_surf_root[kk][jj];}}
     }
     // enforce boundary conditions
     if (param->use_mpi == 1)
@@ -329,6 +393,11 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
         mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->vv, smap, 2, param, irank, nrank);
+        if (param->n_scalar > 0)
+        {
+            for (kk = 0; kk < param->n_scalar; kk++)
+            {mpi_exchange_surf((*data)->s_surf[kk], smap, 2, param, irank, nrank);}
+        }
     }
     enforce_surf_bc(data, smap, param, irank, nrank);
     // calculate depth
@@ -349,6 +418,7 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
         for (ii = 0; ii < param->n2ct; ii++)
         {
             (*data)->Vs[ii] = (*data)->dept[ii] * param->dx * param->dy;
+            (*data)->Vsn[ii] = (*data)->dept[ii] * param->dx * param->dy;
             if ((*data)->dept[ii] > 0) {(*data)->Asz[ii] = param->dx * param->dy;}
             else    {(*data)->Asz[ii] = 0.0;}
             (*data)->Asx[ii] = (*data)->deptx[ii] * param->dy;
@@ -383,25 +453,226 @@ void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank)
         mpi_exchange_surf((*data)->Aszx, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->Aszy, smap, 2, param, irank, nrank);
     }
+    // scalar mass
+    if (param->n_scalar > 0)
+    {
+        for (kk = 0; kk < param->n_scalar; kk++)
+        {
+            for (ii = 0; ii < param->n2ct; ii++)
+            {(*data)->sm_surf[kk][ii] = (*data)->s_surf[kk][ii] * (*data)->Vs[ii];}
+            for (ii = 0; ii < param->n2ci; ii++)
+            {(*data)->sseepage[kk][ii] = 0.0;}
+        }
+    }
     // initialize other relevant variables
     for (ii = 0; ii < param->n2ci; ii++)
     {
         (*data)->qseepage[ii] = 0.0;
         (*data)->reset_seepage[ii] = 1;
     }
+    for (ii = 0; ii < param->n2ct; ii++)
+    {
+        (*data)->CDx[ii] = 0.0;  (*data)->CDy[ii] = 0.0;
+        (*data)->Dx[ii] = 0.0;  (*data)->Dy[ii] = 0.0;
+        (*data)->Ex[ii] = 0.0;  (*data)->Ey[ii] = 0.0;
+        (*data)->Fv[ii] = 0.0;  (*data)->Fv[ii] = 0.0;
+        (*data)->uy[ii] = 0.0;  (*data)->vx[ii] = 0.0;
+        (*data)->wtfx[ii] = 0;  (*data)->wtfy[ii] = 0;
+    }
 }
 
 // >>>>> Boundary condition for shallowwater solver <<<<<
 void bc_surface(Data **data, Map *smap, Config *param, int irank)
 {
-    if (exist("tide1"))
-    {load_bc((*data)->tide1, (*data)->t_tide1, "tide1", param->n_tide1);}
-    if (exist("tide2"))
-    {load_bc((*data)->tide2, (*data)->t_tide2, "tide2", param->n_tide2);}
+    int kk, ii, ss, glob_ind, locX1, locX2, locY1, locY2, rank0, rank1, locx1, rankx, ranky, ncell, locy1, locy2;
+    char fid[2];
+    // get location of the tidal cells
+    (*data)->tideloc = malloc(param->n_tide*sizeof(int *));
+    (*data)->tideloc_len = malloc(param->n_tide*sizeof(int));
+    get_BC_location((*data)->tideloc, (*data)->tideloc_len, param, irank, param->n_tide, param->tide_locX, param->tide_locY);
+    // load tidal boundary condition
+    (*data)->tide = malloc(param->n_tide*sizeof(double *));
+    (*data)->t_tide = malloc(param->n_tide*sizeof(double *));
+    (*data)->current_tide = malloc(param->n_tide*sizeof(double));
+    for (kk = 0; kk < param->n_tide; kk++)
+    {
+        if (param->tide_file[kk] == 1)
+        {
+            char fullname[50];
+            strcpy(fullname, param->finput);
+            strcat(fullname, "tide");
+            sprintf(fid, "%d", kk+1);
+            strcat(fullname, fid);
+            if (exist(fullname))
+            {
+                (*data)->tide[kk] = malloc(param->tide_dat_len[kk]*sizeof(double));
+                (*data)->t_tide[kk] = malloc(param->tide_dat_len[kk]*sizeof(double));
+                load_bc((*data)->tide[kk], (*data)->t_tide[kk], fullname, param->tide_dat_len[kk]);
+            }
+        }
+        else
+        {
+            (*data)->tide[kk] = malloc(1*sizeof(double));
+            (*data)->t_tide[kk] = malloc(1*sizeof(double));
+            (*data)->tide[kk][0] = param->init_tide[kk];
+            (*data)->t_tide[kk][0] = 0.0;
+        }
+    }
+    // get inflow locations
+    (*data)->inflowloc = malloc(param->n_inflow*sizeof(int *));
+    (*data)->inflowloc_len = malloc(param->n_inflow*sizeof(int));
+    get_BC_location((*data)->inflowloc, (*data)->inflowloc_len, param, irank, param->n_inflow, param->inflow_locX, param->inflow_locY);
+    // load inflow boundary condition
+    (*data)->inflow = malloc(param->n_inflow*sizeof(double *));
+    (*data)->t_inflow = malloc(param->n_inflow*sizeof(double *));
+    (*data)->current_inflow = malloc(param->n_inflow*sizeof(double));
+    for (kk = 0; kk < param->n_inflow; kk++)
+    {
+        if (param->inflow_file[kk] == 1)
+        {
+            char fullname[50];
+            strcpy(fullname, param->finput);
+            strcat(fullname, "inflow");
+            sprintf(fid, "%d", kk+1);
+            strcat(fullname, fid);
+            if (exist(fullname))
+            {
+                (*data)->inflow[kk] = malloc(param->inflow_dat_len[kk]*sizeof(double));
+                (*data)->t_inflow[kk] = malloc(param->inflow_dat_len[kk]*sizeof(double));
+                load_bc((*data)->inflow[kk], (*data)->t_inflow[kk], fullname, param->inflow_dat_len[kk]);
+            }
+        }
+        else
+        {
+            (*data)->inflow[kk] = malloc(1*sizeof(double));
+            (*data)->t_inflow[kk] = malloc(1*sizeof(double));
+            (*data)->inflow[kk][0] = param->init_inflow[kk];
+            (*data)->t_inflow[kk][0] = 0.0;
+        }
+    }
+    // load scalar boundary condition for tide
+    (*data)->s_tide = malloc(param->n_scalar*sizeof(double **));
+    (*data)->t_s_tide = malloc(param->n_scalar*sizeof(double **));
+    (*data)->current_s_tide = malloc(param->n_scalar*sizeof(double *));
+    for (ss = 0; ss < param->n_scalar; ss++)
+    {
+        (*data)->s_tide[ss] = malloc(param->n_tide*sizeof(double *));
+        (*data)->t_s_tide[ss] = malloc(param->n_tide*sizeof(double *));
+        (*data)->current_s_tide[ss] = malloc(param->n_tide*sizeof(double));
+        for (kk = 0; kk < param->n_tide; kk++)
+        {
+            glob_ind = ss * param->n_tide + kk;
+            if (param->scalar_file[glob_ind] == 1)
+            {
+                char fullname[50];
+                strcpy(fullname, param->finput);
+                strcat(fullname, "scalar");
+                sprintf(fid, "%d", ss+1);
+                strcat(fullname, fid);
+                strcat(fullname, "_tide");
+                sprintf(fid, "%d", kk+1);
+                strcat(fullname, fid);
+                if (exist(fullname))
+                {
+                    (*data)->s_tide[ss][kk] = malloc(param->scalar_dat_len[glob_ind]*sizeof(double));
+                    (*data)->t_s_tide[ss][kk] = malloc(param->scalar_dat_len[glob_ind]*sizeof(double));
+                    load_bc((*data)->s_tide[ss][kk], (*data)->t_s_tide[ss][kk], fullname, param->scalar_dat_len[glob_ind]);
+                }
+            }
+            else
+            {
+                (*data)->s_tide[ss][kk] = malloc(1*sizeof(double));
+                (*data)->t_s_tide[ss][kk] = malloc(1*sizeof(double));
+                (*data)->s_tide[ss][kk][0] = param->s_tide[glob_ind];
+                (*data)->t_s_tide[ss][kk][0] = 0.0;
+            }
+        }
+    }
+    //scalar BC for inflow (now only support constant scalar for inflow )
+    (*data)->s_inflow = malloc(param->n_scalar*sizeof(double **));
+    (*data)->t_s_inflow = malloc(param->n_scalar*sizeof(double **));
+    (*data)->current_s_inflow = malloc(param->n_scalar*sizeof(double *));
+    for (ss = 0; ss < param->n_scalar; ss++)
+    {
+        (*data)->s_inflow[ss] = malloc(param->n_inflow*sizeof(double *));
+        (*data)->t_s_inflow[ss] = malloc(param->n_inflow*sizeof(double *));
+        (*data)->current_s_inflow[ss] = malloc(param->n_inflow*sizeof(double));
+        for (kk = 0; kk < param->n_inflow; kk++)
+        {
+            glob_ind = ss * param->n_inflow + kk;
+            if (param->scalar_file[glob_ind] == 1)
+            {
+                mpi_print("WARNING: For now, inflow scalar concentration must be a constant!", irank);
+            }
+            else
+            {
+                (*data)->s_inflow[ss][kk] = malloc(1*sizeof(double));
+                (*data)->t_s_inflow[ss][kk] = malloc(1*sizeof(double));
+                (*data)->s_inflow[ss][kk][0] = param->s_inflow[glob_ind];
+                (*data)->t_s_inflow[ss][kk][0] = 0.0;
+            }
+        }
+    }
+}
 
-    if (param->inflow_loc[0] >= 0 & param->inflow_loc[1] >= 0 & param->inflow_loc[2] >= 0)
-    {load_bc((*data)->inflow, (*data)->t_inflow, "inflow", param->n_inflow);}
-
+// >>>>> Get the cell index for applying the boundary condition
+void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc, int *locX, int *locY)
+{
+    int ii, jj, kk, ll, ind, n_glob, xrank, yrank, col, row;
+    int locX1, locX2, locY1, locY2;
+    int *loc_glob;
+    // loc = malloc(n_bc*sizeof(int *));
+    // loc_len = malloc(n_bc*sizeof(int));
+    for (kk = 0; kk < n_bc; kk++)
+    {
+        loc_len[kk] = 0;
+        // get the global (i,j) index of the BC region
+        locX1 = locX[2*kk];     locX2 = locX[2*kk+1];
+        locY1 = locY[2*kk];     locY2 = locY[2*kk+1];
+        // get the global 1D index
+        n_glob = (locX2 - locX1 + 1) * (locY2 - locY1 + 1);
+        loc_glob = malloc(n_glob*sizeof(int));
+        ll = 0;
+        for (jj = locY1; jj <= locY2; jj++)
+        {
+            for (ii = locX1; ii <= locX2; ii++)
+            {loc_glob[ll] = jj * param->NX + ii;   ll+=1;}
+        }
+        // assign global index to local ranks
+        xrank = irank % param->mpi_nx;
+        yrank = floor(irank/param->mpi_nx);
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            col = floor(ii / param->nx);
+            row = ii % param->nx;
+            // get global index of the local cell
+            ll = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+            // check if the local cell is in the global BC region
+            // count the number of BC cells in the local rank
+            for (jj = 0; jj < n_glob; jj++)
+            {if (ll == loc_glob[jj]) {loc_len[kk] += 1;}}
+        }
+        // assign the BC index
+        if (loc_len[kk] == 0)
+        {
+            loc[kk] = malloc(1*sizeof(int));
+            loc[kk][0] = -1;
+        }
+        else
+        {
+            loc[kk] = malloc(loc_len[kk]*sizeof(int));
+            ind = 0;
+            for (ii = 0; ii < param->n2ci; ii++)
+            {
+                col = floor(ii / param->nx);
+                row = ii % param->nx;
+                ll = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+                for (jj = 0; jj < n_glob; jj++)
+                {if (ll == loc_glob[jj]) {loc[kk][ind] = ii; ind += 1;}}
+            }
+        }
+        free(loc_glob);
+    }
 }
 
 
@@ -409,7 +680,14 @@ void bc_surface(Data **data, Map *smap, Config *param, int irank)
 void update_depth(Data **data, Map *smap, Config *param, int irank)
 {
     int ii;
-    double eta_hi, bot_hi;
+    double eta_hi, bot_hi, diff;
+    // remove small depth
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        diff = (*data)->eta[ii] - (*data)->bottom[ii];
+        if (diff > 0 & diff < param->min_dept)
+        {(*data)->eta[ii] = (*data)->bottom[ii];}
+    }
     // center depth
     for (ii = 0; ii < param->n2ct; ii++)
     {
@@ -475,18 +753,22 @@ void update_depth(Data **data, Map *smap, Config *param, int irank)
         if ((*data)->deptx[ii] < 0)    {(*data)->deptx[ii] = 0.0;}
         if ((*data)->depty[ii] < 0)    {(*data)->depty[ii] = 0.0;}
     }
+
 }
 
 
 // >>>>> Initial condition for groundwater solver <<<<<
-void ic_subsurface(Data **data, Map *gmap, Config *param)
+void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
 {
-    int ii;
+    int ii, kk;
     double h_incre, zwt;
+    // subsurface boundary conditions
     (*data)->qtop = param->qtop;
     (*data)->qbot = param->qbot;
     (*data)->htop = param->htop;
     (*data)->hbot = param->hbot;
+    if (param->sim_shallowwater == 1)
+    {(*data)->qtop = ((*data)->evap[0] - (*data)->rain[0]) / param->wcs;}
     // initialize soil properties
     for (ii = 0; ii < param->n3ct; ii++)
     {
@@ -585,6 +867,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param)
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
+                // if (gmap->ii[ii] == 45 & gmap->jj[ii] == 112 & gmap->istop[ii] == 1)
+                // {
+                //     printf(" !!!!! h->wc : %f->%f, bot=%f, dept=%f \n",(*data)->h[ii],(*data)->wc[ii],gmap->bot3d[ii],(*data)->dept[gmap->top2d[ii]]);
+                // }
             }
         }
     }
@@ -613,6 +899,39 @@ void ic_subsurface(Data **data, Map *gmap, Config *param)
         (*data)->qy[ii] = 0.0;
         (*data)->qz[ii] = 0.0;
         (*data)->Vg[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
+        (*data)->Vgn[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
     }
-
+    // initial scalar
+    if (param->n_scalar > 0)
+    {
+        for (kk = 0; kk < param->n_scalar; kk++)
+        {
+            // now only support constant initial scalar for subsurface
+            // ZhiLi20201030
+            for (ii = 0; ii < param->n3ct; ii++)
+            {
+                (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
+                (*data)->sm_subs[kk][ii] = param->init_s_subs[kk] * (*data)->Vg[ii];
+                if (gmap->istop[ii] == 1 & param->sim_shallowwater == 1)
+                {
+                    (*data)->s_subs[kk][gmap->icjckM[ii]] = (*data)->s_surf[kk][gmap->top2d[ii]];
+                    (*data)->sm_subs[kk][gmap->icjckM[ii]] = (*data)->s_subs[kk][gmap->icjckM[ii]] * (*data)->Vg[ii];
+                    (*data)->s_surfkP[kk][gmap->top2d[ii]] = (*data)->s_subs[kk][ii];
+                }
+            }
+        }
+    }
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_subsurf((*data)->wc, gmap, 2, param, irank, nrank);
+        mpi_exchange_subsurf((*data)->h, gmap, 2, param, irank, nrank);
+        if (param->n_scalar > 0)
+        {
+            for (kk = 0; kk < param->n_scalar; kk++)
+            {
+                mpi_exchange_subsurf((*data)->s_subs[kk], gmap, 2, param, irank, nrank);
+                mpi_exchange_subsurf((*data)->sm_subs[kk], gmap, 2, param, irank, nrank);
+            }
+        }
+    }
 }

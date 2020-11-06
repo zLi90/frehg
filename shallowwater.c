@@ -10,6 +10,7 @@
 #include "initialize.h"
 #include "map.h"
 #include "mpifunctions.h"
+#include "scalar.h"
 #include "utility.h"
 
 #include "laspack/errhandl.h"
@@ -42,6 +43,7 @@ void enforce_velo_bc(Data **data, Map *smap, Config *param, int irank, int nrank
 void interp_velocity(Data **data, Map *smap, Config *param);
 void update_drag_coef(Data **data, Config *param);
 void update_subgrid_variable(Data **data, Map *smap, Config *param);
+void volume_by_flux(Data **data, Map *smap, Config *param);
 
 // >>>>> Top level shallowwater solver
 void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
@@ -86,8 +88,14 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
 // >>>>> Velocity update for shallowwater solver
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
+    // printf("%f  %f\n",(*data)->eta[5941],(*data)->bottom[5941]);
     if (param->sim_groundwater == 1)
     {subsurface_source(data, smap, param);}
+    // if ((*data)->eta[5941] > (*data)->bottom[5941])
+    // {
+    //     printf("%f  %f\n",(*data)->eta[5941],(*data)->bottom[5941]);
+    //     printf("---\n");
+    // }
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -99,6 +107,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
     }
     // Update subgrid variables
     update_subgrid_variable(data, smap, param);
+    volume_by_flux(data, smap, param);
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->Vs, smap, 2, param, irank, nrank);
@@ -122,6 +131,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->Fu, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->Fv, smap, 2, param, irank, nrank);
     }
+    // volume_by_flux(data, smap, param);
     interp_velocity(data, smap, param);
     if (param->use_mpi == 1)
     {
@@ -187,41 +197,52 @@ void momentum_source(Data **data, Map *smap, Config *param)
         // momentum source
         (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
         (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
+        // if (smap->jj[ii] == 5 & smap->ii[ii] == 1)
+        // {
+        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
+        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
+        // }
+        // if (smap->jj[ii] == 4 & smap->ii[ii] == 1)
+        // {
+        //     printf("jj = %d --- vv, adv, dif, Dy = %f,%f,%f,%f\n",smap->jj[ii],(*data)->vv[ii],
+        //         param->dt *advY,param->dt *difY,(*data)->Dy[ii]);
+        // }
     }
 }
 
 // >>>>> Matrix right-hand-side
 void shallowwater_rhs(Data **data, Map *smap, Config *param)
 {
-    int ii;
+    int ii, jj, kk;
     for (ii = 0; ii < param->n2ci; ii++)
     {
         (*data)->Srhs[ii] = (*data)->eta[ii] * (*data)->Asz[ii] - param->dt * \
             ((*data)->Asx[ii]*(*data)->Ex[ii] - (*data)->Asx[smap->iMjc[ii]]*(*data)->Ex[smap->iMjc[ii]] + \
             (*data)->Asy[ii]*(*data)->Ey[ii] - (*data)->Asy[smap->icjM[ii]]*(*data)->Ey[smap->icjM[ii]]);
-
-        // inflow as a source term
-
-        // inflow from subsurface domain
+    }
+    // inflow as a source term
+    if (param->n_inflow > 0)
+    {
+        for (kk = 0; kk < param->n_inflow; kk++)
+        {
+            for (ii = 0; ii < (*data)->inflowloc_len[kk]; ii++)
+            {
+                jj = (*data)->inflowloc[kk][ii];
+                (*data)->Srhs[jj] += (*data)->current_inflow[kk] * param->dt / (*data)->inflowloc_len[kk];
+            }
+        }
     }
 }
 
 // >>>>> Matrix coefficients
 void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
-    int ii, im, jm, kk, apply_tide;
+    int ii, im, jm, kk, jj;
     double coef;
+    size_t n;
     coef = param->grav * param->dt * param->dt;
     for (ii = 0; ii < param->n2ci; ii++)
     {
-        apply_tide = 0;
-        // check if on tidal boundary
-        for (kk = 0; kk < param->n_tide; kk++)
-        {
-            if (smap->ii[ii] >= param->tide_locX[2*kk] & smap->ii[ii] <= param->tide_locX[2*kk+1])
-            {if (smap->jj[ii] >= param->tide_locY[2*kk] & smap->jj[ii] <= param->tide_locY[2*kk+1])  {apply_tide = 1;}}
-        }
-
         im = smap->iMjc[ii];
         jm = smap->icjM[ii];
         (*data)->Sxp[ii] = 0.0;
@@ -257,78 +278,46 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
             (*data)->Sct[ii] = param->dx * param->dy;
             (*data)->Srhs[ii] = (*data)->eta[ii] * param->dx * param->dy;
         }
-        // apply boundary conditions
         // x-boundary
         if (smap->ii[ii] == 0)
         {
             // outer boundary
-            if (irank % param->mpi_nx == 0)
-            {
-                // no flow boundary
-                if (apply_tide == 0)  {(*data)->Sct[ii] -= (*data)->Sxm[ii];}
-                // fixed surface elevation
-                else
-                {
-                    (*data)->Sct[ii] = 1.0;
-                    (*data)->Sxp[ii] = 0.0;     (*data)->Sxm[ii] = 0.0;
-                    (*data)->Syp[ii] = 0.0;     (*data)->Sym[ii] = 0.0;
-                    (*data)->Srhs[ii] = (*data)->eta[smap->iMjc[ii]];
-                }
-            }
+            if (irank % param->mpi_nx == 0) {(*data)->Sct[ii] -= (*data)->Sxm[ii];}
             // inner boundary (Dirichlet type)
-            else
-            {(*data)->Srhs[ii] += (*data)->Sxm[ii] * (*data)->eta[smap->iMjc[ii]];}
+            else    {(*data)->Srhs[ii] += (*data)->Sxm[ii] * (*data)->eta[smap->iMjc[ii]];}
         }
         else if (smap->ii[ii] == param->nx-1)
         {
-            if (irank % param->mpi_nx == param->mpi_nx - 1)
-            {
-                if (apply_tide == 0)  {(*data)->Sct[ii] -= (*data)->Sxp[ii];}
-                else
-                {
-                    (*data)->Sct[ii] = 1.0;
-                    (*data)->Sxp[ii] = 0.0;     (*data)->Sxm[ii] = 0.0;
-                    (*data)->Syp[ii] = 0.0;     (*data)->Sym[ii] = 0.0;
-                    (*data)->Srhs[ii] = (*data)->eta[smap->iPjc[ii]];
-                }
-            }
-            else
-            {(*data)->Srhs[ii] += (*data)->Sxp[ii] * (*data)->eta[smap->iPjc[ii]];}
+            if (irank % param->mpi_nx == param->mpi_nx - 1) {(*data)->Sct[ii] -= (*data)->Sxp[ii];}
+            else {(*data)->Srhs[ii] += (*data)->Sxp[ii] * (*data)->eta[smap->iPjc[ii]];}
         }
-
         // y-boundary
         if (smap->jj[ii] == 0)
         {
-            if (irank < param->mpi_nx)
-            {
-                if (apply_tide == 0)  {(*data)->Sct[ii] -= (*data)->Sym[ii];}
-                else
-                {
-                    (*data)->Sct[ii] = 1.0;
-                    (*data)->Sxp[ii] = 0.0;     (*data)->Sxm[ii] = 0.0;
-                    (*data)->Syp[ii] = 0.0;     (*data)->Sym[ii] = 0.0;
-                    (*data)->Srhs[ii] = (*data)->eta[smap->icjM[ii]];
-                }
-            }
-            else
-            {(*data)->Srhs[ii] += (*data)->Sym[ii] * (*data)->eta[smap->icjM[ii]];}
+            if (irank < param->mpi_nx)  {(*data)->Sct[ii] -= (*data)->Sym[ii];}
+            else    {(*data)->Srhs[ii] += (*data)->Sym[ii] * (*data)->eta[smap->icjM[ii]];}
         }
         else if (smap->jj[ii] == param->ny-1)
         {
-            if (irank >= param->mpi_nx*(param->mpi_ny-1))
+            if (irank >= param->mpi_nx*(param->mpi_ny-1))   {(*data)->Sct[ii] -= (*data)->Syp[ii];}
+            else    {(*data)->Srhs[ii] += (*data)->Syp[ii] * (*data)->eta[smap->icjP[ii]];}
+        }
+    }
+    // enforce tidal boundary condition
+    for (kk = 0; kk < param->n_tide; kk++)
+    {
+        if ((*data)->tideloc[kk][0] != -1)
+        {
+            // n = sizeof((*data)->tideloc[kk]) / sizeof((*data)->tideloc[kk][0]);
+            n = (*data)->tideloc_len[kk];
+            for (ii = 0; ii < n; ii++)
             {
-                if (apply_tide == 0)  {(*data)->Sct[ii] -= (*data)->Syp[ii];}
-                else
-                {
-                    (*data)->Sct[ii] = 1.0;
-                    (*data)->Sxp[ii] = 0.0;     (*data)->Sxm[ii] = 0.0;
-                    (*data)->Syp[ii] = 0.0;     (*data)->Sym[ii] = 0.0;
-                    (*data)->Srhs[ii] = (*data)->eta[smap->icjP[ii]];
-                    // printf("(ii,jj=%d,%d) - bath=%f, tide=%f\n",smap->ii[ii],smap->jj[ii],(*data)->bottom[ii],(*data)->eta[smap->icjP[ii]]);
-                }
+                jj = (*data)->tideloc[kk][ii];
+                (*data)->Sct[jj] = 1.0;
+                (*data)->Sxp[jj] = 0.0;     (*data)->Sxm[jj] = 0.0;
+                (*data)->Syp[jj] = 0.0;     (*data)->Sym[jj] = 0.0;
+                (*data)->Srhs[jj] = (*data)->current_tide[kk];
             }
-            else
-            {(*data)->Srhs[ii] += (*data)->Syp[ii] * (*data)->eta[smap->icjP[ii]];}
         }
     }
 }
@@ -381,103 +370,55 @@ void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vect
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
+
+//     for (ii = 0; ii < param->n2ci; ii++)
+//     {
+//         if (smap->ii[ii] == 1)
+//         {
+//             printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
+//                 -(*data)->Sym[ii],-(*data)->Sxm[ii],(*data)->Sct[ii],-(*data)->Sxp[ii],-(*data)->Syp[ii],(*data)->Srhs[ii],(*data)->eta[ii]);
+//         }
+//     }
 }
 
 // >>>>> Enforce boundary condition for free surface
 void enforce_surf_bc(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
-    int ii, kk;
+    int ii, jj, kk;
+    int n;
     // remove negative surface elevation
     for (ii = 0; ii < param->n2ci; ii++)
     {
         if ((*data)->eta[ii] < (*data)->bottom[ii])
         {(*data)->eta[ii] = (*data)->bottom[ii];}
     }
+    // enforce tidal elevation
+    for (kk = 0; kk < param->n_tide; kk++)
+    {
+        if ((*data)->tideloc[kk][0] != -1)
+        {
+            n = (*data)->tideloc_len[kk];
+            for (ii = 0; ii < n; ii++)
+            {
+                jj = (*data)->tideloc[kk][ii];
+                (*data)->eta[jj] = (*data)->current_tide[kk];
+                // printf("IRANK=%d  :  TIDE #%d -> tideloc=%d, elevation=%f, eta=%f\n",irank,kk,(*data)->tideloc[kk][ii],(*data)->current_tide[kk],(*data)->eta[jj]);
+            }
+        }
+    }
+    // enforce surface elevation for ghost cells
     for (ii = 0; ii < param->n2ci; ii++)
     {
         // x boundary
         if (smap->ii[ii] == 0)
-        {
-            if (irank % param->mpi_nx == 0)
-            {
-                (*data)->eta[smap->iMjc[ii]] = (*data)->eta[ii];
-                // enfroce tidal elevation
-                for (kk = 0; kk < param->n_tide; kk++)
-                {
-                    if (smap->ii[ii] >= param->tide_locX[2*kk] & smap->ii[ii] <= param->tide_locX[2*kk+1])
-                    {
-                        if (smap->jj[ii] >= param->tide_locY[2*kk] & smap->jj[ii] <= param->tide_locY[2*kk+1])
-                        {
-                            (*data)->eta[ii] = (*data)->tide[kk];
-                            (*data)->eta[smap->iMjc[ii]] = (*data)->eta[ii];
-                        }
-                    }
-                }
-            }
-            else
-            {(*data)->eta[smap->iMjc[ii]] = (*data)->eta[ii];}
-        }
+        {(*data)->eta[smap->iMjc[ii]] = (*data)->eta[ii];}
         else if (smap->ii[ii] == param->nx-1)
-        {
-            if (irank % param->mpi_nx == param->nx - 1)
-            {
-                (*data)->eta[smap->iPjc[ii]] = (*data)->eta[ii];
-                for (kk = 0; kk < param->n_tide; kk++)
-                {
-                    if (smap->ii[ii] >= param->tide_locX[2*kk] & smap->ii[ii] <= param->tide_locX[2*kk+1])
-                    {
-                        if (smap->jj[ii] >= param->tide_locY[2*kk] & smap->jj[ii] <= param->tide_locY[2*kk+1])
-                        {
-                            (*data)->eta[ii] = (*data)->tide[kk];
-                            (*data)->eta[smap->iPjc[ii]] = (*data)->eta[ii];
-                        }
-                    }
-                }
-            }
-            else
-            {(*data)->eta[smap->iPjc[ii]] = (*data)->eta[ii];}
-        }
+        {(*data)->eta[smap->iPjc[ii]] = (*data)->eta[ii];}
         // y boundary
         if (smap->jj[ii] == 0)
-        {
-            if (irank < param->mpi_nx)
-            {
-                (*data)->eta[smap->icjM[ii]] = (*data)->eta[ii];
-                for (kk = 0; kk < param->n_tide; kk++)
-                {
-                    if (smap->ii[ii] >= param->tide_locX[2*kk] & smap->ii[ii] <= param->tide_locX[2*kk+1])
-                    {
-                        if (smap->jj[ii] >= param->tide_locY[2*kk] & smap->jj[ii] <= param->tide_locY[2*kk+1])
-                        {
-                            (*data)->eta[ii] = (*data)->tide[kk];
-                            (*data)->eta[smap->icjM[ii]] = (*data)->eta[ii];
-                        }
-                    }
-                }
-            }
-            else
-            {(*data)->eta[smap->icjM[ii]] = (*data)->eta[ii];}
-        }
+        {(*data)->eta[smap->icjM[ii]] = (*data)->eta[ii];}
         else if (smap->jj[ii] == param->ny-1)
-        {
-            if (irank >= param->mpi_nx*(param->mpi_ny-1))
-            {
-                (*data)->eta[smap->icjP[ii]] = (*data)->eta[ii];
-                for (kk = 0; kk < param->n_tide; kk++)
-                {
-                    if (smap->ii[ii] >= param->tide_locX[2*kk] & smap->ii[ii] <= param->tide_locX[2*kk+1])
-                    {
-                        if (smap->jj[ii] >= param->tide_locY[2*kk] & smap->jj[ii] <= param->tide_locY[2*kk+1])
-                        {
-                            (*data)->eta[ii] = (*data)->tide[kk];
-                            (*data)->eta[smap->icjP[ii]] = (*data)->eta[ii];
-                        }
-                    }
-                }
-            }
-            else
-            {(*data)->eta[smap->icjP[ii]] = (*data)->eta[ii];}
-        }
+        {(*data)->eta[smap->icjP[ii]] = (*data)->eta[ii];}
     }
 }
 
@@ -542,6 +483,7 @@ void evaprain(Data **data, Map *smap, Config *param)
     {
         (*data)->rain_sum[0] = 0.0;
     }
+
     // evaporation
     for (ii = 0; ii < param->n2ci; ii++)
     {
@@ -666,6 +608,11 @@ void update_velocity(Data **data, Map *smap, Config *param)
     {
         (*data)->Fu[ii] = (*data)->uu[ii] * (*data)->Asx[ii];
         (*data)->Fv[ii] = (*data)->vv[ii] * (*data)->Asy[ii];
+        // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
+        // {
+        //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
+        //         (*data)->qseepage[ii]*param->dt*param->wcs);
+        // }
     }
 }
 
@@ -838,12 +785,12 @@ void update_subgrid_variable(Data **data, Map *smap, Config *param)
     {
         for (ii = 0; ii < param->n2ct; ii++)
         {
+            (*data)->Vsn[ii] = (*data)->Vs[ii];
             (*data)->Vs[ii] = (*data)->dept[ii] * param->dx * param->dy;
             if ((*data)->dept[ii] > 0) {(*data)->Asz[ii] = param->dx * param->dy;}
             else    {(*data)->Asz[ii] = 0.0;}
             (*data)->Asx[ii] = (*data)->deptx[ii] * param->dy;
             (*data)->Asy[ii] = (*data)->depty[ii] * param->dx;
-
         }
         for (ii = 0; ii < param->n2ci; ii++)
         {
@@ -863,4 +810,59 @@ void update_subgrid_variable(Data **data, Map *smap, Config *param)
             (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
         }
     }
+}
+
+// >>>>> update cell volume using flux
+void volume_by_flux(Data **data, Map *smap, Config *param)
+{
+    int ii, jj, kk;
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        // volume change by flux
+        (*data)->Vflux[ii] = (*data)->Vsn[ii] + param->dt * \
+          ((*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii] + (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
+          // if (smap->ii[ii]==30 & smap->jj[ii]==37)
+          // {
+          //     printf("---\n");
+          //     printf("depth, vflux, Vsn, dFu, dFv = %f, %f, %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii], \
+          //           (*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii], (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
+          // }
+        // subsurface source
+        if (param->sim_groundwater == 1)
+        {
+            if ((*data)->qseepage[ii] < 0 & (*data)->Vflux[ii] > -(*data)->qseepage[ii]*param->dt*param->wcs*(*data)->Asz[ii])
+            {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+            else if ((*data)->qseepage[ii] > 0)
+            {
+                if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
+                {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+            }
+        }
+        // evap / rain
+        if ((*data)->rain[0] - (*data)->evap[0] >= 0)
+        {(*data)->Vflux[ii] += ((*data)->rain[0] - (*data)->evap[0]) * (*data)->Asz[ii] * param->dt;}
+        else
+        {
+            if ((*data)->Vs[ii]>0 & (*data)->dept[ii] > ((*data)->evap[0]-(*data)->rain[0])*param->dt)
+            {(*data)->Vflux[ii] += ((*data)->rain[0] - (*data)->evap[0]) * (*data)->Asz[ii] * param->dt;}
+        }
+
+        // inflow
+        if (param->n_inflow > 0)
+        {
+            for (kk = 0; kk < param->n_inflow; kk++)
+            {
+                for (jj = 0; jj < (*data)->inflowloc_len[kk]; jj++)
+                {
+                    if (ii == (*data)->inflowloc[kk][jj] & (*data)->current_inflow[kk] > 0)
+                    {(*data)->Vflux[ii] += (*data)->current_inflow[kk] * param->dt / (*data)->inflowloc_len[kk];}
+                }
+            }
+        }
+        // if (smap->ii[ii]==30 & smap->jj[ii]==37)
+        // {
+        //     printf("depth, vflux, Vsn = %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii]);
+        // }
+    }
+
 }

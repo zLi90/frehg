@@ -21,6 +21,7 @@ void read_input(Config **param)
     strcpy((*param)->foutput, read_one_input("foutput", "input"));
     strcpy((*param)->sim_id, read_one_input("sim_id", "input"));
 
+
     // Domain geometry
     (*param)->NX = (int) read_one_input_double("NX", "input");
     (*param)->NY = (int) read_one_input_double("NY", "input");
@@ -60,18 +61,23 @@ void read_input(Config **param)
     (*param)->init_eta = read_one_input_double("init_eta", "input");
 
     (*param)->n_tide = (int) read_one_input_double("n_tide", "input");
-    (*param)->tide_file = (int) read_one_input_double("tide_file", "input");
-    (*param)->init_tide = read_one_input_array_double("init_tide", "input", 2*(*param)->n_tide);
+    (*param)->tide_file = read_one_input_array("tide_file", "input", (*param)->n_tide);
+    (*param)->init_tide = read_one_input_array_double("init_tide", "input", (*param)->n_tide);
     (*param)->tide_locX = read_one_input_array("tide_locX", "input", 2*(*param)->n_tide);
     (*param)->tide_locY = read_one_input_array("tide_locY", "input", 2*(*param)->n_tide);
+    (*param)->tide_dat_len = read_one_input_array("tide_dat_len", "input", (*param)->n_tide);
 
     (*param)->evap_file = (int) read_one_input_double("evap_file", "input");
     (*param)->q_evap = read_one_input_double("q_evap", "input");
     (*param)->rain_file = (int) read_one_input_double("rain_file", "input");
     (*param)->q_rain = read_one_input_double("q_rain", "input");
 
-    (*param)->inflow_loc = read_one_input_array("inflow_loc", "input", 4);
     (*param)->n_inflow = (int) read_one_input_double("n_inflow", "input");
+    (*param)->inflow_locX = read_one_input_array("inflow_locX", "input", 2*(*param)->n_inflow);
+    (*param)->inflow_locY = read_one_input_array("inflow_locY", "input", 2*(*param)->n_inflow);
+    (*param)->inflow_file = read_one_input_array("inflow_file", "input", (*param)->n_inflow);
+    (*param)->inflow_dat_len = read_one_input_array("inflow_dat_len", "input", (*param)->n_inflow);
+    (*param)->init_inflow = read_one_input_array_double("init_inflow", "input", (*param)->n_inflow);
 
     // subgrid model
     (*param)->use_subgrid = (int) read_one_input_double("use_subgrid", "input");
@@ -106,5 +112,17 @@ void read_input(Config **param)
     (*param)->hbot = read_one_input_double("hbot", "input");
     // groundwater boundary condition
     (*param)->bctype_GW = read_one_input_array("bctype_GW", "input", 6);
+
+    // Scalar transport
+    (*param)->n_scalar = (int) read_one_input_double("n_scalar", "input");
+    (*param)->scalar_file = read_one_input_array("scalar_file", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->scalar_dat_len = read_one_input_array("scalar_dat_len", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->init_s_surf = read_one_input_array_double("init_s_surf", "input", (*param)->n_scalar);
+    (*param)->init_s_subs = read_one_input_array_double("init_s_subs", "input", (*param)->n_scalar);
+    (*param)->s_tide = read_one_input_array_double("s_tide", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->s_inflow = read_one_input_array_double("s_inflow", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->difux = read_one_input_double("difux", "input");
+    (*param)->difuy = read_one_input_double("difuy", "input");
+    (*param)->difuz = read_one_input_double("difuz", "input");
 
 }

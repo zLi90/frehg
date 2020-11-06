@@ -35,4 +35,5 @@ int check_adj_sat(Data *data, Map *gmap, Config *param, int ii);
 void check_head_gradient(Data **data, Map *gmap, Config *param, int ii);
 double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV);
 double allocate_recv(Data **data, Map *gmap, Config *param, int ii, double dV);
+void volume_by_flux_subs(Data **data, Map *gmap, Config *param);
 void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int irank);

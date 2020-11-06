@@ -26,6 +26,7 @@ void reorder_subsurf(double *out, double *root, Map *gmap, Config *param);
 void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int irank);
 void write_one_file(double *ally, char *filename, Config *param, int tt, int n);
 void append_to_file(char *filename, double val, Config *param);
+double interp_bc(double *tVec, double *value, double t_current, int n_dat);
 void mpi_print(char pstr[], int irank);
 double getMin(double *arr, int n);
 double getMax(double *arr, int n);
@@ -329,7 +330,8 @@ void reorder_subsurf(double *out, double *root, Map *gmap, Config *param)
 // >>>>> Output model results <<<<<
 void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int irank)
 {
-    int ii;
+    int ii, kk;
+    char fid[2];
     // Combine all ranks at root
     if (param->use_mpi == 1)
     {
@@ -341,6 +343,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
             mpi_gather_double((*data)->vv_root, (*data)->vv, param->n2ci, root);
             if (param->sim_groundwater == 1)
             {mpi_gather_double((*data)->seep_root, (*data)->qseepage, param->n2ci, root);}
+            if (param->n_scalar > 0)
+            {
+                for (kk = 0; kk < param->n_scalar; kk++)
+                {mpi_gather_double((*data)->s_surf_root[kk], (*data)->s_surf[kk], param->n2ci, root);}
+            }
             if (irank == root)
             {
                 for (ii = 0; ii < param->N2CI; ii++)
@@ -349,6 +356,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 reorder_surf((*data)->dept_out, (*data)->dept_root, param);
                 reorder_surf((*data)->uu_out, (*data)->uu_root, param);
                 reorder_surf((*data)->vv_out, (*data)->vv_root, param);
+                if (param->n_scalar > 0)
+                {
+                    for (kk = 0; kk < param->n_scalar; kk++)
+                    {reorder_surf((*data)->s_surf_out[kk], (*data)->s_surf_root[kk], param);}
+                }
                 if (param->sim_groundwater == 1)
                 {
                     for (ii = 0; ii < param->N2CI; ii++)
@@ -364,6 +376,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
             mpi_gather_double((*data)->qx_root, (*data)->qx, param->n3ci, root);
             mpi_gather_double((*data)->qy_root, (*data)->qy, param->n3ci, root);
             mpi_gather_double((*data)->qz_root, (*data)->qz, param->n3ci, root);
+            if (param->n_scalar > 0)
+            {
+                for (kk = 0; kk < param->n_scalar; kk++)
+                {mpi_gather_double((*data)->s_subs_root[kk], (*data)->s_subs[kk], param->n3ci, root);}
+            }
             if (irank == root)
             {
                 // flow rate converted to [mm/d]
@@ -378,6 +395,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 reorder_subsurf((*data)->qx_out, (*data)->qx_root, gmap, param);
                 reorder_subsurf((*data)->qy_out, (*data)->qy_root, gmap, param);
                 reorder_subsurf((*data)->qz_out, (*data)->qz_root, gmap, param);
+                if (param->n_scalar > 0)
+                {
+                    for (kk = 0; kk < param->n_scalar; kk++)
+                    {reorder_subsurf((*data)->s_subs_out[kk], (*data)->s_subs_root[kk], gmap, param);}
+                }
             }
         }
 
@@ -394,6 +416,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 (*data)->vv_out[ii] = (*data)->vv[ii];
                 if (param->sim_groundwater == 1)
                 {(*data)->seep_out[ii] = (*data)->qseepage[ii]*8.64e7;}
+                if (param->n_scalar > 0)
+                {
+                    for (kk = 0; kk < param->n_scalar; kk++)
+                    {(*data)->s_surf_out[kk][ii] = (*data)->s_surf[kk][ii];}
+                }
             }
         }
         if (param->sim_groundwater == 1)
@@ -405,6 +432,11 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 (*data)->qx_out[ii] = (*data)->qx[ii]*8.64e7;
                 (*data)->qy_out[ii] = (*data)->qy[ii]*8.64e7;
                 (*data)->qz_out[ii] = (*data)->qz[ii]*8.64e7;
+                if (param->n_scalar > 0)
+                {
+                    for (kk = 0; kk < param->n_scalar; kk++)
+                    {(*data)->s_subs_out[kk][ii] = (*data)->s_subs[kk][ii];}
+                }
             }
         }
     }
@@ -417,6 +449,18 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
         write_one_file((*data)->vv_out, "vv", param, tt, param->N2CI);
         if (param->sim_groundwater == 1)
         {write_one_file((*data)->seep_out, "seepage", param, tt, param->N2CI);}
+        if (param->n_scalar > 0)
+        {
+            for (kk = 0; kk < param->n_scalar; kk++)
+            {
+                char fullname[50];
+                strcpy(fullname, "scalar_surf");
+                sprintf(fid, "%d", kk+1);
+                strcat(fullname, fid);
+                strcat(fullname, "_");
+                write_one_file((*data)->s_surf_out[kk], fullname, param, tt, param->N2CI);
+            }
+        }
     }
     if (param->sim_groundwater == 1 & irank == root)
     {
@@ -425,6 +469,18 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
         write_one_file((*data)->qx_out, "qx", param, tt, param->N3CI);
         write_one_file((*data)->qx_out, "qy", param, tt, param->N3CI);
         write_one_file((*data)->qx_out, "qz", param, tt, param->N3CI);
+        if (param->n_scalar > 0)
+        {
+            for (kk = 0; kk < param->n_scalar; kk++)
+            {
+                char fullname[50];
+                strcpy(fullname, "scalar_subs");
+                sprintf(fid, "%d", kk+1);
+                strcat(fullname, fid);
+                strcat(fullname, "_");
+                write_one_file((*data)->s_subs_out[kk], fullname, param, tt, param->N3CI);
+            }
+        }
     }
 }
 
@@ -461,6 +517,32 @@ void append_to_file(char *filename, double val, Config *param)
     fprintf(fp, "%6.6f \n", val);
     fclose(fp);
     free(fullname);
+}
+
+// >>>>> Interpolate to get boundary condition at current time step
+double interp_bc(double *tVec, double *value, double t_current, int n_dat)
+{
+    int ind;
+    size_t n;
+    double out_val;
+    if (t_current == 0.0)
+    {out_val = value[0];}
+    else
+    {
+        ind = 1;
+        if (t_current > tVec[ind])
+        {
+            ind += 1;
+            while (t_current > tVec[ind])
+            {
+                ind += 1;
+                if (ind >= n_dat) {break;}
+            }
+        }
+        out_val = value[ind-1] + (value[ind]-value[ind-1]) *
+            (t_current-tVec[ind-1]) / (tVec[ind]-tVec[ind-1]);
+    }
+    return out_val;
 }
 
 // >>>>> Print at the root rank <<<<<
