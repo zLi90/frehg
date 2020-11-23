@@ -17,13 +17,14 @@
 
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void get_current_bc(Data **data, Config *param, double t_current);
-void get_evaprain(Data **data, Config *param);
+void get_evaprain(Data **data, Map *gmap, Config *param);
 void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank);
 
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int t_save, tday, ii, kk, tt = 1;
     float t0, t1, tstep, last_save = 0.0, t_current = 0.0;
+    double max_CFLx, max_CFLy;
     // save initial condition
     write_output(data, gmap, param, 0, 0, irank);
     // begin time stepping
@@ -34,9 +35,8 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         (*data)->repeat[0] = 0;
         t_current += param->dt;
         // get boundary condition
-        // get_tide(data, param, t_current);
         get_current_bc(data, param, t_current);
-        get_evaprain(data, param);
+        get_evaprain(data, gmap, param);
         // execute solvers
         if (param->sim_shallowwater == 1)
         {solve_shallowwater(data, smap, gmap, param, irank, nrank);}
@@ -60,7 +60,8 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
 
         if (param->sim_shallowwater == 1)
         {shallowwater_velocity(data, smap, gmap, param, irank, nrank);}
-        // printf("tidal elevation = %f,   surf = %f\n",(*data)->current_tide[0],(*data)->eta[8686]);
+        max_CFLx = getMax((*data)->cflx, param->n2ci);
+        max_CFLy = getMax((*data)->cfly, param->n2ci);
 
         // scalar transport
         if (param->n_scalar > 0 & param->sim_shallowwater == 1)
@@ -68,11 +69,19 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         if (param->n_scalar > 0 & param->sim_groundwater == 1)
         {for (kk = 0; kk < param->n_scalar; kk++)    {scalar_groundwater(data, gmap, param, irank, nrank, kk);}}
 
+        // reset rainfall
+        if ((*data)->rain_sum[0] > param->min_dept)     {(*data)->rain_sum[0] = 0.0;}
+
         // model output
         if (fabs(t_current - last_save - param->dt_out) < 0.5*param->dt)
         {
             t_save = round(t_current / param->dt_out) * param->dt_out;
             last_save = t_current;
+            write_output(data, gmap, param, t_save, 0, irank);
+        }
+        else if (max_CFLx > 1 | max_CFLy > 1)
+        {
+            t_save = round(t_current / param->dt_out) * param->dt_out;
             write_output(data, gmap, param, t_save, 0, irank);
         }
         // report time
@@ -85,7 +94,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         }
         tt += 1;
     }
-    // printf("  >> Qin = %f, Qout = %f\n",(*data)->qbc[0],(*data)->qbc[1]);
     print_end_info(data, smap, gmap, param, irank);
 }
 
@@ -123,12 +131,12 @@ void get_current_bc(Data **data, Config *param, double t_current)
             for (kk = 0; kk < param->n_tide; kk++)
             {
                 glob_ind = ss * param->n_tide + kk;
-                if (param->scalar_file[glob_ind] == 0)
+                if (param->scalar_tide_file[glob_ind] == 0)
                 {(*data)->current_s_tide[ss][kk] = param->s_tide[glob_ind];}
                 else
                 {
                     (*data)->current_s_tide[ss][kk] =
-                        interp_bc((*data)->t_s_tide[ss][kk],(*data)->s_tide[ss][kk],t_current,param->scalar_dat_len[glob_ind]);
+                        interp_bc((*data)->t_s_tide[ss][kk],(*data)->s_tide[ss][kk],t_current,param->scalar_tide_datlen[glob_ind]);
                 }
             }
         }
@@ -140,12 +148,12 @@ void get_current_bc(Data **data, Config *param, double t_current)
             for (kk = 0; kk < param->n_inflow; kk++)
             {
                 glob_ind = ss * param->n_inflow + kk;
-                if (param->scalar_file[glob_ind] == 0)
+                if (param->scalar_inflow_file[glob_ind] == 0)
                 {(*data)->current_s_inflow[ss][kk] = param->s_inflow[glob_ind];}
                 else
                 {
                     (*data)->current_s_inflow[ss][kk] =
-                        interp_bc((*data)->t_s_inflow[ss][kk],(*data)->s_inflow[ss][kk],t_current,param->scalar_dat_len[glob_ind]);
+                        interp_bc((*data)->t_s_inflow[ss][kk],(*data)->s_inflow[ss][kk],t_current,param->scalar_inflow_datlen[glob_ind]);
                 }
             }
         }
@@ -153,19 +161,72 @@ void get_current_bc(Data **data, Config *param, double t_current)
 }
 
 // >>>>> Update rainfall and evaporation flux
-void get_evaprain(Data **data, Config *param)
+void get_evaprain(Data **data, Map *gmap, Config *param)
 {
+    int ii, jj;
+    double temp, velo, pres, humi;
+    double rhoa, rhow, esat, qsat, resi, alpha, qsuf;
+    // rainfall
+    // For now, only consider uniform rainfall, ZhiLi20201117
     if (param->rain_file == 0)
     {(*data)->rain[0] = param->q_rain;}
     else
     {
         // interpolate rainfall data
     }
-    if (param->evap_file == 0)
-    {(*data)->evap[0] = param->q_evap;}
+    // evaporation
+    if (param->sim_groundwater == 0)
+    {
+        if (param->evap_file == 0)
+        {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->evap[ii] = param->q_evap;}}
+        else
+        {
+            // interpolate evaporation data
+        }
+    }
     else
     {
-        // interpolate evaporation data
+        if (param->evap_file == 0)
+        {
+            if (param->evap_model == 0)
+            {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->evap[ii] = param->q_evap;}}
+            else if (param->evap_model == 1)
+            {
+                // aerodynamic evap model
+                temp = 20.0;
+                velo = 1.0;
+                pres = 1e2;
+                humi = 0.003;
+                rhoa = 1.225;
+                rhow = 1000.0;  // need to use real water density, ZhiLi20201117
+                esat = 0.6108 * exp(17.27 * temp / (temp + 237.3));
+                qsat = 0.622 * esat / (pres + 0.376 * esat);
+                resi = 94.909 * pow(velo, -0.9036);
+                for (ii = 0; ii < param->n3ci; ii++)
+                {
+                    if (gmap->istop[ii] == 1)
+                    {
+                        jj = gmap->top2d[ii];
+                        if ((*data)->dept[jj] > 0.0)
+                        {(*data)->evap[jj] = param->q_evap;}
+                        else
+                        {
+                            alpha = 1.8 * ((*data)->wc[ii] - param->wcr) / ((*data)->wc[ii] - param->wcr + 0.3);
+                            if (alpha > 1.0)    {alpha = 1.0;}
+                            qsuf = alpha * qsat;
+                            (*data)->evap[jj] = rhoa * (qsuf - humi) / (rhow * resi);
+                            if ((*data)->evap[jj] < 0.0)    {(*data)->evap[jj] = 0.0;}
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            // interpolate evaporation data
+        }
+        for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii];}
+
     }
 }
 

@@ -37,7 +37,7 @@ void cfl_limiter(Data **data, Map *smap, Config *param);
 void evaprain(Data **data, Map *smap, Config *param);
 void subsurface_source(Data **data, Map *smap, Config *param);
 void waterfall_location(Data **data, Map *smap, Config *param);
-void update_velocity(Data **data, Map *smap, Config *param);
+void update_velocity(Data **data, Map *smap, Config *param, int irank);
 void waterfall_velocity(Data **data, Map *smap, Config *param);
 void enforce_velo_bc(Data **data, Map *smap, Config *param, int irank, int nrank);
 void interp_velocity(Data **data, Map *smap, Config *param);
@@ -57,10 +57,12 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     Vector x;
     V_Constr(&x, "x", param->n2ci, Normal, True);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->etan[ii] = (*data)->eta[ii];}
-    if (param->use_mpi == 1)
-    {mpi_exchange_surf((*data)->etan, smap, 2, param, irank, nrank);}
-    // Solve the linear system for free surface elevation
     enforce_surf_bc(data, smap, param, irank, nrank);
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_surf((*data)->etan, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);
+    }
     momentum_source(data, smap, param);
     if (param->use_mpi == 1)
     {
@@ -74,6 +76,7 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
+    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[540],(*data)->eta[540]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -89,6 +92,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
 {
     if (param->sim_groundwater == 1)
     {subsurface_source(data, smap, param);}
+    // printf("-----\n");
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -112,9 +116,11 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->Aszx, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->Aszy, smap, 2, param, irank, nrank);
     }
+    // Update bottom drag
+    update_drag_coef(data, param);
     // Update velocity
     waterfall_location(data, smap, param);
-    update_velocity(data, smap, param);
+    update_velocity(data, smap, param, irank);
     // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
     if (param->use_mpi == 1)
@@ -123,6 +129,8 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->vv, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->Fu, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->Fv, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->CDx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->CDy, smap, 2, param, irank, nrank);
     }
     // volume_by_flux(data, smap, param);
     interp_velocity(data, smap, param);
@@ -131,8 +139,8 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->uy, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->vx, smap, 2, param, irank, nrank);
     }
-    // Update bottom drag
-    update_drag_coef(data, param);
+
+
     // if (param->sim_groundwater == 1)
     // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
 }
@@ -141,7 +149,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
 void momentum_source(Data **data, Map *smap, Config *param)
 {
     int ii;
-    double advX, advY, difX, difY, facdx, facdy, velx, vely;
+    double advX, advY, difX, difY, facdx, facdy, velx, vely, gradp;
     for (ii = 0; ii < param->n2ci; ii++)
     {
         // advection terms
@@ -185,13 +193,57 @@ void momentum_source(Data **data, Map *smap, Config *param)
         vely = sqrt((*data)->uy[ii]*(*data)->uy[ii] + (*data)->vv[ii]*(*data)->vv[ii]);
         if ((*data)->Vsx[ii] > 0.0) {facdx = (*data)->Aszx[ii]/(*data)->Vsx[ii];}
         if ((*data)->Vsy[ii] > 0.0) {facdy = (*data)->Aszy[ii]/(*data)->Vsy[ii];}
-        (*data)->Dx[ii] = 1.0 / (0.5 * param->dt * (*data)->CDx[ii] * velx * facdx + 1.0);
-        (*data)->Dy[ii] = 1.0 / (0.5 * param->dt * (*data)->CDy[ii] * vely * facdy + 1.0);
-        // momentum source
-        (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
-        (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
+
+        if (param->difuwave == 0)
+        {
+            (*data)->Dx[ii] = 1.0 / (0.5 * param->dt * (*data)->CDx[ii] * velx * facdx + 1.0);
+            (*data)->Dy[ii] = 1.0 / (0.5 * param->dt * (*data)->CDy[ii] * vely * facdy + 1.0);
+            // momentum source
+            (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
+            (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
+            // (*data)->Ex[ii] = (*data)->uu[ii] * (*data)->Dx[ii];
+            // (*data)->Ey[ii] = (*data)->vv[ii] * (*data)->Dy[ii];
+        }
+        else
+        {
+            gradp = 0.0;
+            if ((*data)->eta[smap->iPjc[ii]] > (*data)->eta[ii] & (*data)->dept[smap->iPjc[ii]] > param->min_dept)
+            {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
+            else if ((*data)->eta[smap->iPjc[ii]] < (*data)->eta[ii] & (*data)->dept[ii] > param->min_dept)
+            {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
+            if ((*data)->eta[smap->icjP[ii]] > (*data)->eta[ii] & (*data)->dept[smap->icjP[ii]] > param->min_dept)
+            {gradp += pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0);}
+            else if ((*data)->eta[smap->icjP[ii]] < (*data)->eta[ii] & (*data)->dept[ii] > param->min_dept)
+            {gradp += pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0);}
+            gradp = pow(gradp, 0.5);
+            // avoid gradp being too small
+            if (gradp < param->min_dept / param->dx)
+            {gradp = param->min_dept / param->dx;}
+            // gradp = pow(pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0) + \
+                // pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0), 0.5);
+
+            velx = pow(2.0 * param->grav * gradp * facdx / (*data)->CDx[ii], 0.5);
+            vely = pow(2.0 * param->grav * gradp * facdy / (*data)->CDy[ii], 0.5);
+
+            if (velx != 0.0 & facdx != 0.0 & (*data)->CDx[ii] != 0.0)
+            {(*data)->Dx[ii] = facdx / (0.5 * (*data)->CDx[ii] * velx);}
+            else
+            {(*data)->Dx[ii] = 1.0;}
+            if (vely != 0.0 & facdy != 0.0 & (*data)->CDy[ii] != 0.0)
+            {(*data)->Dy[ii] = facdy / (0.5 * (*data)->CDy[ii] * vely);}
+            else
+            {(*data)->Dy[ii] = 1.0;}
+            // limiter on D
+            // if ((*data)->Dx[ii] > param->dt)    {(*data)->Dx[ii] = param->dt;}
+            // if ((*data)->Dy[ii] > param->dt)    {(*data)->Dy[ii] = param->dt;}
+
+            // momentum source
+            (*data)->Ex[ii] = 0.0;
+            (*data)->Ey[ii] = 0.0;
+        }
     }
 }
+
 
 // >>>>> Matrix right-hand-side
 void shallowwater_rhs(Data **data, Map *smap, Config *param)
@@ -223,7 +275,11 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
     int ii, im, jm, kk, jj;
     double coef;
     size_t n;
-    coef = param->grav * param->dt * param->dt;
+    if (param->difuwave == 0)
+    {coef = param->grav * param->dt * param->dt;}
+    else
+    {coef = param->grav * param->dt;}
+
     for (ii = 0; ii < param->n2ci; ii++)
     {
         im = smap->iMjc[ii];
@@ -349,6 +405,14 @@ void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, 
 void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vector x, Config *param)
 {
     size_t ii;
+    // for (ii = 0; ii < param->n2ci; ii++)
+    // {
+    //     if (smap->ii[ii] == 200 & smap->jj[ii] > 536 & smap->jj[ii] < 540)
+    //     {
+    //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
+    //             -(*data)->Sym[ii],-(*data)->Sxm[ii],(*data)->Sct[ii],-(*data)->Sxp[ii],-(*data)->Syp[ii],(*data)->Srhs[ii],(*data)->eta[ii]);
+    //     }
+    // }
     V_SetAllCmp(&x, 0.0);
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
@@ -376,6 +440,7 @@ void enforce_surf_bc(Data **data, Map *smap, Config *param, int irank, int nrank
             {
                 jj = (*data)->tideloc[kk][ii];
                 (*data)->eta[jj] = (*data)->current_tide[kk];
+                // printf("IRANK=%d  :  TIDE #%d -> tideloc=%d, elevation=%f, eta=%f\n",irank,kk,(*data)->tideloc[kk][ii],(*data)->current_tide[kk],(*data)->eta[jj]);
             }
         }
     }
@@ -442,35 +507,24 @@ void evaprain(Data **data, Map *smap, Config *param)
         if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
         {
             if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
-            {
-                if (smap->jj[ii] < 7)
-                {
-                    if ((*data)->rain_sum[0] > param->min_dept)
-                    {(*data)->eta[ii] += (*data)->rain_sum[0];}
-                }
-
-            }
+            {if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0];}}
         }
     }
-    if ((*data)->rain_sum[0] > param->min_dept)
-    {
-        (*data)->rain_sum[0] = 0.0;
-    }
-
     // evaporation
-    for (ii = 0; ii < param->n2ci; ii++)
+    // only apply evaporation when rainfall = 0
+    if ((*data)->rain[0] == 0.0)
     {
-        (*data)->eta[ii] -= (*data)->evap[0] * param->dt;
-    }
-    // remove negative or small depth
-    // NOTE: This could make rainfall useless, be careful!
-    for (ii = 0; ii < param->n2ci; ii++)
-    {
-        diff = (*data)->eta[ii] - (*data)->bottom[ii];
-        if (diff < 0)
-        {(*data)->eta[ii] = (*data)->bottom[ii];}
-        else if (diff < param->min_dept)
-        {(*data)->eta[ii] = (*data)->bottom[ii];}
+        for (ii = 0; ii < param->n2ci; ii++)
+        {(*data)->eta[ii] -= (*data)->evap[ii] * param->dt;}
+        // remove negative or small depth
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            diff = (*data)->eta[ii] - (*data)->bottom[ii];
+            if (diff < 0)
+            {(*data)->eta[ii] = (*data)->bottom[ii];}
+            else if (diff < param->min_dept)
+            {(*data)->eta[ii] = (*data)->bottom[ii];}
+        }
     }
 }
 
@@ -479,6 +533,8 @@ void subsurface_source(Data **data, Map *smap, Config *param)
 {
     int ii;
     double diff, qz;
+    // NOTE: seepage is calculated in the subsurface framework
+    //       to convert it into the surface framework, multiple by param->wcs
     for (ii = 0; ii < param->n2ci; ii++)
     {
         diff = (*data)->eta[ii] - (*data)->bottom[ii];
@@ -535,11 +591,12 @@ void waterfall_location(Data **data, Map *smap, Config *param)
 }
 
 // >>>>> update face velocity
-void update_velocity(Data **data, Map *smap, Config *param)
+void update_velocity(Data **data, Map *smap, Config *param, int irank)
 {
-    int ii;
-    double effhx, effhy, coef;
+    int ii, count;
+    double effhx, effhy, coef, gradp, velx, vely, velo, epsu, epsv, facdx, facdy;
     coef = param->grav * param->dt;
+
     for (ii = 0; ii < param->n2ci; ii++)
     {
         (*data)->uu[ii] = 0.0;
@@ -548,9 +605,51 @@ void update_velocity(Data **data, Map *smap, Config *param)
         else {effhx = 0.0;}
         if ((*data)->Vsy[ii] > 0)   {effhy = (*data)->Asy[ii] / (*data)->Vsy[ii];}
         else {effhy = 0.0;}
-        // ignore drag inversion for velocity update -- consistent with Frehd
-        (*data)->uu[ii] = (*data)->Ex[ii] - coef * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]);
-        (*data)->vv[ii] = (*data)->Ey[ii] - coef * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]);
+        if (param->difuwave == 0)
+        {
+            // ignore drag inversion for velocity update -- consistent with Frehd
+            // (*data)->uu[ii] = ((*data)->Ex[ii] - coef * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]));
+            // (*data)->vv[ii] = ((*data)->Ey[ii] - coef * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]));
+
+            (*data)->uu[ii] = ((*data)->Ex[ii] - coef * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii])) * (*data)->Dx[ii];
+            (*data)->vv[ii] = ((*data)->Ey[ii] - coef * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii])) * (*data)->Dy[ii];
+        }
+        else
+        {
+            facdx = 0.0;
+            facdy = 0.0;
+            if ((*data)->Vsx[ii] > 0.0) {facdx = (*data)->Aszx[ii]/(*data)->Vsx[ii];}
+            if ((*data)->Vsy[ii] > 0.0) {facdy = (*data)->Aszy[ii]/(*data)->Vsy[ii];}
+            gradp = 0.0;
+            if ((*data)->eta[smap->iPjc[ii]] > (*data)->eta[ii] & (*data)->dept[smap->iPjc[ii]] > 0.0)
+            {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
+            else if ((*data)->eta[smap->iPjc[ii]] < (*data)->eta[ii] & (*data)->dept[ii] > 0.0)
+            {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
+            if ((*data)->eta[smap->icjP[ii]] > (*data)->eta[ii] & (*data)->dept[smap->icjP[ii]] > 0.0)
+            {gradp += pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0);}
+            else if ((*data)->eta[smap->icjP[ii]] < (*data)->eta[ii] & (*data)->dept[ii] > 0.0)
+            {gradp += pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0);}
+            gradp = pow(gradp, 0.5);
+
+            velx = pow(2.0 * param->grav * gradp * facdx / (*data)->CDx[ii], 0.5);
+            vely = pow(2.0 * param->grav * gradp * facdy / (*data)->CDy[ii], 0.5);
+
+            if (velx != 0.0 & facdx != 0.0 & (*data)->CDx[ii] != 0.0)
+            {(*data)->Dx[ii] = facdx / (0.5 * (*data)->CDx[ii] * velx);}
+            else
+            {(*data)->Dx[ii] = 1.0;}
+            if (vely != 0.0 & facdy != 0.0 & (*data)->CDy[ii] != 0.0)
+            {(*data)->Dy[ii] = facdy / (0.5 * (*data)->CDy[ii] * vely);}
+            else
+            {(*data)->Dy[ii] = 1.0;}
+            // limiter on D
+            // if ((*data)->Dx[ii] > param->dt)    {(*data)->Dx[ii] = param->dt;}
+            // if ((*data)->Dy[ii] > param->dt)    {(*data)->Dy[ii] = param->dt;}
+
+            (*data)->uu[ii] = - param->grav * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) * (*data)->Dx[ii];
+            (*data)->vv[ii] = - param->grav * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) * (*data)->Dy[ii];
+        }
+
     }
     // apply various velocity limiters
     for (ii = 0; ii < param->n2ci; ii++)
@@ -581,7 +680,17 @@ void update_velocity(Data **data, Map *smap, Config *param)
     {
         (*data)->Fu[ii] = (*data)->uu[ii] * (*data)->Asx[ii];
         (*data)->Fv[ii] = (*data)->vv[ii] * (*data)->Asy[ii];
+        (*data)->cflx[ii] = fabs((*data)->uu[ii] * param->dt / param->dx);
+        (*data)->cfly[ii] = fabs((*data)->vv[ii] * param->dt / param->dy);
+        if ((*data)->cflx[ii] > 1 | (*data)->cfly[ii] > 1)
+        {printf("WARNING: CFL = %f, %f for cell (%d,%d) of rank %d!\n",(*data)->cflx[ii],(*data)->cfly[ii],smap->ii[ii],smap->jj[ii],irank);}
+        // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
+        // {
+        //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
+        //         (*data)->qseepage[ii]*param->dt*param->wcs);
+        // }
     }
+
 }
 
 // >>>>> correct velocity for waterfall
@@ -789,6 +898,12 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
         // volume change by flux
         (*data)->Vflux[ii] = (*data)->Vsn[ii] + param->dt * \
           ((*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii] + (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
+          // if (smap->ii[ii]==30 & smap->jj[ii]==37)
+          // {
+          //     printf("---\n");
+          //     printf("depth, vflux, Vsn, dFu, dFv = %f, %f, %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii], \
+          //           (*data)->Fu[smap->iMjc[ii]] - (*data)->Fu[ii], (*data)->Fv[smap->icjM[ii]] - (*data)->Fv[ii]);
+          // }
         // subsurface source
         if (param->sim_groundwater == 1)
         {
@@ -796,17 +911,11 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
             {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
             else if ((*data)->qseepage[ii] > 0)
             {
-                if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
+                if ((*data)->dept[ii] > 0)
+                {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+                else if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
                 {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
             }
-        }
-        // evap / rain
-        if ((*data)->rain[0] - (*data)->evap[0] >= 0)
-        {(*data)->Vflux[ii] += ((*data)->rain[0] - (*data)->evap[0]) * (*data)->Asz[ii] * param->dt;}
-        else
-        {
-            if ((*data)->Vs[ii]>0 & (*data)->dept[ii] > ((*data)->evap[0]-(*data)->rain[0])*param->dt)
-            {(*data)->Vflux[ii] += ((*data)->rain[0] - (*data)->evap[0]) * (*data)->Asz[ii] * param->dt;}
         }
 
         // inflow
@@ -821,6 +930,10 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
                 }
             }
         }
+        // if (smap->ii[ii]==30 & smap->jj[ii]==37)
+        // {
+        //     printf("depth, vflux, Vsn = %f, %f, %f\n",(*data)->dept[ii]*1e4,(*data)->Vflux[ii],(*data)->Vsn[ii]);
+        // }
     }
 
 }

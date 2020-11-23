@@ -447,6 +447,7 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
         write_one_file((*data)->dept_out, "depth", param, tt, param->N2CI);
         write_one_file((*data)->uu_out, "uu", param, tt, param->N2CI);
         write_one_file((*data)->vv_out, "vv", param, tt, param->N2CI);
+
         if (param->sim_groundwater == 1)
         {write_one_file((*data)->seep_out, "seepage", param, tt, param->N2CI);}
         if (param->n_scalar > 0)
@@ -461,14 +462,15 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
                 write_one_file((*data)->s_surf_out[kk], fullname, param, tt, param->N2CI);
             }
         }
+
     }
     if (param->sim_groundwater == 1 & irank == root)
     {
         write_one_file((*data)->h_out, "head", param, tt, param->N3CI);
         write_one_file((*data)->wc_out, "moisture", param, tt, param->N3CI);
         write_one_file((*data)->qx_out, "qx", param, tt, param->N3CI);
-        write_one_file((*data)->qx_out, "qy", param, tt, param->N3CI);
-        write_one_file((*data)->qx_out, "qz", param, tt, param->N3CI);
+        write_one_file((*data)->qy_out, "qy", param, tt, param->N3CI);
+        write_one_file((*data)->qz_out, "qz", param, tt, param->N3CI);
         if (param->n_scalar > 0)
         {
             for (kk = 0; kk < param->n_scalar; kk++)

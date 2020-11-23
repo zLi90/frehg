@@ -56,9 +56,12 @@ void read_input(Config **param)
 
     // Shallow water solver
     (*param)->sim_shallowwater = (int) read_one_input_double("sim_shallowwater", "input");
+    (*param)->difuwave = (int) read_one_input_double("difuwave", "input");
     (*param)->bctype_SW = read_one_input_array("bctype_SW", "input", 4);
 
     (*param)->init_eta = read_one_input_double("init_eta", "input");
+    (*param)->eta_file = (int) read_one_input_double("eta_file", "input");
+    (*param)->uv_file = (int) read_one_input_double("uv_file", "input");
 
     (*param)->n_tide = (int) read_one_input_double("n_tide", "input");
     (*param)->tide_file = read_one_input_array("tide_file", "input", (*param)->n_tide);
@@ -68,6 +71,7 @@ void read_input(Config **param)
     (*param)->tide_dat_len = read_one_input_array("tide_dat_len", "input", (*param)->n_tide);
 
     (*param)->evap_file = (int) read_one_input_double("evap_file", "input");
+    (*param)->evap_model = (int) read_one_input_double("evap_model", "input");
     (*param)->q_evap = read_one_input_double("q_evap", "input");
     (*param)->rain_file = (int) read_one_input_double("rain_file", "input");
     (*param)->q_rain = read_one_input_double("q_rain", "input");
@@ -106,6 +110,8 @@ void read_input(Config **param)
     (*param)->init_h = read_one_input_double("init_h", "input");
     (*param)->init_wt_abs = read_one_input_double("init_wt_abs", "input");
     (*param)->init_wt_rel = read_one_input_double("init_wt_rel", "input");
+    (*param)->h_file = (int) read_one_input_double("h_file", "input");
+    (*param)->wc_file = (int) read_one_input_double("wc_file", "input");
     (*param)->qtop = read_one_input_double("qtop", "input");
     (*param)->qbot = read_one_input_double("qbot", "input");
     (*param)->htop = read_one_input_double("htop", "input");
@@ -115,8 +121,16 @@ void read_input(Config **param)
 
     // Scalar transport
     (*param)->n_scalar = (int) read_one_input_double("n_scalar", "input");
-    (*param)->scalar_file = read_one_input_array("scalar_file", "input", (*param)->n_scalar*(*param)->n_tide);
-    (*param)->scalar_dat_len = read_one_input_array("scalar_dat_len", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->baroclinic = (int) read_one_input_double("baroclinic", "input");
+
+    (*param)->scalar_surf_file = read_one_input_array("scalar_surf_file", "input", (*param)->n_scalar);
+    (*param)->scalar_tide_file = read_one_input_array("scalar_tide_file", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->scalar_tide_datlen = read_one_input_array("scalar_tide_datlen", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->scalar_inflow_file = read_one_input_array("scalar_inflow_file", "input", (*param)->n_scalar*(*param)->n_inflow);
+    (*param)->scalar_inflow_datlen = read_one_input_array("scalar_inflow_datlen", "input", (*param)->n_scalar*(*param)->n_inflow);
+
+    (*param)->scalar_subs_file = read_one_input_array("scalar_subs_file", "input", (*param)->n_scalar);
+
     (*param)->init_s_surf = read_one_input_array_double("init_s_surf", "input", (*param)->n_scalar);
     (*param)->init_s_subs = read_one_input_array_double("init_s_subs", "input", (*param)->n_scalar);
     (*param)->s_tide = read_one_input_array_double("s_tide", "input", (*param)->n_scalar*(*param)->n_tide);
@@ -124,5 +138,7 @@ void read_input(Config **param)
     (*param)->difux = read_one_input_double("difux", "input");
     (*param)->difuy = read_one_input_double("difuy", "input");
     (*param)->difuz = read_one_input_double("difuz", "input");
+    (*param)->disp_lon = read_one_input_double("disp_lon", "input");
+    (*param)->disp_lat = read_one_input_double("disp_lat", "input");
 
 }

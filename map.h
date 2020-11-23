@@ -15,6 +15,7 @@ typedef struct Map
     int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM, *kk;
     int *actv, *istop, *top2d, *kPin, *kPou, *kMin, *kMou;
     double *bot1d, *bot3d, *dz3d;
+    double *zcntr, *zcntr_root, *zcntr_out;
 }Map;
 
 #endif

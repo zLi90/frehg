@@ -145,8 +145,9 @@ void build_surf_map(Map **map, Config *param)
 // >>>>> Build connections for subsurface domain <<<<<
 void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Config *param, int irank)
 {
-    int ii, jj;
+    int ii, jj, nz_upper, nz_lower;
     double *bath_min, *bath_max, *bath_max_global, *bath_max_arr, *bath_min_global, *bath_min_arr;
+    double bot_new, dz_new;
 
     *map = malloc(sizeof(Map));
     bath_min = malloc(sizeof(double));
@@ -179,10 +180,29 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->bot1d = malloc(param->nz*sizeof(double));
         for (ii = 0; ii < param->nz; ii++)
         {(*map)->bot1d[ii] = bath_max_global[0] - (ii+1)*param->dz;}
+        nz_upper = param->nz;
+        nz_lower = 0;
     }
     else
     {
-        // variable dz
+        nz_upper = ceil((bath_max_global[0] - bath_min_global[0]) / param->dz);
+        bot_new = bath_min_global[0];
+        dz_new = param->dz;
+        nz_lower = 0;
+        while (bot_new > param->botZ)
+        {
+            dz_new = dz_new * param->dz_incre;
+            bot_new -= dz_new;
+            nz_lower += 1;
+        }
+        param->nz = nz_upper + nz_lower;
+        (*map)->bot1d = malloc(param->nz*sizeof(double));
+        for (ii = 0; ii < nz_upper; ii++)
+        {(*map)->bot1d[ii] = bath_max_global[0] - (ii+1)*param->dz;}
+        for (ii = nz_upper; ii < param->nz; ii++)
+        {(*map)->bot1d[ii] = (*map)->bot1d[ii-1] - param->dz_incre * ((*map)->bot1d[ii-2] - (*map)->bot1d[ii-1]);}
+        // for (ii = 0; ii < param->nz; ii++)
+        // {printf("bot1d = %f\n",(*map)->bot1d[ii]-offset[0]);}
     }
     if (irank == 0) {printf("   >> Total number of subsurface layer = %d\n",param->nz);}
 
@@ -197,6 +217,9 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
 
     // calculate 3D dz, actv map and cntr map
     (*map)->cntr = malloc(param->n3ci*sizeof(int));
+    (*map)->zcntr = malloc(param->n3ci*sizeof(double));
+    (*map)->zcntr_root = malloc(param->N3CI*sizeof(double));
+    (*map)->zcntr_out = malloc(param->N3CI*sizeof(double));
     (*map)->ii = malloc(param->n3ci*sizeof(int));
     (*map)->jj = malloc(param->n3ci*sizeof(int));
     (*map)->kk = malloc(param->n3ci*sizeof(int));
@@ -205,6 +228,7 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
     (*map)->dz3d = malloc(param->n3ci*sizeof(double));
     (*map)->istop = malloc(param->n3ci*sizeof(int));
     (*map)->top2d = malloc(param->n3ci*sizeof(int));
+
     for (ii = 0; ii < param->n3ct; ii++)    {(*map)->actv[ii] = 0;}
     for (ii = 0; ii < param->n3ci; ii++)
     {
@@ -214,7 +238,8 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
         (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
         (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
-        (*map)->dz3d[ii] = param->dz;
+        if ((*map)->kk[ii] == 0)    {(*map)->dz3d[ii] = param->dz;}
+        else    {(*map)->dz3d[ii] = (*map)->bot3d[ii-1] - (*map)->bot3d[ii];}
         (*map)->istop[ii] = 0;
     }
     // adjust dz with respect to bathymetry
@@ -231,19 +256,20 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         else
         {
             (*map)->actv[ii] = 1;
-            // if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
-            // {
-            //     if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.5*param->dz)
-            //     {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
-            //     else
-            //     {
-            //         (*map)->actv[ii] = 0;
-            //         (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
-            //     }
-            // }
-            (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
+            // (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
 
+            if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
+            {
+                if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.25*param->dz)
+                {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
+                else
+                {
+                    (*map)->actv[ii] = 0;
+                    (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                }
+            }
         }
+
     }
     // get the top cell index
     for (ii = 0; ii < param->n3ci; ii++)
@@ -255,7 +281,13 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
         }
     }
-
+    // get z-coordinates of each subsurface cell
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        // if ((*map)->actv[ii] == 0)  {(*map)->zcntr[ii] = 999;}
+        // else    {(*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];}
+        (*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];
+    }
 
     // calculate iP, iM, jP, jM, kP, kM maps
     (*map)->iPjckc = malloc(param->n3ci*sizeof(int));
@@ -356,11 +388,27 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
     }
 
+    // output the z-coordinates
+    if (param->use_mpi == 1)
+    {
+        int root = 0;
+        mpi_gather_double((*map)->zcntr_root, (*map)->zcntr, param->n3ci, root);
+        if (irank == root)
+        {
+            reorder_subsurf((*map)->zcntr_out, (*map)->zcntr_root, *map, param);
+            write_one_file((*map)->zcntr_out, "zcell", param, 0, param->N3CI);
+        }
+    }
+    else
+    {
+        for (ii = 0; ii < param->n3ci; ii++)    {(*map)->zcntr_out[ii] = (*map)->zcntr[ii];}
+        write_one_file((*map)->zcntr_out, "zcell", param, 0, param->N3CI);
+    }
+
     free(bath_min);
     free(bath_max);
     free(bath_max_global);
     free(bath_max_arr);
     free(bath_min_global);
     free(bath_min_arr);
-
 }

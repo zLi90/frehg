@@ -20,11 +20,12 @@ typedef struct Data
     double *Vs, *Vsn, *Vflux, *Vsx, *Vsy, *Asx, *Asy, *Asz, *Aszx, *Aszy;
     // subsurface domain
     double *h, *hn, *hp, *hwc, *wc, *wcn, *wcp, *wch, *h_root, *wc_root, *dh6, *rsplit;
-    double *vloss, *vloss_root, *room, qtop, qbot, hbot, htop;
+    double *vloss, *vloss_root, *room, *qtop, qbot, hbot, htop;
     double *Kx, *Ky, *Kz, *qx, *qy, *qz, *qx_root, *qy_root, *qz_root, *Vg, *Vgn, *Vgflux, *ch;
     double *h_out, *wc_out, *qx_out, *qy_out, *qz_out;
     double *wcs, *wcr, *vga, *vgn, *Ksz, *Ksx, *Ksy;
     double *t_out, *qbc;
+    double *r_rho, *r_rhon, *r_visc;
     int *repeat;
     // linear system
     double *Sct, *Srhs, *Sxp, *Syp, *Sxm, *Sym;
@@ -40,6 +41,7 @@ typedef struct Data
     double ***s_tide, ***t_s_tide, **current_s_tide;
     double ***s_inflow, ***t_s_inflow, **current_s_inflow;
     double **sseepage;
+    double *Dxx, *Dxy, *Dxz, *Dyy, *Dyx, *Dyz, *Dzz, *Dzx, *Dzy;
 }Data;
 
 #endif
@@ -47,10 +49,11 @@ typedef struct Data
 void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank);
 void init_domain(Config **param);
 void init_Data(Data **data, Config *param);
-void ic_surface(Data **data, Map *smap, Config *param, int irank, int nrank);
+void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void bc_surface(Data **data, Map *smap, Config *param, int irank);
 void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc, int *locX, int *locY);
 void update_depth(Data **data, Map *smap, Config *param, int irank);
 void read_bathymetry(Data **data, Config *param, int irank, int nrank);
 void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank);
 void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank);
+void restart_subsurface(double *ic_array, char *fname, Config *param, int irank);
