@@ -95,6 +95,33 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
                 }
             }
         }
+        // modify limiter when evap/rain exist
+        // if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0)
+        // {
+        //     s_rainevap = (*data)->sm_surf[kk][ii] / (*data)->Vflux[ii];
+        //     // net evaporation
+        //     if ((*data)->rain[0] - (*data)->evap[0] < 0)
+        //     {
+        //         if (s_max[ii] < s_rainevap)
+        //         {s_max[ii] = s_max[ii] * (*data)->Vflux[ii] / ((*data)->Vflux[ii]+((*data)->rain[0]-(*data)->evap[0])*param->dt*(*data)->Asz[ii]);}
+        //         else
+        //         {
+        //             s_rainevap = s_rainevap * (*data)->Vflux[ii] / ((*data)->Vflux[ii]+((*data)->rain[0]-(*data)->evap[0])*param->dt*(*data)->Asz[ii]);
+        //             if (s_rainevap > s_max[ii]) {s_max[ii] = s_rainevap;}
+        //         }
+        //     }
+        //     // net rainfall
+        //     else if ((*data)->rain[0] - (*data)->evap[0] > 0)
+        //     {
+        //         if (s_min[ii] > s_rainevap)
+        //         {s_min[ii] = s_min[ii] * (*data)->Vflux[ii] / ((*data)->Vflux[ii]+((*data)->rain[0]-(*data)->evap[0])*param->dt*(*data)->Asz[ii]);}
+        //         else
+        //         {
+        //             s_rainevap = s_rainevap * (*data)->Vflux[ii] / ((*data)->Vflux[ii]+((*data)->rain[0]-(*data)->evap[0])*param->dt*(*data)->Asz[ii]);
+        //             if (s_rainevap < s_min[ii]) {s_min[ii] = s_rainevap;}
+        //         }
+        //     }
+        // }
 
     }
     // update scalar
@@ -343,6 +370,13 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                     (2.0 * (*data)->Dzz[ii] * (*data)->wc[ii] / gmap->dz3d[ii]) * ((*data)->s_subs[kk][ii] - (*data)->s_subs[kk][gmap->icjckM[ii]]));
             }
 
+            // if (gmap->ii[ii] == 1)
+            // {
+            //     if (gmap->jj[ii] == 10 | gmap->jj[ii] == 190)
+            //     {
+            //         printf("%d  --  qseep=%f, sseep=%f\n",gmap->jj[ii],1e10*(*data)->qseepage[jj],(*data)->sseepage[kk][jj]);
+            //     }
+            // }
         }
         //
         // scalar limiter
@@ -402,7 +436,44 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                 }
             }
         }
-
+        // remove limiter when evap/rain exist
+        // if (gmap->istop[ii] == 1 & param->bctype_GW[5] == 2 & (*data)->Vg[ii] > 0)
+        // {
+        //     s_rainevap = (*data)->sm_subs[kk][ii] / (*data)->Vgflux[ii];
+        //     if (param->sim_shallowwater == 1)
+        //     {
+        //         if ((*data)->dept[gmap->top2d[ii]] <= 0)
+        //         {
+        //             // net evaporation
+        //             if ((*data)->qtop > 0)
+        //             {
+        //                 if (s_max[ii] < s_rainevap)
+        //                 {s_max[ii] = s_max[ii] * (*data)->Vgflux[ii] / ((*data)->Vgflux[ii] - (*data)->qtop*param->dt*param->dx*param->dy);}
+        //                 else
+        //                 {
+        //                     s_rainevap = s_rainevap * (*data)->Vgflux[ii] /  \
+        //                         ((*data)->Vgflux[ii] - (*data)->qtop*param->dt*param->dx*param->dy);
+        //                     if (s_rainevap > s_max[ii]) {s_max[ii] = s_rainevap;}
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     else if (param->bctype_GW[5] == 2)
+        //     {
+        //         // net evaporation
+        //         if ((*data)->qtop > 0)
+        //         {
+        //             if (s_max[ii] < s_rainevap)
+        //             {s_max[ii] = s_max[ii] * (*data)->Vgflux[ii] / ((*data)->Vgflux[ii] - (*data)->qtop*param->dt*param->dx*param->dy);}
+        //             else
+        //             {
+        //                 s_rainevap = s_rainevap * (*data)->Vgflux[ii] /  \
+        //                     ((*data)->Vgflux[ii] - (*data)->qtop*param->dt*param->dx*param->dy);
+        //                 if (s_rainevap > s_max[ii]) {s_max[ii] = s_rainevap;}
+        //             }
+        //         }
+        //     }
+        // }
     }
     for (ii = 0; ii < param->n3ci; ii++)
     {
@@ -414,6 +485,17 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         {(*data)->s_subs[kk][ii] = (*data)->sm_subs[kk][ii] / (*data)->Vgflux[ii];}
         else
         {(*data)->s_subs[kk][ii] = 0.0;}
+        // if (gmap->ii[ii]==1 & gmap->jj[ii]==10 & gmap->istop[ii] == 1 & kk == 1)
+        // {
+        //     printf("jj=%d   wc = %f ---> qz = %f, %f\n",gmap->jj[ii],(*data)->wc[ii],1e7*(*data)->qz[gmap->icjckM[ii]],1e7*(*data)->qz[ii]);
+        //     printf("depth, vgflux, scalar = %f, %f, %f\n",(*data)->dept[gmap->top2d[ii]]*1e4,(*data)->Vgflux[ii],(*data)->s_subs[kk][ii]);
+        //     printf("---\n");
+        // }
+        // apply scalar limiter
+        if ((*data)->s_subs[kk][ii] > s_max[ii] & s_max[ii] < s_lim_hi)
+        {(*data)->s_subs[kk][ii] = s_max[ii];}
+        else if ((*data)->s_subs[kk][ii] < s_min[ii] & s_min[ii] > 0)
+        {(*data)->s_subs[kk][ii] = s_min[ii];}
         // detect extreme values
         if ((*data)->s_subs[kk][ii] > s_lim_hi & gmap->actv[ii] == 1)
         {
@@ -428,6 +510,15 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         }
         if (gmap->actv[ii] == 0)    {(*data)->s_subs[kk][ii] = 0.0;}
 
+        // if (gmap->ii[ii] == 0 & gmap->jj[ii] == 20 & gmap->istop[ii] == 1)
+        // {
+        //     printf(" !!!!! wcn->wc : %f->%f,  hkM = %f, s = %f, Vflux = %f, qtop = %f, qbot = %f\n",(*data)->wcn[ii],(*data)->wc[ii],
+        //         (*data)->h[ii],
+        //         (*data)->s_subs[kk][ii],(*data)->Vgflux[ii],
+        //         1e7*(*data)->qz[gmap->icjckM[ii]],
+        //         1e7*(*data)->qz[ii]);
+        //     printf(" ---\n");
+        // }
     }
     // enforce boundary conditions
     for (ii = 0; ii < param->n3ci; ii++)
@@ -488,6 +579,17 @@ void update_rhovisc(Data **data, Map *gmap, Config *param, int irank)
     int ii;
     if (param->n_scalar > 0)
     {
+        // if (param->n_scalar == 1)
+        // {
+        //     for (ii = 0; ii < param->n3ct; ii++)
+        //     {
+        //         (*data)->r_rhon[ii] = (*data)->r_rho[ii];
+        //         (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00065;
+        //         (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.0015;
+        //     }
+        // }
+        // else
+        // {mpi_print("WARNING: Density correction does not work with multiple scalars!",irank);}
         for (ii = 0; ii < param->n3ct; ii++)
         {
             (*data)->r_rhon[ii] = (*data)->r_rho[ii];

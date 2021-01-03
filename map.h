@@ -14,6 +14,7 @@ typedef struct Map
     // subsurface maps
     int *iPjckc, *iMjckc, *icjPkc, *icjMkc, *icjckP, *icjckM, *kk;
     int *actv, *istop, *top2d, *kPin, *kPou, *kMin, *kMou;
+    int nactv;
     double *bot1d, *bot3d, *dz3d;
     double *zcntr, *zcntr_root, *zcntr_out;
 }Map;

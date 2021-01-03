@@ -23,14 +23,24 @@ void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank)
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int t_save, tday, ii, kk, tt = 1;
-    float t0, t1, tstep, last_save = 0.0, t_current = 0.0;
-    double max_CFLx, max_CFLy;
+    float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0;
+    double max_CFLx, max_CFLy, max_CFL, *max_CFL_root;
     // save initial condition
+    dt_max = param->dt;
     write_output(data, gmap, param, 0, 0, irank);
     // begin time stepping
     mpi_print(" >>> Beginning Time loop !", irank);
     while (t_current < param->Tend)
     {
+        // if (t_current < 30.0)
+        // {param->dt = 0.1;}
+        // else
+        // {
+        //     param->dt = param->dt * 1.1;
+        //     if (param->dt > dt_max)
+        //     {param->dt = dt_max;}
+        // }
+
         if (irank == 0) {t0 = clock();}
         (*data)->repeat[0] = 0;
         t_current += param->dt;
@@ -60,8 +70,21 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
 
         if (param->sim_shallowwater == 1)
         {shallowwater_velocity(data, smap, gmap, param, irank, nrank);}
+
+        // check CFL number
+
         max_CFLx = getMax((*data)->cflx, param->n2ci);
         max_CFLy = getMax((*data)->cfly, param->n2ci);
+        if (max_CFLx > max_CFLy)    {max_CFL = max_CFLx;}
+        else    {max_CFL = max_CFLy;}
+        if (param->use_mpi == 1)
+        {
+            max_CFL_root = malloc(param->mpi_ny*param->mpi_nx*sizeof(double));
+            mpi_gather_double(max_CFL_root, &max_CFL, 1, 0);
+            if (irank == 0) {max_CFL = getMax(max_CFL_root, param->mpi_ny*param->mpi_nx);   free(max_CFL_root);}
+            mpi_bcast_double(&max_CFL, 1, 0);
+        }
+
 
         // scalar transport
         if (param->n_scalar > 0 & param->sim_shallowwater == 1)
@@ -79,9 +102,11 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
             last_save = t_current;
             write_output(data, gmap, param, t_save, 0, irank);
         }
-        else if (max_CFLx > 1 | max_CFLy > 1)
+        if (max_CFL > 1.0)
         {
-            t_save = round(t_current / param->dt_out) * param->dt_out;
+
+            t_save = round(t_current);
+            printf("Save output at large CFL number!, tsave=%d\n",t_save);
             write_output(data, gmap, param, t_save, 0, irank);
         }
         // report time
@@ -94,6 +119,7 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         }
         tt += 1;
     }
+    // printf("  >> Qin = %f, Qout = %f\n",(*data)->qbc[0],(*data)->qbc[1]);
     print_end_info(data, smap, gmap, param, irank);
 }
 
@@ -101,6 +127,15 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
 void get_current_bc(Data **data, Config *param, double t_current)
 {
     int kk, ss, glob_ind;
+    // wind
+    (*data)->wind_dir[0] = 0.0;
+    (*data)->wind_spd[0] = 0.0;
+    if (param->sim_wind == 1)
+    {
+        // Only constant wind is implemented so far, ZhiLi20201222
+        (*data)->wind_dir[0] = param->init_winddir;
+        (*data)->wind_spd[0] = param->init_windspd;
+    }
     // tide
     if (param->n_tide > 0)
     {
@@ -193,12 +228,13 @@ void get_evaprain(Data **data, Map *gmap, Config *param)
             else if (param->evap_model == 1)
             {
                 // aerodynamic evap model
+                if (param->sim_wind == 0)   {velo = 2.0;}
+                else    {velo = (*data)->wind_spd[0];}
                 temp = 20.0;
-                velo = 1.0;
                 pres = 1e2;
                 humi = 0.003;
-                rhoa = 1.225;
-                rhow = 1000.0;  // need to use real water density, ZhiLi20201117
+                rhoa = param->rhoa;
+                rhow = param->rhow;
                 esat = 0.6108 * exp(17.27 * temp / (temp + 237.3));
                 qsat = 0.622 * esat / (pres + 0.376 * esat);
                 resi = 94.909 * pow(velo, -0.9036);

@@ -13,9 +13,9 @@ typedef struct Data
     double *bottom, *bottom_root, *offset, *bottomXP, *bottomYP;
     // surface domain
     int *reset_seepage;
-    double *uu, *uy, *vv, *vx, *eta, *etan, *dept, *deptx, *depty, *qseepage;
-    double *uu_root, *vv_root, *eta_root, *dept_root, *seep_root;
-    double *uu_out, *vv_out, *eta_out, *dept_out, *seep_out;
+    double *uu, *un, *uy, *vv, *vn, *vx, *eta, *etan, *dept, *deptx, *depty, *qseepage;
+    double *uu_root, *vv_root, *un_root, *vn_root, *eta_root, *dept_root, *seep_root;
+    double *uu_out, *vv_out, *un_out, *vn_out, *eta_out, *dept_out, *seep_out;
     double *Fu, *Fv, *Ex, *Ey, *Dx, *Dy, *CDx, *CDy, *wtfx, *wtfy, *cflx, *cfly, *cfl_active;
     double *Vs, *Vsn, *Vflux, *Vsx, *Vsy, *Asx, *Asy, *Asz, *Aszx, *Aszy;
     // subsurface domain
@@ -35,6 +35,7 @@ typedef struct Data
     double **tide, **t_tide, *current_tide;
     double *rain, *evap, *q_rain, *t_rain, *q_evap, *t_evap, *rain_sum;
     double **inflow, **t_inflow, *current_inflow;
+    double *wind_dir, *wind_spd;
     // scalar
     double **s_surf, **sm_surf, **s_surf_root, **s_surf_out, **s_surfkP;
     double **s_subs, **sm_subs, **s_subs_root, **s_subs_out;

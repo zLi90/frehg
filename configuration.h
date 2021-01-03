@@ -17,7 +17,7 @@ typedef struct Config
     // Bathymetry
     int bath_file;
     // parameters
-    double grav, viscx, viscy;
+    double grav, viscx, viscy, rhoa, rhow;
     double min_dept, wtfh, hD, manning;
     // Surface water
     int sim_shallowwater, eta_file, uv_file, difuwave;
@@ -26,6 +26,8 @@ typedef struct Config
     int n_tide, n_inflow, *tide_locX, *tide_locY;
     int *tide_dat_len, *inflow_dat_len;
     int *tide_file, *inflow_file, evap_file, rain_file, evap_model;
+    int sim_wind, wind_file;
+    double init_winddir, init_windspd, Cw, CwT, north_angle;
     // subgrid model
     int use_subgrid;
     // Groundwater

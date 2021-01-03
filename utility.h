@@ -24,6 +24,7 @@ void reorder_subsurf(double *out, double *root, Map *gmap, Config *param);
 void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int irank);
 void write_one_file(double *ally, char *filename, Config *param, int tt, int n);
 void append_to_file(char *filename, double val, Config *param);
+double interp_bc(double *tVec, double *value, double t_current, int n_dat);
 void mpi_print(char pstr[], int irank);
 double getMin(double *arr, int n);
 double getMax(double *arr, int n);

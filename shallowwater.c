@@ -28,6 +28,7 @@
 void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void momentum_source(Data **data, Map *smap, Config *param);
+void wind_source(Data **data, Map *smap, Config *param, int ii);
 void shallowwater_rhs(Data **data, Map *smap, Config *param);
 void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, int nrank);
 void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, Vector b);
@@ -76,7 +77,7 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
-    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[540],(*data)->eta[540]);
+    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[30],(*data)->eta[30]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -123,6 +124,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
     update_velocity(data, smap, param, irank);
     // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
+    // printf("Velocity NEW : velo = %f, %f\n",(*data)->uu[30],(*data)->vv[30]);
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
@@ -199,13 +201,24 @@ void momentum_source(Data **data, Map *smap, Config *param)
             (*data)->Dx[ii] = 1.0 / (0.5 * param->dt * (*data)->CDx[ii] * velx * facdx + 1.0);
             (*data)->Dy[ii] = 1.0 / (0.5 * param->dt * (*data)->CDy[ii] * vely * facdy + 1.0);
             // momentum source
-            (*data)->Ex[ii] = ((*data)->uu[ii] + param->dt * (difX - advX)) * (*data)->Dx[ii];
-            (*data)->Ey[ii] = ((*data)->vv[ii] + param->dt * (difY - advY)) * (*data)->Dy[ii];
-            // (*data)->Ex[ii] = (*data)->uu[ii] * (*data)->Dx[ii];
-            // (*data)->Ey[ii] = (*data)->vv[ii] * (*data)->Dy[ii];
+            (*data)->Ex[ii] = (*data)->uu[ii] + param->dt * (difX - advX);
+            (*data)->Ey[ii] = (*data)->vv[ii] + param->dt * (difY - advY);
+            // (*data)->Ex[ii] = (*data)->uu[ii];
+            // (*data)->Ey[ii] = (*data)->vv[ii];
+            if (param->sim_wind == 1)   {wind_source(data, smap, param, ii);}
+            (*data)->Ex[ii] = (*data)->Ex[ii] * (*data)->Dx[ii];
+            (*data)->Ey[ii] = (*data)->Ey[ii] * (*data)->Dy[ii];
+            //
+            // (*data)->Ex[ii] = (*data)->uu[ii];
+            // (*data)->Ey[ii] = (*data)->vv[ii];
         }
         else
         {
+            facdx = 0.0;
+            facdy = 0.0;
+            if ((*data)->Aszx[ii] > 0.0) {facdx = (*data)->Vsx[ii]/(*data)->Aszx[ii];}
+            if ((*data)->Aszy[ii] > 0.0) {facdy = (*data)->Vsy[ii]/(*data)->Aszy[ii];}
+
             gradp = 0.0;
             if ((*data)->eta[smap->iPjc[ii]] > (*data)->eta[ii] & (*data)->dept[smap->iPjc[ii]] > param->min_dept)
             {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
@@ -220,7 +233,7 @@ void momentum_source(Data **data, Map *smap, Config *param)
             if (gradp < param->min_dept / param->dx)
             {gradp = param->min_dept / param->dx;}
             // gradp = pow(pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0) + \
-                // pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0), 0.5);
+                pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0), 0.5);
 
             velx = pow(2.0 * param->grav * gradp * facdx / (*data)->CDx[ii], 0.5);
             vely = pow(2.0 * param->grav * gradp * facdy / (*data)->CDy[ii], 0.5);
@@ -242,6 +255,34 @@ void momentum_source(Data **data, Map *smap, Config *param)
             (*data)->Ey[ii] = 0.0;
         }
     }
+}
+
+void wind_source(Data **data, Map *smap, Config *param, int ii)
+{
+    double phi, omega, tau, pi = 3.1415926;
+    double tauXP, tauYP;
+    // phi is the wind direction from the north
+    phi = (*data)->wind_dir[0] + param->north_angle;
+    // omega is the wind direction in rad from positive x
+    omega = phi * pi / 180.0;
+    // tau is the total wind stress
+    tau = param->rhoa * param->Cw * \
+    ((*data)->wind_spd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega)) * \
+    ((*data)->wind_spd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega));
+    // apply the thin layer model when necessary
+    if ((*data)->deptx[ii] < param->hD)
+    {tauXP = tau * exp(param->CwT*((*data)->deptx[ii]-param->hD)/param->hD);}
+    else
+    {tauXP = tau;}
+    if ((*data)->depty[ii] < param->hD)
+    {tauYP = tau * exp(param->CwT*((*data)->depty[ii]-param->hD)/param->hD);}
+    else
+    {tauYP = tau;}
+    // add wind drag to the source term
+    if ((*data)->deptx[ii] > 0)
+    {(*data)->Ex[ii] += param->dt * tauXP * cos(omega) / ((*data)->deptx[ii] * param->rhow);}
+    if ((*data)->depty[ii] > 0)
+    {(*data)->Ey[ii] += param->dt * tauYP * sin(omega) / ((*data)->depty[ii] * param->rhow);}
 }
 
 
@@ -405,18 +446,20 @@ void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, 
 void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vector x, Config *param)
 {
     size_t ii;
+
+    V_SetAllCmp(&x, 0.0);
+    SetRTCAccuracy(0.00000001);
+    CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
+    for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
     // for (ii = 0; ii < param->n2ci; ii++)
     // {
-    //     if (smap->ii[ii] == 200 & smap->jj[ii] > 536 & smap->jj[ii] < 540)
+    //     // if (smap->ii[ii] == 100 & smap->jj[ii] > 176 & smap->jj[ii] < 179)
+    //     if ((*data)->dept[ii] > 0.0)
     //     {
     //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
     //             -(*data)->Sym[ii],-(*data)->Sxm[ii],(*data)->Sct[ii],-(*data)->Sxp[ii],-(*data)->Syp[ii],(*data)->Srhs[ii],(*data)->eta[ii]);
     //     }
     // }
-    V_SetAllCmp(&x, 0.0);
-    SetRTCAccuracy(0.00000001);
-    CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
-    for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
 }
 
 // >>>>> Enforce boundary condition for free surface
@@ -596,7 +639,13 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
     int ii, count;
     double effhx, effhy, coef, gradp, velx, vely, velo, epsu, epsv, facdx, facdy;
     coef = param->grav * param->dt;
-
+    // save velocity at previous time step
+    for (ii = 0; ii < param->n2ct; ii++)
+    {
+        (*data)->un[ii] = (*data)->uu[ii];
+        (*data)->vn[ii] = (*data)->vv[ii];
+    }
+    // update new velocity
     for (ii = 0; ii < param->n2ci; ii++)
     {
         (*data)->uu[ii] = 0.0;
@@ -613,13 +662,18 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
 
             (*data)->uu[ii] = ((*data)->Ex[ii] - coef * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii])) * (*data)->Dx[ii];
             (*data)->vv[ii] = ((*data)->Ey[ii] - coef * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii])) * (*data)->Dy[ii];
+
+            // (*data)->uu[ii] = ((*data)->Ex[ii] - coef * effhx * ((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]));
+            // (*data)->vv[ii] = ((*data)->Ey[ii] - coef * effhy * ((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]));
         }
         else
         {
             facdx = 0.0;
             facdy = 0.0;
-            if ((*data)->Vsx[ii] > 0.0) {facdx = (*data)->Aszx[ii]/(*data)->Vsx[ii];}
-            if ((*data)->Vsy[ii] > 0.0) {facdy = (*data)->Aszy[ii]/(*data)->Vsy[ii];}
+            // if ((*data)->Vsx[ii] > 0.0) {facdx = (*data)->Aszx[ii]/(*data)->Vsx[ii];}
+            // if ((*data)->Vsy[ii] > 0.0) {facdy = (*data)->Aszy[ii]/(*data)->Vsy[ii];}
+            if ((*data)->Aszx[ii] > 0.0) {facdx = (*data)->Vsx[ii]/(*data)->Aszx[ii];}
+            if ((*data)->Aszy[ii] > 0.0) {facdy = (*data)->Vsy[ii]/(*data)->Aszy[ii];}
             gradp = 0.0;
             if ((*data)->eta[smap->iPjc[ii]] > (*data)->eta[ii] & (*data)->dept[smap->iPjc[ii]] > 0.0)
             {gradp += pow(((*data)->eta[smap->iPjc[ii]] - (*data)->eta[ii]) / param->dx, 2.0);}
@@ -630,6 +684,13 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
             else if ((*data)->eta[smap->icjP[ii]] < (*data)->eta[ii] & (*data)->dept[ii] > 0.0)
             {gradp += pow(((*data)->eta[smap->icjP[ii]] - (*data)->eta[ii]) / param->dy, 2.0);}
             gradp = pow(gradp, 0.5);
+
+            // avoid gradp being too small
+            if (gradp < param->min_dept / param->dx)
+            {gradp = param->min_dept / param->dx;}
+
+            // velx = sqrt((*data)->uu[ii]*(*data)->uu[ii] + (*data)->vx[ii]*(*data)->vx[ii]);
+            // vely = sqrt((*data)->uy[ii]*(*data)->uy[ii] + (*data)->vv[ii]*(*data)->vv[ii]);
 
             velx = pow(2.0 * param->grav * gradp * facdx / (*data)->CDx[ii], 0.5);
             vely = pow(2.0 * param->grav * gradp * facdy / (*data)->CDy[ii], 0.5);
@@ -868,6 +929,8 @@ void update_subgrid_variable(Data **data, Map *smap, Config *param)
             else    {(*data)->Asz[ii] = 0.0;}
             (*data)->Asx[ii] = (*data)->deptx[ii] * param->dy;
             (*data)->Asy[ii] = (*data)->depty[ii] * param->dx;
+            if (param->nx == 1) {(*data)->Asx[ii] = 0.0;}
+            if (param->ny == 1) {(*data)->Asy[ii] = 0.0;}
         }
         for (ii = 0; ii < param->n2ci; ii++)
         {

@@ -176,8 +176,10 @@ void init_Data(Data **data, Config *param)
     n3_root = param->n3ci*param->mpi_nx*param->mpi_ny;
     // surface fields
     (*data)->uu = malloc(param->n2ct*sizeof(double));
+    (*data)->un = malloc(param->n2ct*sizeof(double));
     (*data)->uy = malloc(param->n2ct*sizeof(double));
     (*data)->vv = malloc(param->n2ct*sizeof(double));
+    (*data)->vn = malloc(param->n2ct*sizeof(double));
     (*data)->vx = malloc(param->n2ct*sizeof(double));
     (*data)->eta = malloc(param->n2ct*sizeof(double));
     (*data)->etan = malloc(param->n2ct*sizeof(double));
@@ -207,11 +209,15 @@ void init_Data(Data **data, Config *param)
 
     (*data)->uu_root = malloc(n2_root*sizeof(double));
     (*data)->vv_root = malloc(n2_root*sizeof(double));
+    (*data)->un_root = malloc(n2_root*sizeof(double));
+    (*data)->vn_root = malloc(n2_root*sizeof(double));
     (*data)->eta_root = malloc(n2_root*sizeof(double));
     (*data)->dept_root = malloc(n2_root*sizeof(double));
     (*data)->seep_root = malloc(n2_root*sizeof(double));
     (*data)->uu_out = malloc(n2_root*sizeof(double));
     (*data)->vv_out = malloc(n2_root*sizeof(double));
+    (*data)->un_out = malloc(n2_root*sizeof(double));
+    (*data)->vn_out = malloc(n2_root*sizeof(double));
     (*data)->eta_out = malloc(n2_root*sizeof(double));
     (*data)->dept_out = malloc(n2_root*sizeof(double));
     (*data)->seep_out = malloc(n2_root*sizeof(double));
@@ -221,6 +227,9 @@ void init_Data(Data **data, Config *param)
     (*data)->cflx = malloc(param->n2ci*sizeof(double));
     (*data)->cfly = malloc(param->n2ci*sizeof(double));
     (*data)->cfl_active = malloc(param->n2ci*sizeof(double));
+
+    (*data)->wind_spd = malloc(1*sizeof(double));
+    (*data)->wind_dir = malloc(1*sizeof(double));
 
     (*data)->rain = malloc(1*sizeof(double));
     (*data)->rain_sum = malloc(1*sizeof(double));
@@ -873,8 +882,8 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     // (*data)->wc[ii] = param->wcr +
                         // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
 
-                    // (*data)->wc[ii] = param->wcr + 0.01;
-                    (*data)->wc[ii] = 0.38;
+                    (*data)->wc[ii] = param->wcr + 0.01;
+                    // (*data)->wc[ii] = 0.38;
                     (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }

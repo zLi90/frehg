@@ -271,6 +271,7 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         }
 
     }
+
     // get the top cell index
     for (ii = 0; ii < param->n3ci; ii++)
     {
@@ -282,11 +283,13 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         }
     }
     // get z-coordinates of each subsurface cell
+    (*map)->nactv = 0;
     for (ii = 0; ii < param->n3ci; ii++)
     {
         // if ((*map)->actv[ii] == 0)  {(*map)->zcntr[ii] = 999;}
         // else    {(*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];}
         (*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];
+        if ((*map)->actv[ii] == 1)  {(*map)->nactv += 1;}
     }
 
     // calculate iP, iM, jP, jM, kP, kM maps
@@ -387,6 +390,10 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->actv[(*map)->jPou[ii]] = (*map)->actv[(*map)->jPin[ii]];
         (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
     }
+
+    // ZhiLi20201229!!!
+    for (ii = 0; ii < param->n3ci; ii++)
+    {(*map)->dz3d[ii] = param->dz;}
 
     // output the z-coordinates
     if (param->use_mpi == 1)

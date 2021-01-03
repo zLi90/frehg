@@ -19,6 +19,7 @@
 void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void momentum_source(Data **data, Map *smap, Config *param);
+void wind_source(Data **data, Map *smap, Config *param, int ii);
 void shallowwater_rhs(Data **data, Map *smap, Config *param);
 void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, int nrank);
 void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, Vector b);

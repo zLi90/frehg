@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
     Map *smap;
     Map *gmap;
     int irank = 0,  nrank = 1;
-
+    
     read_input(&param);
     if (param->use_mpi == 1)
     {

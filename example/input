@@ -5,8 +5,8 @@
 # --------------------------------------------------------------------------
 # >>>>> Paths <<<<<
 sim_id = MaxP1
-finput = input/
-foutput = output_P1PC1D-5_dx80/
+finput = ex0_input/
+foutput = ex0_output/K-5/swe/
 
 # >>>>> Domain <<<<<
 NX = 3
@@ -36,13 +36,25 @@ viscy = 0.0001
 min_dept = 0.000005
 manning = 0.01986
 wtfh = 0.000005
-hD = 0.1
+hD = 0.0001
+rhoa = 1.225
+rhow = 1000.0
+
+# >>>>> Wind model <<<<<
+sim_wind = 0
+wind_file = 0
+init_windspd = 2.0
+init_winddir = 270.0
+Cw = 0.0013
+CwT = 10.0
+north_angle = 0.0
 
 # --------------------------------------------------------------------------
 # -------------------------- Shallow water solver --------------------------
 # --------------------------------------------------------------------------
 # >>>>> Shallow water solver <<<<<
 sim_shallowwater = 1
+difuwave = 0
 #   >> Shallowwater IC <<
 init_eta = -0.15
 eta_file = 0
@@ -51,18 +63,23 @@ uv_file = 0
 bctype_SW = 0,0,0,1
 n_tide = 1
 tide_file = 0
+tide_dat_len = 1
 tide_locX = 0,3
 tide_locY = 9,9
 init_tide = -0.15
 
 evap_file = 0
+evap_model = 0
 q_evap = 0.0
 rain_file = 0
 q_rain = 0.0000055
 
-inflow_loc = 1,2,1,2
-n_inflow = 100
-cst_inflow = 0.0
+inflow_locX = 1,2
+inflow_locY = 1,2
+n_inflow = 0
+inflow_file = 0
+init_inflow = 1.0
+inflow_dat_len = 1
 
 # >>>>> Subgrid model <<<<<
 use_subgrid = 0
@@ -72,17 +89,17 @@ use_subgrid = 0
 # --------------------------------------------------------------------------
 # >>>>> Groundwater solver <<<<<
 sim_groundwater = 1
-use_full3d = 0
+use_full3d = 1
 dt_adjust = 0
 use_corrector = 1
-post_allocate = 0
+post_allocate = 1
 use_mvg = 0
 aev = -0.02
 dt_max = 2.0
 dt_min = 0.00001
 Co_max = 2
 Ksx = 0.000000
-Ksy = 0.0000
+Ksy = 0.0000011567
 Ksz = 0.0000011567
 Ss = 0.0005
 soil_a = 1.0
@@ -94,6 +111,8 @@ init_wc = 1.0
 init_h = 1.0
 init_wt_rel = 1.0
 init_wt_abs = -0.75
+h_file = 0
+wc_file = 0
 qtop = 0.0
 qbot = 0.0
 htop = 0.0
@@ -101,6 +120,29 @@ hbot = 0.0
 #   >> Groundwater BC <<
 bctype_GW = 0,0,0,0,0,2
 
+# --------------------------------------------------------------------------
+# ---------------------------  Scalar transport  ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Scalar IC <<<<<
+n_scalar = 0
+baroclinic = 0
+
+scalar_tide_file = 0
+scalar_tide_datlen = 1
+scalar_inflow_file = 0
+scalar_inflow_datlen = 1
+scalar_surf_file = 0
+scalar_subs_file = 0
+
+init_s_surf = 20.0
+init_s_subs = 20.0
+s_tide = 35.0
+s_inflow = 0.0
+difux = 0.00001
+difuy = 0.00001
+difuz = 0.00001
+disp_lon = 10.0
+disp_lat = 1.0
 
 
 

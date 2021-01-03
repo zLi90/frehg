@@ -53,6 +53,17 @@ void read_input(Config **param)
     (*param)->grav = read_one_input_double("grav", "input");
     (*param)->viscx = read_one_input_double("viscx", "input");
     (*param)->viscy = read_one_input_double("viscy", "input");
+    (*param)->rhoa = read_one_input_double("rhoa", "input");
+    (*param)->rhow = read_one_input_double("rhow", "input");
+
+    // Wind parameters
+    (*param)->sim_wind = (int) read_one_input_double("sim_wind", "input");
+    (*param)->wind_file = (int) read_one_input_double("wind_file", "input");
+    (*param)->init_windspd = read_one_input_double("init_windspd", "input");
+    (*param)->init_winddir = read_one_input_double("init_winddir", "input");
+    (*param)->Cw = read_one_input_double("Cw", "input");
+    (*param)->CwT = read_one_input_double("CwT", "input");
+    (*param)->north_angle = read_one_input_double("north_angle", "input");
 
     // Shallow water solver
     (*param)->sim_shallowwater = (int) read_one_input_double("sim_shallowwater", "input");
