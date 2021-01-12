@@ -267,60 +267,6 @@ void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank)
         }
     }
 
-    // ZhiLi20201107, 2D evap example
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     // if (gmap->istop[ii] == 1)
-    //     // {if (gmap->jj[ii] < 10 | gmap->jj[ii] >= 490)    {(*data)->Kz[gmap->icjckM[ii]] = 0.0;}}
-    //     if (gmap->istop[ii] == 1)
-    //     {(*data)->Kz[ii] = 0.0;}
-    // }
-
-    // ZhiLi20200821
-    // if (strcmp(param->sim_id, " MaxP1"))
-    // {
-    //     for (ii = 0; ii < param->n3ci; ii++)
-    //     {
-    //         if (gmap->jj[ii] >= 5)  {(*data)->Ky[ii] = 0.0;}
-    //         // avoid exfiltration
-    //         if (gmap->ii[ii] == 0 & gmap->istop[ii] == 1)
-    //         {(*data)->Kz[gmap->icjckM[ii]] = 0.0;}
-    //         if (gmap->ii[ii] == 2 & gmap->istop[ii] == 1)
-    //         {(*data)->Kz[gmap->icjckM[ii]] = 0.0;}
-    //     }
-    //     // {if (gmap->jj[ii] >= 79)  {(*data)->Ky[ii] = 0.0;}}
-    // }
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->jj[ii] >= 5)  {(*data)->Ky[ii] = 0.0;}
-    //     else if (gmap->jj[ii] == 0) {(*data)->Ky[ii] = 0.0;}
-    // }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] <= 1 | gmap->ii[ii] >= 13)
-    //     {
-    //         (*data)->Kx[ii] = 0.0;
-    //         (*data)->Kx[gmap->iMjckc[ii]] = 0.0;
-    //         (*data)->Ky[ii] = 0.0;
-    //         (*data)->Kz[ii] = 0.0;
-    //         (*data)->Kz[gmap->icjckM[ii]] = 0.0;
-    //     }
-    //     if (gmap->jj[ii] >= 19 | gmap->jj[ii] == 0)
-    //     {
-    //         (*data)->Kx[ii] = 0.0;
-    //         (*data)->Ky[ii] = 0.0;
-    //         (*data)->Kz[ii] = 0.0;
-    //     }
-    // }
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->jj[ii] == 89 & gmap->actv[ii] == 1 & gmap->ii[ii] == 1)
-    //     {
-    //         printf("Ky = %f,%f\n",(*data)->Ky[gmap->icjMkc[ii]],(*data)->Ky[ii]);
-    //     }
-    // }
-
 }
 
 // >>>>> Compute matrix coefficients <<<<<
@@ -499,9 +445,6 @@ void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, V
             row[7]=data->Grhs[im];
 
         }
-        // printf("(%d,%d,%d) - [%f, %f, %f, (%f), %f, %f, %f][h] = [%f]\n",gmap->ii[im],gmap->jj[im],gmap->kk[im],row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]);
-        // if (gmap->kk[im] == param->nz-1)    {printf("------------------------\n");}
-
     }
 }
 
@@ -555,19 +498,6 @@ void enforce_head_bc(Data **data, Map *gmap, Config *param)
             {if (gmap->istop[ii] == 1)  {(*data)->h[gmap->icjckM[ii]] = (*data)->h[ii];}}
         }
     }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 0 & gmap->jj[ii] == 10 & gmap->kk[ii] < 5)
-    //     {
-    //         printf(" -----(jj,kk)=(%d,%d)----- \n",gmap->jj[ii],gmap->kk[ii]);
-    //         // printf("    wc, hn, Km, Kp, actv = %f, %f, %f, %f, %d\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->Kz[gmap->icjckM[ii]],(*data)->Kz[ii],gmap->actv[ii]);
-    //         printf("ym, zm, ct, zp, yp, rhs = %f, %f, %f, %f, %f, %f\n",(*data)->Gym[ii],(*data)->Gzm[ii],(*data)->Gct[ii],(*data)->Gzp[ii],(*data)->Gyp[ii],(*data)->Grhs[ii]);
-    //         printf("    wc, hn->h = %f   %f->%f\n",(*data)->wc[ii],(*data)->hn[ii],(*data)->h[ii]);
-    //         if (gmap->kk[ii] == param->nz-1)
-    //         {printf(" --------------------------------------------------- \n");}
-    //     }
-    // }
 }
 
 // >>>>> calculate flux between cells <<<<<
@@ -617,25 +547,7 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                         vseep = fabs((*data)->qz[ii])*param->dt*(*data)->wcs[jj];
                         if (vseep > (*data)->dept[gmap->top2d[jj]])
                         {(*data)->qz[ii] = -(*data)->dept[gmap->top2d[jj]]/(param->dt*(*data)->wcs[jj]);}
-                        // check if infiltration > void volume in the first subsurface cell
-                        // else if (vseep/(*data)->wcs[jj] > gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj]))
-                        // {(*data)->qz[ii] = -gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj])/param->dt;}
                     }
-                    // if (irank == 0 & gmap->ii[jj] == 0 & gmap->jj[jj] == 20)
-                    // {
-                    //     printf("L1 : jj=%d, ii=%d, kk=%d, bot = %f,  h1, h2 = %f, %f   qz = %f, %f\n",jj,ii,gmap->kk[ii],(*data)->bottom[gmap->top2d[jj]]-(*data)->offset[0],
-                    //         (*data)->h[jj],(*data)->h[ii],(*data)->qz[jj]*8.64e7,(*data)->qz[ii]*8.64e7);
-                    // }
-                    // else if (irank == 3 & gmap->ii[jj] == 6 & gmap->jj[jj] == 23)
-                    // {
-                    //     printf("L2 : jj=%d, kk=%d, bot = %f, h1, h2 = %f, %f   qz = %f\n",jj,gmap->kk[ii],(*data)->bottom[gmap->top2d[jj]]-(*data)->offset[0],
-                    //         (*data)->h[jj],(*data)->h[ii],(*data)->qz[ii]*8.64e7);
-                    // }
-                    // else if (irank == 0 & jj == 44921)
-                    // {
-                    //     printf("(ii,jj,kk)=(%d,%d,%d)\n",gmap->ii[jj],gmap->jj[jj],gmap->kk[jj]);
-                    // }
-
                 }
                 else if (param->bctype_GW[5] == 2)
                 {
@@ -649,33 +561,8 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                     {
                         if ((*data)->wc[jj] > (*data)->wcr[jj] + (*data)->qtop[gmap->top2d[jj]] * param->dt / gmap->dz3d[jj])
                         {(*data)->qz[ii] += (*data)->qtop[gmap->top2d[jj]];}
-
-                        // if (gmap->ii[jj] == 1 & gmap->jj[ii] == 10)
-                        // {
-                        //     printf("jj=%d   wc = %f ---> qz = %f, %f\n",gmap->jj[jj],(*data)->wc[jj],1e7*(*data)->qz[ii],1e7*(*data)->qz[jj]);
-                        //     printf("-----\n");
-                        // }
                     }
-                    // if (irank == 0 & gmap->ii[jj] == 0 & gmap->jj[jj] == 20)
-                    // {
-                    //     printf("L2 : jj=%d, ii=%d, kk=%d, bot = %f,  h1, h2 = %f, %f   qz = %f, %f\n",jj,ii,gmap->kk[ii],(*data)->bottom[gmap->top2d[jj]]-(*data)->offset[0],
-                    //         (*data)->h[jj],(*data)->h[ii],(*data)->qz[jj]*8.64e7,(*data)->qz[ii]*8.64e7);
-                    // }
-                    // if (irank == 0 & gmap->ii[jj] == 45 & gmap->jj[jj] == 20) // 21951
-                    // if (irank == 0 & gmap->ii[jj] == 39 & gmap->jj[jj] == 21)
-                    // {
-                    //     printf("L1 : jj=%d, kk=%d, bot = %f,  h1, h2 = %f, %f   qz = %f\n",jj,gmap->kk[ii],(*data)->bottom[gmap->top2d[jj]]-(*data)->offset[0],
-                    //         (*data)->hn[jj],(*data)->hn[ii],(*data)->qz[ii]*8.64e7);
-                    // }
-                    // else if (irank == 3 & gmap->ii[jj] == 6 & gmap->jj[jj] == 23)
-                    // {
-                    //     printf("L2 : jj=%d, kk=%d, bot = %f, h1, h2 = %f, %f   qz = %f\n",jj,gmap->kk[ii],(*data)->bottom[gmap->top2d[jj]]-(*data)->offset[0],
-                    //         (*data)->h[jj],(*data)->h[ii],(*data)->qz[ii]*8.64e7);
-                    // }
-                    // else if (irank == 0 & jj == 44921)
-                    // {
-                    //     printf("(ii,jj,kk)=(%d,%d,%d)\n",gmap->ii[jj],gmap->jj[jj],gmap->kk[jj]);
-                    // }
+
                 }
                 else if (param->bctype_GW[5] == 3)
                 {(*data)->qz[ii] = -(*data)->Kz[ii]*(*data)->r_rho[ii];}
@@ -693,19 +580,6 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                 // if evaporation exists, evaporation does not contribute to seepage
                 if (param->bctype_GW[5] == 2 & (*data)->qtop[gmap->top2d[jj]] > 0.0 & (*data)->wc[jj] > (*data)->wcr[jj])
                 {(*data)->qseepage[gmap->top2d[jj]] -= (*data)->qtop[gmap->top2d[jj]];}
-
-
-
-                // if ((*data)->dept[gmap->top2d[ii]] <= 0 & (*data)->evap[0] > 0)
-                // {
-                //     // if (gmap->top2d[jj] == 3025)
-                //     // {
-                //     //     printf("qseep, qz, evap = %f, %f, %f\n",1e3*(*data)->qseepage[gmap->top2d[jj]],1e3*(*data)->qz[ii],1e3*(*data)->evap[0]);
-                //     // }
-                //     (*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii] - (*data)->evap[0]/(*data)->wcs[ii];
-                // }
-                // else
-                // {(*data)->qseepage[gmap->top2d[jj]] += (*data)->qz[ii];}
             }
             else
             {
@@ -757,23 +631,6 @@ void update_water_content(Data **data, Map *gmap, Config *param)
         dqy = param->dt * ((*data)->qy[ii] - (*data)->qy[gmap->icjMkc[ii]]) / param->dy;
         dqz = param->dt * ((*data)->qz[ii] - (*data)->qz[gmap->icjckM[ii]]) / gmap->dz3d[ii];
         (*data)->wc[ii] = ((*data)->wcn[ii] + dqx + dqy + dqz) / coeff;
-
-        if (gmap->ii[ii] == 0 & gmap->jj[ii] == 20 & gmap->istop[ii] == 1)
-        {
-            // printf(" !!!!! wcn->wc : %f->%f,  hkM = %f, qm = %f, qp = %f, qtop = %f, qbot = %f\n",(*data)->wcn[ii],(*data)->wc[ii],
-            //     (*data)->h[ii],
-            //     1e3*(*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
-            //     1e3*(*data)->qy[ii]*param->dt/param->dy,
-            //     1e3*(*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
-            //     1e3*(*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
-            // printf(" !!!!! wcn->wc : %f->%f,  hkM = %f, qm = %f, qp = %f, qtop = %f, qbot = %f\n",(*data)->wcn[ii],(*data)->wc[ii],
-            //     (*data)->h[ii],
-            //     8.64e7*(*data)->qy[gmap->icjMkc[ii]],
-            //     8.64e7*(*data)->qy[ii],
-            //     8.64e7*(*data)->qz[gmap->icjckM[ii]],
-            //     8.64e7*(*data)->qz[ii]);
-            // printf(" ---\n");
-        }
     }
 }
 
@@ -839,16 +696,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
             {
                 // check if a cell is adjacent to a saturated cell
                 adj_sat = check_adj_sat(*data, gmap, param, ii);
-                // if (gmap->ii[ii] == 1 & gmap->jj[ii] == 2 & gmap->kk[ii] == 8)
-                // {
-                //     printf(" !!adj=%d!! wcn->wc->wch : %f->%f->%f,  h->hwc : %f->%f,  qm = %f, qp = %f, qtop = %f, qbot = %f\n",
-                //         adj_sat,(*data)->wcn[ii],(*data)->wc[ii],(*data)->wch[ii],
-                //         (*data)->h[ii],(*data)->hwc[ii],
-                //         (*data)->qy[gmap->icjMkc[ii]]*param->dt/param->dy,
-                //         (*data)->qy[ii]*param->dt/param->dy,
-                //         (*data)->qz[gmap->icjckM[ii]]*param->dt/gmap->dz3d[ii],
-                //         (*data)->qz[ii]*param->dt/gmap->dz3d[ii]);
-                // }
                 // isolated unsaturated cell
                 if (adj_sat == 0)
                 {
@@ -897,18 +744,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
         }
 
     }
-
-    // for (ii = 0; ii < param->n3ci; ii++)
-    // {
-    //     if (gmap->ii[ii] == 45 & gmap->jj[ii] == 120 & gmap->istop[gmap->icjckM[ii]] == 1)
-    //     {
-    //         printf(" ----- ii=%d, Final wc = %f,   h = %f\n",ii,(*data)->wc[ii],(*data)->h[ii]);
-    //         printf(" -----        dz=%f, dept=%f, wckM=%f, hkM=%f, seepage=%f\n",gmap->dz3d[ii],(*data)->dept[gmap->top2d[ii]], \
-    //             (*data)->wc[gmap->icjckM[ii]],(*data)->h[gmap->icjckM[ii]],1e3*(*data)->qz[gmap->icjckM[gmap->icjckM[ii]]]);
-    //         printf(" ========== \n\n");
-    //     }
-    // }
-    // printf(" >> Total number of alloc type1=%d, type2=%d, type3=%d, type4=%d\n",alloc_type1,alloc_type2,alloc_type3,alloc_type4);
 }
 
 // >>>>> Check if a grid cell is adjacent to a saturated cell <<<<<
