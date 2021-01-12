@@ -18,6 +18,11 @@ typedef struct Data
     double *uu_out, *vv_out, *un_out, *vn_out, *eta_out, *dept_out, *seep_out;
     double *Fu, *Fv, *Ex, *Ey, *Dx, *Dy, *CDx, *CDy, *wtfx, *wtfy, *cflx, *cfly, *cfl_active;
     double *Vs, *Vsn, *Vflux, *Vsx, *Vsy, *Asx, *Asy, *Asz, *Aszx, *Aszy;
+    // subgrid settings
+    int *eta_ind;
+    double *layers_sub;
+    double *edges_root, *Vs_sub_root, *Asx_sub_root, *Asy_sub_root, *Asz_sub_root;
+    double **Vs_sub, **Asx_sub, **Asy_sub, **Asz_sub;
     // subsurface domain
     double *h, *hn, *hp, *hwc, *wc, *wcn, *wcp, *wch, *h_root, *wc_root, *dh6, *rsplit;
     double *vloss, *vloss_root, *room, *qtop, qbot, hbot, htop;
@@ -58,3 +63,4 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank);
 void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank);
 void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void restart_subsurface(double *ic_array, char *fname, Config *param, int irank);
+void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank);

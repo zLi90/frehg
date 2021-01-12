@@ -28,6 +28,7 @@ void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc
 void update_depth(Data **data, Map *smap, Config *param, int irank);
 void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void restart_subsurface(double *ic_array, char *fname, Config *param, int irank);
+void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank);
 
 // >>>>> Initialize FREHG <<<<<
 void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank)
@@ -53,6 +54,9 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     ic_surface(data, *smap, *gmap, *param, irank, nrank);
     mpi_print(" >>> Initial conditions constructed for surface domain !", irank);
     update_drag_coef(data, *param);
+    // subgrid model
+    if ((*param)->use_subgrid)
+    {init_subgrid(data, *smap, *param, irank, nrank);}
     // initial condition for groundwater solver
     ic_subsurface(data, *gmap, *param, irank, nrank);
     mpi_print(" >>> Initial conditions constructed for subsurface domain !", irank);
@@ -80,7 +84,7 @@ void init_domain(Config **param)
 void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 {
     int ii, jj, col, row, xrank, yrank;
-    char fullname[20];
+    char fullname[100];
     double z_min;
     *data = malloc(sizeof(Data));
     (*data)->bottom = malloc(param->n2ct*sizeof(double));
@@ -92,33 +96,28 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
     // assign internal bathymetry
     if (param->bath_file == 1)
     {
-        if (param->use_subgrid == 0)
-        {
-            // load the bathymetry file
-            strcpy(fullname, param->finput);
-            strcat(fullname, "bath");
-            load_data((*data)->bottom_root, fullname, param->N2CI);
-            // calculate bathymetry offset
-            z_min = getMin((*data)->bottom_root, param->N2CI);
-            if (z_min >= 0) {(*data)->offset[0] = 0;}
-            else    {(*data)->offset[0] = -z_min;}
-            // bathymetry for each rank
-            for (ii = 0; ii < param->n2ci; ii++)
-            {
-                xrank = irank % param->mpi_nx;
-                yrank = floor(irank/param->mpi_nx);
-                // jj = yrank * param->mpi_nx + xrank;
-                // (*data)->bottom[ii] = (*data)->bottom_root[jj*param->n2ci+ii] + (*data)->offset[0];
-                col = floor(ii / param->nx);
-                row = ii % param->nx;
-                jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
-                (*data)->bottom[ii] = (*data)->bottom_root[jj] + (*data)->offset[0];
-            }
-        }
-        else
-        {
-            mpi_print(" >>> ERROR: Load subgrid bathymetry is disabled!", irank);
-        }
+        strcpy(fullname, param->finput);
+        if (param->use_subgrid == 0)    {strcat(fullname, "bath");}
+        else    {strcat(fullname, "bath_sub");}
+        load_data((*data)->bottom_root, fullname, param->N2CI);
+        // calculate bathymetry offset
+        z_min = getMin((*data)->bottom_root, param->N2CI);
+        if (z_min >= 0) {(*data)->offset[0] = 0;}
+        else    {(*data)->offset[0] = -z_min;}
+        // bathymetry for each rank
+        root_to_rank((*data)->bottom_root, (*data)->bottom, param, irank, nrank, 0, (*data)->offset[0]);
+
+        // for (ii = 0; ii < param->n2ci; ii++)
+        // {
+        //     xrank = irank % param->mpi_nx;
+        //     yrank = floor(irank/param->mpi_nx);
+        //     // jj = yrank * param->mpi_nx + xrank;
+        //     // (*data)->bottom[ii] = (*data)->bottom_root[jj*param->n2ci+ii] + (*data)->offset[0];
+        //     col = floor(ii / param->nx);
+        //     row = ii % param->nx;
+        //     jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+        //     (*data)->bottom[ii] = (*data)->bottom_root[jj] + (*data)->offset[0];
+        // }
     }
     else
     {
@@ -131,6 +130,8 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
     int ii;
+    int jj, col, row, xrank, yrank;
+    char fullname[100];
     for (ii = 0; ii < param->nx; ii++)
     {
         (*data)->bottom[smap->jMou[ii]] = (*data)->bottom[smap->jMin[ii]];
@@ -143,15 +144,29 @@ void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
     }
     if (param->use_mpi == 1)    {mpi_exchange_surf((*data)->bottom, smap, 2, param, irank, nrank);}
     // bathymetry at cell edges
-    for (ii = 0; ii < param->n2ci; ii++)
+    if (param->use_subgrid == 0)
     {
-        (*data)->bottomXP[ii] = (*data)->bottom[ii];
-        if ((*data)->bottom[smap->iPjc[ii]] > (*data)->bottom[ii])
-        {(*data)->bottomXP[ii] = (*data)->bottom[smap->iPjc[ii]];}
-        (*data)->bottomYP[ii] = (*data)->bottom[ii];
-        if ((*data)->bottom[smap->icjP[ii]] > (*data)->bottom[ii])
-        {(*data)->bottomYP[ii] = (*data)->bottom[smap->icjP[ii]];}
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            (*data)->bottomXP[ii] = (*data)->bottom[ii];
+            if ((*data)->bottom[smap->iPjc[ii]] > (*data)->bottom[ii])
+            {(*data)->bottomXP[ii] = (*data)->bottom[smap->iPjc[ii]];}
+            (*data)->bottomYP[ii] = (*data)->bottom[ii];
+            if ((*data)->bottom[smap->icjP[ii]] > (*data)->bottom[ii])
+            {(*data)->bottomYP[ii] = (*data)->bottom[smap->icjP[ii]];}
+        }
     }
+    else
+    {
+        (*data)->edges_root = malloc(2*param->N2CI*sizeof(double));
+        strcpy(fullname, param->finput);
+        strcat(fullname, "bath_edges");
+        load_data((*data)->edges_root, fullname, 2*param->N2CI);
+        // edges for each rank
+        root_to_rank((*data)->edges_root, (*data)->bottomXP, param, irank, nrank, 0, (*data)->offset[0]);
+        root_to_rank((*data)->edges_root, (*data)->bottomYP, param, irank, nrank, param->N2CI, (*data)->offset[0]);
+    }
+    // edge bathymetry at boundaries
     for (ii = 0; ii < param->nx; ii++)
     {
         (*data)->bottomYP[smap->jPou[ii]] = (*data)->bottomYP[smap->jPin[ii]];
@@ -206,6 +221,35 @@ void init_Data(Data **data, Config *param)
     (*data)->Asy = malloc(param->n2ct*sizeof(double));
     (*data)->wtfx = malloc(param->n2ct*sizeof(double));
     (*data)->wtfy = malloc(param->n2ct*sizeof(double));
+
+    // subgrid variables
+    if (param->use_subgrid == 1)
+    {
+        // calculate pre-stored surface elevations
+        param->nlay_sub = ceil((param->eta_sub_max - param->eta_sub_min) / param->deta_sub);
+        (*data)->layers_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->layers_sub[0] = param->eta_sub_min + (*data)->offset[0];
+        for (ii = 1; ii < param->nlay_sub; ii++)
+        {(*data)->layers_sub[ii] = (*data)->layers_sub[ii-1] + param->deta_sub + (*data)->offset[0];}
+
+        (*data)->Vs_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Asx_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Asy_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Asz_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Vs_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Asx_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Asy_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Asz_sub = malloc(param->nlay_sub*sizeof(double));
+        for (ii = 0; ii < param->nlay_sub; ii++)
+        {
+            (*data)->Vs_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Asx_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Asy_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Asz_sub[ii] = malloc(param->n2ci*sizeof(double));
+        }
+        // index of layer for each surface cell
+        (*data)->eta_ind = malloc(param->n2ci*sizeof(double));
+    }
 
     (*data)->uu_root = malloc(n2_root*sizeof(double));
     (*data)->vv_root = malloc(n2_root*sizeof(double));
@@ -882,8 +926,8 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     // (*data)->wc[ii] = param->wcr +
                         // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
 
-                    (*data)->wc[ii] = param->wcr + 0.01;
-                    // (*data)->wc[ii] = 0.38;
+                    // (*data)->wc[ii] = param->wcr + 0.01;
+                    (*data)->wc[ii] = 0.38;
                     (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }
@@ -1028,5 +1072,135 @@ void restart_subsurface(double *ic_array, char *fname, Config *param, int irank)
             ic_array[count] = ic_root[jj*param->nz + kk];
             count += 1;
         }
+    }
+}
+
+
+// >>>>> Initialize subgrid variables
+void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)
+{
+    int ii, jj, kk, offind;
+    char fullname[100];
+    // load subgrid variables and assign to each rank
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Vs");
+    load_data((*data)->Vs_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Asx");
+    load_data((*data)->Asx_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Asy");
+    load_data((*data)->Asy_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Asz");
+    load_data((*data)->Asz_sub_root, fullname, param->N2CI*param->nlay_sub);
+    for (ii = 0; ii < param->nlay_sub; ii++)
+    {
+        offind = ii * param->N2CI;
+        root_to_rank((*data)->Vs_sub_root, (*data)->Vs_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Asx_sub_root, (*data)->Asx_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Asy_sub_root, (*data)->Asy_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Asz_sub_root, (*data)->Asz_sub[ii], param, irank, nrank, offind, 0.0);
+    }
+    // initialize index of eta
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        if ((*data)->eta[ii] < (*data)->layers_sub[0])
+        {(*data)->eta_ind[ii] = 0;}
+        else if ((*data)->eta[ii] >= (*data)->layers_sub[param->nlay_sub-1])
+        {(*data)->eta_ind[ii] = param->nlay_sub-1;}
+        else
+        {
+            for (jj = 0; jj < param->nlay_sub-1; jj++)
+            {
+                if ((*data)->eta[ii] >= (*data)->layers_sub[jj] & (*data)->eta[ii] < (*data)->layers_sub[jj+1])
+                {
+                    (*data)->eta_ind[ii] = jj;
+                    break;
+                }
+            }
+        }
+        // error checking
+        // if ((*data)->dept[ii] > 0)
+        // {
+        //     if ((*data)->eta_ind[ii] == 0 || (*data)->eta_ind[ii] == param->nlay_sub-1)
+        //     {
+        //         printf("WARNING: Surface elevation exceeds range of look-up table!\n");
+        //         printf("        ---> at rank %d, cell %d (1D), eta=%f\n", irank, ii, (*data)->eta[ii]);
+        //     }
+        // }
+    }
+    // initialize subgrid variable values
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        kk = (*data)->eta_ind[ii];
+        if (kk == 0 | kk == param->nlay_sub-1)
+        {
+            (*data)->Vs[ii] = (*data)->Vs_sub[kk][ii];
+            (*data)->Asx[ii] = (*data)->Asx_sub[kk][ii];
+            (*data)->Asy[ii] = (*data)->Asy_sub[kk][ii];
+            (*data)->Asz[ii] = (*data)->Asz_sub[kk][ii];
+        }
+        else
+        {
+            (*data)->Vs[ii] = interp_sub((*data)->layers_sub, (*data)->Vs_sub, (*data)->eta[ii], ii, kk);
+            (*data)->Asx[ii] = interp_sub((*data)->layers_sub, (*data)->Asx_sub, (*data)->eta[ii], ii, kk);
+            (*data)->Asy[ii] = interp_sub((*data)->layers_sub, (*data)->Asy_sub, (*data)->eta[ii], ii, kk);
+            (*data)->Asz[ii] = interp_sub((*data)->layers_sub, (*data)->Asz_sub, (*data)->eta[ii], ii, kk);
+        }
+    }
+    // subgrid variables along boundaries
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->Vs[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+        (*data)->Vs[smap->jPou[ii]] = (*data)->Vs[smap->jPin[ii]];
+        (*data)->Asx[smap->jMou[ii]] = (*data)->Asx[smap->jMin[ii]];
+        (*data)->Asx[smap->jPou[ii]] = (*data)->Asx[smap->jPin[ii]];
+        (*data)->Asy[smap->jMou[ii]] = (*data)->Asy[smap->jMin[ii]];
+        (*data)->Asy[smap->jPou[ii]] = (*data)->Asy[smap->jPin[ii]];
+        (*data)->Asz[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+        (*data)->Asz[smap->jPou[ii]] = (*data)->Asz[smap->jPin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->Vs[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+        (*data)->Vs[smap->iPou[ii]] = (*data)->Vs[smap->iPin[ii]];
+        (*data)->Asx[smap->iMou[ii]] = (*data)->Asx[smap->iMin[ii]];
+        (*data)->Asx[smap->iPou[ii]] = (*data)->Asx[smap->iPin[ii]];
+        (*data)->Asy[smap->iMou[ii]] = (*data)->Asy[smap->iMin[ii]];
+        (*data)->Asy[smap->iPou[ii]] = (*data)->Asy[smap->iPin[ii]];
+        (*data)->Asz[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+        (*data)->Asz[smap->iPou[ii]] = (*data)->Asz[smap->iPin[ii]];
+    }
+    // other subgrid variables
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        (*data)->Vsx[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->iPjc[ii]]);
+        (*data)->Vsy[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->icjP[ii]]);
+        (*data)->Aszx[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->iPjc[ii]]);
+        (*data)->Aszy[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->icjP[ii]]);
+    }
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->Vsy[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+        (*data)->Aszy[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->Vsx[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+        (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+    }
+    for (ii = 0; ii < param->n2ct; ii++)    {(*data)->Vsn[ii] = (*data)->Vs[ii];}
+    // send-recv subgrid variables
+    if (param->use_mpi == 1)
+    {
+        mpi_exchange_surf((*data)->Vs, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Vsx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Vsy, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asy, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Asz, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Aszx, smap, 2, param, irank, nrank);
+        mpi_exchange_surf((*data)->Aszy, smap, 2, param, irank, nrank);
     }
 }

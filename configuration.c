@@ -96,6 +96,10 @@ void read_input(Config **param)
 
     // subgrid model
     (*param)->use_subgrid = (int) read_one_input_double("use_subgrid", "input");
+    (*param)->r_sub = read_one_input_double("r_sub", "input");
+    (*param)->eta_sub_min = read_one_input_double("eta_sub_min", "input");
+    (*param)->eta_sub_max = read_one_input_double("eta_sub_max", "input");
+    (*param)->deta_sub = read_one_input_double("deta_sub", "input");
 
     // Groundwater solver
     (*param)->sim_groundwater = (int) read_one_input_double("sim_groundwater", "input");

@@ -914,10 +914,91 @@ void update_drag_coef(Data **data, Config *param)
 // >>>>> update subgrid variables
 void update_subgrid_variable(Data **data, Map *smap, Config *param)
 {
-    int ii;
+    int ii, jj, kk;
     if (param->use_subgrid == 1)
     {
-        mpi_print("WARNING: subgrid functions have not been implemented!",0);
+        for (ii = 0; ii < param->n2ct; ii++)    {(*data)->Vsn[ii] = (*data)->Vs[ii];}
+        // search index of surface elevation
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            // if eta is increased to the next interval
+            if ((*data)->eta[ii] > (*data)->layers_sub[(*data)->eta_ind[ii]+1])
+            {
+                for (jj = (*data)->eta_ind[ii]+1; jj < param->nlay_sub; jj++)
+                {
+                    if ((*data)->eta[ii] < (*data)->layers_sub[jj])
+                    {(*data)->eta_ind[ii] = jj-1;    break;}
+                    (*data)->eta_ind[ii] = param->nlay_sub - 1;
+                }
+            }
+            // if eta is decrease to the interval below
+            else if ((*data)->eta[ii] < (*data)->layers_sub[(*data)->eta_ind[ii]])
+            {
+                for (jj = (*data)->eta_ind[ii]; jj > 0; jj--)
+                {
+                    if ((*data)->eta[ii] > (*data)->layers_sub[jj])
+                    {(*data)->eta_ind[ii] = jj;     break;}
+                    (*data)->eta_ind[ii] = 0;
+                }
+            }
+            // interpolate to update subgrid variables
+            kk = (*data)->eta_ind[ii];
+            if (kk == 0 | kk == param->nlay_sub-1)
+            {
+                (*data)->Vs[ii] = (*data)->Vs_sub[kk][ii];
+                (*data)->Asx[ii] = (*data)->Asx_sub[kk][ii];
+                (*data)->Asy[ii] = (*data)->Asy_sub[kk][ii];
+                (*data)->Asz[ii] = (*data)->Asz_sub[kk][ii];
+            }
+            else
+            {
+                (*data)->Vs[ii] = interp_sub((*data)->layers_sub, (*data)->Vs_sub, (*data)->eta[ii], ii, kk);
+                (*data)->Asx[ii] = interp_sub((*data)->layers_sub, (*data)->Asx_sub, (*data)->eta[ii], ii, kk);
+                (*data)->Asy[ii] = interp_sub((*data)->layers_sub, (*data)->Asy_sub, (*data)->eta[ii], ii, kk);
+                (*data)->Asz[ii] = interp_sub((*data)->layers_sub, (*data)->Asz_sub, (*data)->eta[ii], ii, kk);
+            }
+        }
+        // subgrid variables along boundaries
+        for (ii = 0; ii < param->nx; ii++)
+        {
+            (*data)->Vs[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+            (*data)->Vs[smap->jPou[ii]] = (*data)->Vs[smap->jPin[ii]];
+            (*data)->Asx[smap->jMou[ii]] = (*data)->Asx[smap->jMin[ii]];
+            (*data)->Asx[smap->jPou[ii]] = (*data)->Asx[smap->jPin[ii]];
+            (*data)->Asy[smap->jMou[ii]] = (*data)->Asy[smap->jMin[ii]];
+            (*data)->Asy[smap->jPou[ii]] = (*data)->Asy[smap->jPin[ii]];
+            (*data)->Asz[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+            (*data)->Asz[smap->jPou[ii]] = (*data)->Asz[smap->jPin[ii]];
+        }
+        for (ii = 0; ii < param->ny; ii++)
+        {
+            (*data)->Vs[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+            (*data)->Vs[smap->iPou[ii]] = (*data)->Vs[smap->iPin[ii]];
+            (*data)->Asx[smap->iMou[ii]] = (*data)->Asx[smap->iMin[ii]];
+            (*data)->Asx[smap->iPou[ii]] = (*data)->Asx[smap->iPin[ii]];
+            (*data)->Asy[smap->iMou[ii]] = (*data)->Asy[smap->iMin[ii]];
+            (*data)->Asy[smap->iPou[ii]] = (*data)->Asy[smap->iPin[ii]];
+            (*data)->Asz[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+            (*data)->Asz[smap->iPou[ii]] = (*data)->Asz[smap->iPin[ii]];
+        }
+        // other subgrid variables
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            (*data)->Vsx[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->iPjc[ii]]);
+            (*data)->Vsy[ii] = 0.5 * ((*data)->Vs[ii] + (*data)->Vs[smap->icjP[ii]]);
+            (*data)->Aszx[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->iPjc[ii]]);
+            (*data)->Aszy[ii] = 0.5 * ((*data)->Asz[ii] + (*data)->Asz[smap->icjP[ii]]);
+        }
+        for (ii = 0; ii < param->nx; ii++)
+        {
+            (*data)->Vsy[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+            (*data)->Aszy[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+        }
+        for (ii = 0; ii < param->ny; ii++)
+        {
+            (*data)->Vsx[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+            (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+        }
     }
     else
     {

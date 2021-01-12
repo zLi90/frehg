@@ -26,7 +26,9 @@ void reorder_subsurf(double *out, double *root, Map *gmap, Config *param);
 void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int irank);
 void write_one_file(double *ally, char *filename, Config *param, int tt, int n);
 void append_to_file(char *filename, double val, Config *param);
+void root_to_rank(double *root_array, double *rank_array, Config *param, int irank, int nrank, int offind, double offset);
 double interp_bc(double *tVec, double *value, double t_current, int n_dat);
+double interp_sub(double *layers, double **subvar, double eta, int ii, int kk);
 void mpi_print(char pstr[], int irank);
 double getMin(double *arr, int n);
 double getMax(double *arr, int n);
@@ -558,6 +560,31 @@ double interp_bc(double *tVec, double *value, double t_current, int n_dat)
             (t_current-tVec[ind-1]) / (tVec[ind]-tVec[ind-1]);
     }
     return out_val;
+}
+
+// >>>>> Interpolate subgrid variables between pre-stored eta
+double interp_sub(double *layers, double **subvar, double eta, int ii, int kk)
+{
+    double out_val, slope;
+    slope = (subvar[kk+1][ii] - subvar[kk][ii]) / (layers[kk+1] - layers[kk]);
+    out_val = subvar[kk][ii] + slope * (eta - layers[kk]);
+    return out_val;
+}
+
+// >>>>> Assign values from root to other ranks
+void root_to_rank(double *root_array, double *rank_array, Config *param, \
+        int irank, int nrank, int offind, double offval)
+{
+    int ii, jj, xrank, yrank, col, row;
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        xrank = irank % param->mpi_nx;
+        yrank = floor(irank/param->mpi_nx);
+        col = floor(ii / param->nx);
+        row = ii % param->nx;
+        jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
+        rank_array[ii] = root_array[jj+offind] + offval;
+    }
 }
 
 // >>>>> Print at the root rank <<<<<
