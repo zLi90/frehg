@@ -27,29 +27,24 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
     double max_CFLx, max_CFLy, max_CFL, *max_CFL_root;
     // save initial condition
     dt_max = param->dt;
+    mpi_print(" >>> Writing initial conditions into output files !", irank);
     write_output(data, gmap, param, 0, 0, irank);
     // begin time stepping
     mpi_print(" >>> Beginning Time loop !", irank);
     while (t_current < param->Tend)
     {
-        // if (t_current < 30.0)
-        // {param->dt = 0.1;}
-        // else
-        // {
-        //     param->dt = param->dt * 1.1;
-        //     if (param->dt > dt_max)
-        //     {param->dt = dt_max;}
-        // }
-
         if (irank == 0) {t0 = clock();}
         (*data)->repeat[0] = 0;
         t_current += param->dt;
         // get boundary condition
+        // get_tide(data, param, t_current);
         get_current_bc(data, param, t_current);
         get_evaprain(data, gmap, param);
         // execute solvers
         if (param->sim_shallowwater == 1)
-        {solve_shallowwater(data, smap, gmap, param, irank, nrank);}
+        {
+            solve_shallowwater(data, smap, gmap, param, irank, nrank);
+        }
 
         if (param->sim_groundwater == 1)
         {
@@ -84,7 +79,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
             if (irank == 0) {max_CFL = getMax(max_CFL_root, param->mpi_ny*param->mpi_nx);   free(max_CFL_root);}
             mpi_bcast_double(&max_CFL, 1, 0);
         }
-
 
         // scalar transport
         if (param->n_scalar > 0 & param->sim_shallowwater == 1)
@@ -228,11 +222,11 @@ void get_evaprain(Data **data, Map *gmap, Config *param)
             else if (param->evap_model == 1)
             {
                 // aerodynamic evap model
-                if (param->sim_wind == 0)   {velo = 2.0;}
+                if (param->sim_wind == 0)   {velo = 1.0;}
                 else    {velo = (*data)->wind_spd[0];}
                 temp = 20.0;
-                pres = 1e2;
-                humi = 0.003;
+                pres = 101.325;
+                humi = 0.0029;
                 rhoa = param->rhoa;
                 rhow = param->rhow;
                 esat = 0.6108 * exp(17.27 * temp / (temp + 237.3));
@@ -262,6 +256,13 @@ void get_evaprain(Data **data, Map *gmap, Config *param)
             // interpolate evaporation data
         }
         for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii];}
+
+        // for Geng2015
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            if (gmap->istop[ii] == 1)
+            {if (gmap->top2d[ii] < 10 | gmap->top2d[ii] >= 190)    {(*data)->qtop[gmap->top2d[ii]] = 0.0;}}
+        }
 
     }
 }

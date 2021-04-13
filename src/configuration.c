@@ -96,6 +96,10 @@ void read_input(Config **param)
 
     // subgrid model
     (*param)->use_subgrid = (int) read_one_input_double("use_subgrid", "input");
+    (*param)->r_sub = read_one_input_double("r_sub", "input");
+    (*param)->eta_sub_min = read_one_input_double("eta_sub_min", "input");
+    (*param)->eta_sub_max = read_one_input_double("eta_sub_max", "input");
+    (*param)->deta_sub = read_one_input_double("deta_sub", "input");
 
     // Groundwater solver
     (*param)->sim_groundwater = (int) read_one_input_double("sim_groundwater", "input");
@@ -125,6 +129,8 @@ void read_input(Config **param)
     (*param)->wc_file = (int) read_one_input_double("wc_file", "input");
     (*param)->qtop = read_one_input_double("qtop", "input");
     (*param)->qbot = read_one_input_double("qbot", "input");
+    (*param)->qyp = read_one_input_double("qyp", "input");
+    (*param)->qym = read_one_input_double("qym", "input");
     (*param)->htop = read_one_input_double("htop", "input");
     (*param)->hbot = read_one_input_double("hbot", "input");
     // groundwater boundary condition
@@ -146,6 +152,8 @@ void read_input(Config **param)
     (*param)->init_s_subs = read_one_input_array_double("init_s_subs", "input", (*param)->n_scalar);
     (*param)->s_tide = read_one_input_array_double("s_tide", "input", (*param)->n_scalar*(*param)->n_tide);
     (*param)->s_inflow = read_one_input_array_double("s_inflow", "input", (*param)->n_scalar*(*param)->n_tide);
+    (*param)->s_yp = read_one_input_array_double("s_yp", "input", (*param)->n_scalar);
+    (*param)->s_ym = read_one_input_array_double("s_ym", "input", (*param)->n_scalar);
     (*param)->difux = read_one_input_double("difux", "input");
     (*param)->difuy = read_one_input_double("difuy", "input");
     (*param)->difuz = read_one_input_double("difuz", "input");

@@ -21,8 +21,9 @@
 
 void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
-void groundwater_mat_coeff(Data **data, Map *gmap, Config *param);
-void groundwater_rhs(Data **data, Map *gmap, Config *param);
+void baroclinic_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
+void groundwater_mat_coeff(Data **data, Map *gmap, Config *param, int irank);
+void groundwater_rhs(Data **data, Map *gmap, Config *param, int irank);
 void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, Vector b);
 void solve_groundwater_system(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param);
 void enforce_head_bc(Data **data, Map *gmap, Config *param);

@@ -34,5 +34,7 @@ void waterfall_velocity(Data **data, Map *smap, Config *param);
 void enforce_velo_bc(Data **data, Map *smap, Config *param, int irank, int nrank);
 void interp_velocity(Data **data, Map *smap, Config *param);
 void update_drag_coef(Data **data, Config *param);
-void update_subgrid_variable(Data **data, Map *smap, Config *param);
+void update_subgrid_variable(Data **data, Map *smap, Config *param, int irank, int nrank);
+void subgrid_index(Data **data, Map *smap, Config *param);
+void subgrid_interp_and_combine(Data **data, Map *smap, Config *param, int irank, int nrank);
 void volume_by_flux(Data **data, Map *smap, Config *param);

@@ -215,201 +215,204 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
     param->n3ci = param->n2ci * param->nz;
     param->n3ct = param->n2ct * (param->nz+2);
 
-    // calculate 3D dz, actv map and cntr map
-    (*map)->cntr = malloc(param->n3ci*sizeof(int));
-    (*map)->zcntr = malloc(param->n3ci*sizeof(double));
-    (*map)->zcntr_root = malloc(param->N3CI*sizeof(double));
-    (*map)->zcntr_out = malloc(param->N3CI*sizeof(double));
-    (*map)->ii = malloc(param->n3ci*sizeof(int));
-    (*map)->jj = malloc(param->n3ci*sizeof(int));
-    (*map)->kk = malloc(param->n3ci*sizeof(int));
-    (*map)->actv = malloc(param->n3ct*sizeof(int));
-    (*map)->bot3d = malloc(param->n3ci*sizeof(double));
-    (*map)->dz3d = malloc(param->n3ci*sizeof(double));
-    (*map)->istop = malloc(param->n3ci*sizeof(int));
-    (*map)->top2d = malloc(param->n3ci*sizeof(int));
+    if (param->sim_groundwater == 1)
+    {
+        // calculate 3D dz, actv map and cntr map
+        (*map)->cntr = malloc(param->n3ci*sizeof(int));
+        (*map)->zcntr = malloc(param->n3ci*sizeof(double));
+        (*map)->zcntr_root = malloc(param->N3CI*sizeof(double));
+        (*map)->zcntr_out = malloc(param->N3CI*sizeof(double));
+        (*map)->ii = malloc(param->n3ci*sizeof(int));
+        (*map)->jj = malloc(param->n3ci*sizeof(int));
+        (*map)->kk = malloc(param->n3ci*sizeof(int));
+        (*map)->actv = malloc(param->n3ct*sizeof(int));
+        (*map)->bot3d = malloc(param->n3ci*sizeof(double));
+        (*map)->dz3d = malloc(param->n3ct*sizeof(double));
+        (*map)->istop = malloc(param->n3ci*sizeof(int));
+        (*map)->top2d = malloc(param->n3ci*sizeof(int));
 
-    for (ii = 0; ii < param->n3ct; ii++)    {(*map)->actv[ii] = 0;}
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        (*map)->cntr[ii] = ii;
-        (*map)->top2d[ii] = floor(ii / param->nz);
-        (*map)->ii[ii] = smap->ii[(*map)->top2d[ii]];
-        (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
-        (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
-        (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
-        if ((*map)->kk[ii] == 0)    {(*map)->dz3d[ii] = param->dz;}
-        else    {(*map)->dz3d[ii] = (*map)->bot3d[ii-1] - (*map)->bot3d[ii];}
-        (*map)->istop[ii] = 0;
-    }
-    // adjust dz with respect to bathymetry
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        if ((*map)->bot3d[ii] >= bath[(*map)->top2d[ii]] - 1e-5)
+        for (ii = 0; ii < param->n3ct; ii++)    {(*map)->actv[ii] = 0;}
+        for (ii = 0; ii < param->n3ci; ii++)
         {
-            (*map)->actv[ii] = 0;
-            if ((*map)->bot3d[ii] - bath[(*map)->top2d[ii]] < param->dz)
-            {
-                (*map)->bot3d[ii] = bath[(*map)->top2d[ii]];
-            }
+            (*map)->cntr[ii] = ii;
+            (*map)->top2d[ii] = floor(ii / param->nz);
+            (*map)->ii[ii] = smap->ii[(*map)->top2d[ii]];
+            (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
+            (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
+            (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
+            if ((*map)->kk[ii] == 0)    {(*map)->dz3d[ii] = param->dz;}
+            else    {(*map)->dz3d[ii] = (*map)->bot3d[ii-1] - (*map)->bot3d[ii];}
+            (*map)->istop[ii] = 0;
         }
-        else
+        // adjust dz with respect to bathymetry
+        for (ii = 0; ii < param->n3ci; ii++)
         {
-            (*map)->actv[ii] = 1;
-            // (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
-
-            if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
+            if ((*map)->bot3d[ii] >= bath[(*map)->top2d[ii]] - 1e-5)
             {
-                if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.25*param->dz)
-                {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
-                else
+                (*map)->actv[ii] = 0;
+                if ((*map)->bot3d[ii] - bath[(*map)->top2d[ii]] < param->dz)
                 {
-                    (*map)->actv[ii] = 0;
-                    (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                    (*map)->bot3d[ii] = bath[(*map)->top2d[ii]];
                 }
             }
+            else
+            {
+                (*map)->actv[ii] = 1;
+                // (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
+
+                if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
+                {
+                    if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.25*param->dz)
+                    {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
+                    else
+                    {
+                        (*map)->actv[ii] = 0;
+                        (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                    }
+                }
+            }
+
         }
 
-    }
+        // get the top cell index
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            if (ii == 0)    {if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {(*map)->istop[ii] = 1;}}
+            else
+            {
+                if ((*map)->actv[ii] == 1 & (*map)->actv[ii-1] == 0)    {(*map)->istop[ii] = 1;}
+                else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
+            }
+        }
+        // get z-coordinates of each subsurface cell
+        (*map)->nactv = 0;
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            // if ((*map)->actv[ii] == 0)  {(*map)->zcntr[ii] = 999;}
+            // else    {(*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];}
+            (*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];
+            if ((*map)->actv[ii] == 1)  {(*map)->nactv += 1;}
+        }
 
-    // get the top cell index
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        if (ii == 0)    {if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {(*map)->istop[ii] = 1;}}
-        else
+        // calculate iP, iM, jP, jM, kP, kM maps
+        (*map)->iPjckc = malloc(param->n3ci*sizeof(int));
+        (*map)->iMjckc = malloc(param->n3ci*sizeof(int));
+        (*map)->icjPkc = malloc(param->n3ci*sizeof(int));
+        (*map)->icjMkc = malloc(param->n3ci*sizeof(int));
+        (*map)->icjckP = malloc(param->n3ci*sizeof(int));
+        (*map)->icjckM = malloc(param->n3ci*sizeof(int));
+        for (ii = 0; ii < param->n3ci; ii++)
         {
-            if ((*map)->actv[ii] == 1 & (*map)->actv[ii-1] == 0)    {(*map)->istop[ii] = 1;}
-            else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
+            jj = (*map)->top2d[ii];
+            // iP and iM maps
+            if ((*map)->ii[ii] == param->nx-1)
+            {(*map)->iPjckc[ii] = param->n3ci + 2*param->nx*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
+            else
+            {(*map)->iPjckc[ii] = (*map)->cntr[ii] + param->nz;}
+            if ((*map)->ii[ii] == 0)
+            {(*map)->iMjckc[ii] = param->n3ci + 2*param->nx*param->nz + param->ny*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
+            else
+            {(*map)->iMjckc[ii] = (*map)->cntr[ii] - param->nz;}
+            // jP and jM maps
+            if ((*map)->jj[ii] == param->ny-1)
+            {(*map)->icjPkc[ii] = param->n3ci + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
+            else
+            {(*map)->icjPkc[ii] = (*map)->cntr[ii] + param->nx*param->nz;}
+            if ((*map)->jj[ii] == 0)
+            {(*map)->icjMkc[ii] = param->n3ci + param->nx*param->nz + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
+            else
+            {(*map)->icjMkc[ii] = (*map)->cntr[ii] - param->nx*param->nz;}
+            // kP and kM maps
+            if ((*map)->kk[ii] == param->nz-1)
+            {(*map)->icjckP[ii] = param->n2ct*param->nz + (*map)->top2d[ii];}
+            else
+            {(*map)->icjckP[ii] = (*map)->cntr[ii] + 1;}
+            if ((*map)->kk[ii] == 0)
+            {(*map)->icjckM[ii] = param->n2ct*(param->nz+1) + (*map)->top2d[ii];}
+            else
+            {(*map)->icjckM[ii] = (*map)->cntr[ii] - 1;}
         }
-    }
-    // get z-coordinates of each subsurface cell
-    (*map)->nactv = 0;
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        // if ((*map)->actv[ii] == 0)  {(*map)->zcntr[ii] = 999;}
-        // else    {(*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];}
-        (*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];
-        if ((*map)->actv[ii] == 1)  {(*map)->nactv += 1;}
-    }
 
-    // calculate iP, iM, jP, jM, kP, kM maps
-    (*map)->iPjckc = malloc(param->n3ci*sizeof(int));
-    (*map)->iMjckc = malloc(param->n3ci*sizeof(int));
-    (*map)->icjPkc = malloc(param->n3ci*sizeof(int));
-    (*map)->icjMkc = malloc(param->n3ci*sizeof(int));
-    (*map)->icjckP = malloc(param->n3ci*sizeof(int));
-    (*map)->icjckM = malloc(param->n3ci*sizeof(int));
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        jj = (*map)->top2d[ii];
-        // iP and iM maps
-        if ((*map)->ii[ii] == param->nx-1)
-        {(*map)->iPjckc[ii] = param->n3ci + 2*param->nx*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
-        else
-        {(*map)->iPjckc[ii] = (*map)->cntr[ii] + param->nz;}
-        if ((*map)->ii[ii] == 0)
-        {(*map)->iMjckc[ii] = param->n3ci + 2*param->nx*param->nz + param->ny*param->nz + (*map)->jj[ii]*param->nz + (*map)->kk[ii];}
-        else
-        {(*map)->iMjckc[ii] = (*map)->cntr[ii] - param->nz;}
-        // jP and jM maps
-        if ((*map)->jj[ii] == param->ny-1)
-        {(*map)->icjPkc[ii] = param->n3ci + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
-        else
-        {(*map)->icjPkc[ii] = (*map)->cntr[ii] + param->nx*param->nz;}
-        if ((*map)->jj[ii] == 0)
-        {(*map)->icjMkc[ii] = param->n3ci + param->nx*param->nz + (*map)->ii[ii]*param->nz + (*map)->kk[ii];}
-        else
-        {(*map)->icjMkc[ii] = (*map)->cntr[ii] - param->nx*param->nz;}
-        // kP and kM maps
-        if ((*map)->kk[ii] == param->nz-1)
-        {(*map)->icjckP[ii] = param->n2ct*param->nz + (*map)->top2d[ii];}
-        else
-        {(*map)->icjckP[ii] = (*map)->cntr[ii] + 1;}
-        if ((*map)->kk[ii] == 0)
-        {(*map)->icjckM[ii] = param->n2ct*(param->nz+1) + (*map)->top2d[ii];}
-        else
-        {(*map)->icjckM[ii] = (*map)->cntr[ii] - 1;}
-    }
+        // calculate boundary maps
+        (*map)->iPin = malloc(param->ny*param->nz*sizeof(int));
+        (*map)->iPou = malloc(param->ny*param->nz*sizeof(int));
+        (*map)->iMin = malloc(param->ny*param->nz*sizeof(int));
+        (*map)->iMou = malloc(param->ny*param->nz*sizeof(int));
+        (*map)->jPin = malloc(param->nx*param->nz*sizeof(int));
+        (*map)->jPou = malloc(param->nx*param->nz*sizeof(int));
+        (*map)->jMin = malloc(param->nx*param->nz*sizeof(int));
+        (*map)->jMou = malloc(param->nx*param->nz*sizeof(int));
+        (*map)->kPin = malloc(param->nx*param->ny*sizeof(int));
+        (*map)->kPou = malloc(param->nx*param->ny*sizeof(int));
+        (*map)->kMin = malloc(param->nx*param->ny*sizeof(int));
+        (*map)->kMou = malloc(param->nx*param->ny*sizeof(int));
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            if ((*map)->ii[ii] == param->nx-1)
+            {
+                (*map)->iPin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
+                (*map)->iPou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iPjckc[ii];
+            }
+            if ((*map)->ii[ii] == 0)
+            {
+                (*map)->iMin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
+                (*map)->iMou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iMjckc[ii];
+            }
+            if ((*map)->jj[ii] == param->ny-1)
+            {
+                (*map)->jPin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
+                (*map)->jPou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjPkc[ii];
+            }
+            if ((*map)->jj[ii] == 0)
+            {
+                (*map)->jMin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
+                (*map)->jMou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjMkc[ii];
+            }
+            if ((*map)->kk[ii] == param->nz-1)
+            {
+                (*map)->kPin[(*map)->top2d[ii]] = ii;
+                (*map)->kPou[(*map)->top2d[ii]] = (*map)->icjckP[ii];
+            }
+            if ((*map)->kk[ii] == 0)
+            {
+                (*map)->kMin[(*map)->top2d[ii]] = ii;
+                (*map)->kMou[(*map)->top2d[ii]] = (*map)->icjckM[ii];
+            }
+        }
 
-    // calculate boundary maps
-    (*map)->iPin = malloc(param->ny*param->nz*sizeof(int));
-    (*map)->iPou = malloc(param->ny*param->nz*sizeof(int));
-    (*map)->iMin = malloc(param->ny*param->nz*sizeof(int));
-    (*map)->iMou = malloc(param->ny*param->nz*sizeof(int));
-    (*map)->jPin = malloc(param->nx*param->nz*sizeof(int));
-    (*map)->jPou = malloc(param->nx*param->nz*sizeof(int));
-    (*map)->jMin = malloc(param->nx*param->nz*sizeof(int));
-    (*map)->jMou = malloc(param->nx*param->nz*sizeof(int));
-    (*map)->kPin = malloc(param->nx*param->ny*sizeof(int));
-    (*map)->kPou = malloc(param->nx*param->ny*sizeof(int));
-    (*map)->kMin = malloc(param->nx*param->ny*sizeof(int));
-    (*map)->kMou = malloc(param->nx*param->ny*sizeof(int));
-    for (ii = 0; ii < param->n3ci; ii++)
-    {
-        if ((*map)->ii[ii] == param->nx-1)
+        // boundary actv
+        for (ii = 0; ii < param->ny*param->nz; ii++)
         {
-            (*map)->iPin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
-            (*map)->iPou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iPjckc[ii];
+            (*map)->actv[(*map)->iPou[ii]] = (*map)->actv[(*map)->iPin[ii]];
+            (*map)->actv[(*map)->iMou[ii]] = (*map)->actv[(*map)->iMin[ii]];
         }
-        if ((*map)->ii[ii] == 0)
+        // yp and ym boundaries
+        for (ii = 0; ii < param->nx*param->nz; ii++)
         {
-            (*map)->iMin[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = ii;
-            (*map)->iMou[(*map)->jj[ii]*param->nz+(*map)->kk[ii]] = (*map)->iMjckc[ii];
+            (*map)->actv[(*map)->jPou[ii]] = (*map)->actv[(*map)->jPin[ii]];
+            (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
         }
-        if ((*map)->jj[ii] == param->ny-1)
-        {
-            (*map)->jPin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
-            (*map)->jPou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjPkc[ii];
-        }
-        if ((*map)->jj[ii] == 0)
-        {
-            (*map)->jMin[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = ii;
-            (*map)->jMou[(*map)->ii[ii]*param->nz+(*map)->kk[ii]] = (*map)->icjMkc[ii];
-        }
-        if ((*map)->kk[ii] == param->nz-1)
-        {
-            (*map)->kPin[(*map)->top2d[ii]] = ii;
-            (*map)->kPou[(*map)->top2d[ii]] = (*map)->icjckP[ii];
-        }
-        if ((*map)->kk[ii] == 0)
-        {
-            (*map)->kMin[(*map)->top2d[ii]] = ii;
-            (*map)->kMou[(*map)->top2d[ii]] = (*map)->icjckM[ii];
-        }
-    }
 
-    // boundary actv
-    for (ii = 0; ii < param->ny*param->nz; ii++)
-    {
-        (*map)->actv[(*map)->iPou[ii]] = (*map)->actv[(*map)->iPin[ii]];
-        (*map)->actv[(*map)->iMou[ii]] = (*map)->actv[(*map)->iMin[ii]];
-    }
-    // yp and ym boundaries
-    for (ii = 0; ii < param->nx*param->nz; ii++)
-    {
-        (*map)->actv[(*map)->jPou[ii]] = (*map)->actv[(*map)->jPin[ii]];
-        (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
-    }
+        // ZhiLi20201229!!!
+        for (ii = 0; ii < param->n3ct; ii++)
+        {(*map)->dz3d[ii] = param->dz;}
 
-    // ZhiLi20201229!!!
-    for (ii = 0; ii < param->n3ci; ii++)
-    {(*map)->dz3d[ii] = param->dz;}
-
-    // output the z-coordinates
-    if (param->use_mpi == 1)
-    {
-        int root = 0;
-        mpi_gather_double((*map)->zcntr_root, (*map)->zcntr, param->n3ci, root);
-        if (irank == root)
+        // output the z-coordinates
+        if (param->use_mpi == 1)
         {
-            reorder_subsurf((*map)->zcntr_out, (*map)->zcntr_root, *map, param);
+            int root = 0;
+            mpi_gather_double((*map)->zcntr_root, (*map)->zcntr, param->n3ci, root);
+            if (irank == root)
+            {
+                reorder_subsurf((*map)->zcntr_out, (*map)->zcntr_root, *map, param);
+                write_one_file((*map)->zcntr_out, "zcell", param, 0, param->N3CI);
+            }
+        }
+        else
+        {
+            for (ii = 0; ii < param->n3ci; ii++)    {(*map)->zcntr_out[ii] = (*map)->zcntr[ii];}
             write_one_file((*map)->zcntr_out, "zcell", param, 0, param->N3CI);
         }
-    }
-    else
-    {
-        for (ii = 0; ii < param->n3ci; ii++)    {(*map)->zcntr_out[ii] = (*map)->zcntr[ii];}
-        write_one_file((*map)->zcntr_out, "zcell", param, 0, param->N3CI);
     }
 
     free(bath_min);

@@ -28,6 +28,7 @@ void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc
 void update_depth(Data **data, Map *smap, Config *param, int irank);
 void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void restart_subsurface(double *ic_array, char *fname, Config *param, int irank);
+void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank);
 
 // >>>>> Initialize FREHG <<<<<
 void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nrank)
@@ -53,12 +54,18 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     ic_surface(data, *smap, *gmap, *param, irank, nrank);
     mpi_print(" >>> Initial conditions constructed for surface domain !", irank);
     update_drag_coef(data, *param);
+    // subgrid model
+    // if ((*param)->use_subgrid)
+    // {init_subgrid(data, *smap, *param, irank, nrank);}
     // initial condition for groundwater solver
-    ic_subsurface(data, *gmap, *param, irank, nrank);
-    mpi_print(" >>> Initial conditions constructed for subsurface domain !", irank);
-    // boundary condition for groundwater solver
-    enforce_head_bc(data, *gmap, *param);
-    mpi_print(" >>> Initial conditions applied !", irank);
+    if ((*param)->sim_groundwater == 1)
+    {
+        ic_subsurface(data, *gmap, *param, irank, nrank);
+        mpi_print(" >>> Initial conditions constructed for subsurface domain !", irank);
+        // boundary condition for groundwater solver
+        enforce_head_bc(data, *gmap, *param);
+        mpi_print(" >>> Initial conditions applied !", irank);
+    }
 
     mpi_print(" >>> Initialization completed !", irank);
 
@@ -80,7 +87,7 @@ void init_domain(Config **param)
 void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 {
     int ii, jj, col, row, xrank, yrank;
-    char fullname[20];
+    char fullname[100];
     double z_min;
     *data = malloc(sizeof(Data));
     (*data)->bottom = malloc(param->n2ct*sizeof(double));
@@ -92,33 +99,16 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
     // assign internal bathymetry
     if (param->bath_file == 1)
     {
-        if (param->use_subgrid == 0)
-        {
-            // load the bathymetry file
-            strcpy(fullname, param->finput);
-            strcat(fullname, "bath");
-            load_data((*data)->bottom_root, fullname, param->N2CI);
-            // calculate bathymetry offset
-            z_min = getMin((*data)->bottom_root, param->N2CI);
-            if (z_min >= 0) {(*data)->offset[0] = 0;}
-            else    {(*data)->offset[0] = -z_min;}
-            // bathymetry for each rank
-            for (ii = 0; ii < param->n2ci; ii++)
-            {
-                xrank = irank % param->mpi_nx;
-                yrank = floor(irank/param->mpi_nx);
-                // jj = yrank * param->mpi_nx + xrank;
-                // (*data)->bottom[ii] = (*data)->bottom_root[jj*param->n2ci+ii] + (*data)->offset[0];
-                col = floor(ii / param->nx);
-                row = ii % param->nx;
-                jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
-                (*data)->bottom[ii] = (*data)->bottom_root[jj] + (*data)->offset[0];
-            }
-        }
-        else
-        {
-            mpi_print(" >>> ERROR: Load subgrid bathymetry is disabled!", irank);
-        }
+        strcpy(fullname, param->finput);
+        if (param->use_subgrid == 0)    {strcat(fullname, "bath");}
+        else    {strcat(fullname, "bath_sub");}
+        load_data((*data)->bottom_root, fullname, param->N2CI);
+        // calculate bathymetry offset
+        z_min = getMin((*data)->bottom_root, param->N2CI);
+        if (z_min >= 0) {(*data)->offset[0] = 0;}
+        else    {(*data)->offset[0] = -z_min;}
+        // bathymetry for each rank
+        root_to_rank((*data)->bottom_root, (*data)->bottom, param, irank, nrank, 0, (*data)->offset[0]);
     }
     else
     {
@@ -131,6 +121,8 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
     int ii;
+    int jj, col, row, xrank, yrank;
+    char fullname[100];
     for (ii = 0; ii < param->nx; ii++)
     {
         (*data)->bottom[smap->jMou[ii]] = (*data)->bottom[smap->jMin[ii]];
@@ -143,15 +135,29 @@ void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
     }
     if (param->use_mpi == 1)    {mpi_exchange_surf((*data)->bottom, smap, 2, param, irank, nrank);}
     // bathymetry at cell edges
-    for (ii = 0; ii < param->n2ci; ii++)
+    if (param->use_subgrid == 0)
     {
-        (*data)->bottomXP[ii] = (*data)->bottom[ii];
-        if ((*data)->bottom[smap->iPjc[ii]] > (*data)->bottom[ii])
-        {(*data)->bottomXP[ii] = (*data)->bottom[smap->iPjc[ii]];}
-        (*data)->bottomYP[ii] = (*data)->bottom[ii];
-        if ((*data)->bottom[smap->icjP[ii]] > (*data)->bottom[ii])
-        {(*data)->bottomYP[ii] = (*data)->bottom[smap->icjP[ii]];}
+        for (ii = 0; ii < param->n2ci; ii++)
+        {
+            (*data)->bottomXP[ii] = (*data)->bottom[ii];
+            if ((*data)->bottom[smap->iPjc[ii]] > (*data)->bottom[ii])
+            {(*data)->bottomXP[ii] = (*data)->bottom[smap->iPjc[ii]];}
+            (*data)->bottomYP[ii] = (*data)->bottom[ii];
+            if ((*data)->bottom[smap->icjP[ii]] > (*data)->bottom[ii])
+            {(*data)->bottomYP[ii] = (*data)->bottom[smap->icjP[ii]];}
+        }
     }
+    else
+    {
+        (*data)->edges_root = malloc(2*param->N2CI*sizeof(double));
+        strcpy(fullname, param->finput);
+        strcat(fullname, "bath_edges");
+        load_data((*data)->edges_root, fullname, 2*param->N2CI);
+        // edges for each rank
+        root_to_rank((*data)->edges_root, (*data)->bottomXP, param, irank, nrank, 0, (*data)->offset[0]);
+        root_to_rank((*data)->edges_root, (*data)->bottomYP, param, irank, nrank, param->N2CI, (*data)->offset[0]);
+    }
+    // edge bathymetry at boundaries
     for (ii = 0; ii < param->nx; ii++)
     {
         (*data)->bottomYP[smap->jPou[ii]] = (*data)->bottomYP[smap->jPin[ii]];
@@ -207,6 +213,59 @@ void init_Data(Data **data, Config *param)
     (*data)->wtfx = malloc(param->n2ct*sizeof(double));
     (*data)->wtfy = malloc(param->n2ct*sizeof(double));
 
+    // subgrid variables
+    if (param->use_subgrid == 1)
+    {
+        (*data)->Vxp = malloc(param->n2ct*sizeof(double));
+        (*data)->Vxm = malloc(param->n2ct*sizeof(double));
+        (*data)->Vyp = malloc(param->n2ct*sizeof(double));
+        (*data)->Vym = malloc(param->n2ct*sizeof(double));
+        (*data)->Axp = malloc(param->n2ct*sizeof(double));
+        (*data)->Axm = malloc(param->n2ct*sizeof(double));
+        (*data)->Ayp = malloc(param->n2ct*sizeof(double));
+        (*data)->Aym = malloc(param->n2ct*sizeof(double));
+
+        // calculate pre-stored surface elevations
+        param->nlay_sub = ceil((param->eta_sub_max - param->eta_sub_min) / param->deta_sub);
+        (*data)->layers_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->layers_sub[0] = param->eta_sub_min + (*data)->offset[0];
+        for (ii = 1; ii < param->nlay_sub; ii++)
+        {(*data)->layers_sub[ii] = (*data)->layers_sub[ii-1] + param->deta_sub;}
+
+        (*data)->Vxp_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Vxm_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Vyp_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Vym_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Axp_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Axm_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Ayp_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Aym_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Asz_sub_root = malloc(n2_root*param->nlay_sub*sizeof(double));
+        (*data)->Vxp_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Vyp_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Vxm_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Vym_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Axp_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Ayp_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Axm_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Aym_sub = malloc(param->nlay_sub*sizeof(double));
+        (*data)->Asz_sub = malloc(param->nlay_sub*sizeof(double));
+        for (ii = 0; ii < param->nlay_sub; ii++)
+        {
+            (*data)->Vxp_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Vxm_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Vyp_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Vym_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Axp_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Axm_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Ayp_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Aym_sub[ii] = malloc(param->n2ci*sizeof(double));
+            (*data)->Asz_sub[ii] = malloc(param->n2ci*sizeof(double));
+        }
+        // index of layer for each surface cell
+        (*data)->eta_ind = malloc(param->n2ci*sizeof(double));
+    }
+
     (*data)->uu_root = malloc(n2_root*sizeof(double));
     (*data)->vv_root = malloc(n2_root*sizeof(double));
     (*data)->un_root = malloc(n2_root*sizeof(double));
@@ -238,53 +297,63 @@ void init_Data(Data **data, Config *param)
 
     // subsurface fields
     (*data)->repeat = malloc(1*sizeof(int));
-    (*data)->h = malloc(param->n3ct*sizeof(double));
-    (*data)->hp = malloc(param->n3ct*sizeof(double));
-    (*data)->hn = malloc(param->n3ct*sizeof(double));
-    (*data)->hwc = malloc(param->n3ct*sizeof(double));
-    (*data)->wc = malloc(param->n3ct*sizeof(double));
-    (*data)->wcn = malloc(param->n3ct*sizeof(double));
-    (*data)->wcp = malloc(param->n3ct*sizeof(double));
-    (*data)->wch = malloc(param->n3ct*sizeof(double));
-    (*data)->ch = malloc(param->n3ct*sizeof(double));
-    (*data)->wcs = malloc(param->n3ct*sizeof(double));
-    (*data)->wcr = malloc(param->n3ct*sizeof(double));
-    (*data)->vga = malloc(param->n3ct*sizeof(double));
-    (*data)->vgn = malloc(param->n3ct*sizeof(double));
-    (*data)->Ksx = malloc(param->n3ct*sizeof(double));
-    (*data)->Ksy = malloc(param->n3ct*sizeof(double));
-    (*data)->Ksz = malloc(param->n3ct*sizeof(double));
-    (*data)->Kx = malloc(param->n3ct*sizeof(double));
-    (*data)->Ky = malloc(param->n3ct*sizeof(double));
-    (*data)->Kz = malloc(param->n3ct*sizeof(double));
-    (*data)->r_rho = malloc(param->n3ct*sizeof(double));
-    (*data)->r_rhon = malloc(param->n3ct*sizeof(double));
-    (*data)->r_visc = malloc(param->n3ct*sizeof(double));
-    (*data)->qx = malloc(param->n3ct*sizeof(double));
-    (*data)->qy = malloc(param->n3ct*sizeof(double));
-    (*data)->qz = malloc(param->n3ct*sizeof(double));
-    (*data)->Vg = malloc(param->n3ct*sizeof(double));
-    (*data)->Vgn = malloc(param->n3ct*sizeof(double));
-    (*data)->Vgflux = malloc(param->n3ci*sizeof(double));
-    (*data)->room = malloc(param->n3ct*sizeof(double));
-    (*data)->vloss = malloc(param->n3ci*sizeof(double));
-    (*data)->h_root = malloc(n3_root*sizeof(double));
-    (*data)->wc_root = malloc(n3_root*sizeof(double));
-    (*data)->vloss_root = malloc(n3_root*sizeof(double));
-    (*data)->qx_root = malloc(n3_root*sizeof(double));
-    (*data)->qy_root = malloc(n3_root*sizeof(double));
-    (*data)->qz_root = malloc(n3_root*sizeof(double));
-    (*data)->h_out = malloc(n3_root*sizeof(double));
-    (*data)->wc_out = malloc(n3_root*sizeof(double));
-    (*data)->qx_out = malloc(n3_root*sizeof(double));
-    (*data)->qy_out = malloc(n3_root*sizeof(double));
-    (*data)->qz_out = malloc(n3_root*sizeof(double));
-    (*data)->dh6 = malloc(6*sizeof(double));
-    (*data)->rsplit = malloc(6*sizeof(double));
-    (*data)->qbc = malloc(2*sizeof(double));
-    (*data)->qbc[0] = 0.0;
-    (*data)->qbc[1] = 0.0;
-    (*data)->qtop = malloc(param->n2ci*sizeof(double));
+    if (param->sim_groundwater == 1)
+    {
+        (*data)->h = malloc(param->n3ct*sizeof(double));
+        (*data)->hp = malloc(param->n3ct*sizeof(double));
+        (*data)->hn = malloc(param->n3ct*sizeof(double));
+        (*data)->hwc = malloc(param->n3ct*sizeof(double));
+        (*data)->wc = malloc(param->n3ct*sizeof(double));
+        (*data)->wcn = malloc(param->n3ct*sizeof(double));
+        (*data)->wcp = malloc(param->n3ct*sizeof(double));
+        (*data)->wch = malloc(param->n3ct*sizeof(double));
+        (*data)->ch = malloc(param->n3ct*sizeof(double));
+        (*data)->wcs = malloc(param->n3ct*sizeof(double));
+        (*data)->wcr = malloc(param->n3ct*sizeof(double));
+        (*data)->vga = malloc(param->n3ct*sizeof(double));
+        (*data)->vgn = malloc(param->n3ct*sizeof(double));
+        (*data)->Ksx = malloc(param->n3ct*sizeof(double));
+        (*data)->Ksy = malloc(param->n3ct*sizeof(double));
+        (*data)->Ksz = malloc(param->n3ct*sizeof(double));
+        (*data)->Kx = malloc(param->n3ct*sizeof(double));
+        (*data)->Ky = malloc(param->n3ct*sizeof(double));
+        (*data)->Kz = malloc(param->n3ct*sizeof(double));
+        (*data)->r_rho = malloc(param->n3ct*sizeof(double));
+        (*data)->r_rhoxp = malloc(param->n3ct*sizeof(double));
+        (*data)->r_rhoyp = malloc(param->n3ct*sizeof(double));
+        (*data)->r_rhozp = malloc(param->n3ct*sizeof(double));
+        (*data)->r_rhon = malloc(param->n3ct*sizeof(double));
+        (*data)->r_visc = malloc(param->n3ct*sizeof(double));
+        (*data)->r_viscxp = malloc(param->n3ct*sizeof(double));
+        (*data)->r_viscyp = malloc(param->n3ct*sizeof(double));
+        (*data)->r_visczp = malloc(param->n3ct*sizeof(double));
+        (*data)->qx = malloc(param->n3ct*sizeof(double));
+        (*data)->qy = malloc(param->n3ct*sizeof(double));
+        (*data)->qz = malloc(param->n3ct*sizeof(double));
+        (*data)->Vg = malloc(param->n3ct*sizeof(double));
+        (*data)->Vgn = malloc(param->n3ct*sizeof(double));
+        (*data)->Vgflux = malloc(param->n3ci*sizeof(double));
+        (*data)->room = malloc(param->n3ct*sizeof(double));
+        (*data)->vloss = malloc(param->n3ci*sizeof(double));
+        (*data)->h_root = malloc(n3_root*sizeof(double));
+        (*data)->wc_root = malloc(n3_root*sizeof(double));
+        (*data)->vloss_root = malloc(n3_root*sizeof(double));
+        (*data)->qx_root = malloc(n3_root*sizeof(double));
+        (*data)->qy_root = malloc(n3_root*sizeof(double));
+        (*data)->qz_root = malloc(n3_root*sizeof(double));
+        (*data)->h_out = malloc(n3_root*sizeof(double));
+        (*data)->wc_out = malloc(n3_root*sizeof(double));
+        (*data)->qx_out = malloc(n3_root*sizeof(double));
+        (*data)->qy_out = malloc(n3_root*sizeof(double));
+        (*data)->qz_out = malloc(n3_root*sizeof(double));
+        (*data)->dh6 = malloc(6*sizeof(double));
+        (*data)->rsplit = malloc(6*sizeof(double));
+        (*data)->qbc = malloc(2*sizeof(double));
+        (*data)->qbc[0] = 0.0;
+        (*data)->qbc[1] = 0.0;
+        (*data)->qtop = malloc(param->n2ci*sizeof(double));
+    }
+
 
     // scalar
     if (param->n_scalar > 0)
@@ -352,7 +421,13 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
     if (param->eta_file == 0)
     {
         for (ii = 0; ii < param->N2CI; ii++)
-        {(*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];}
+        {
+            (*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];
+            // if (smap->jj[ii] < 85)
+            // {
+            //     (*data)->eta_root[ii] = 0.4 + (*data)->offset[0];
+            // }
+        }
     }
     else
     {
@@ -419,6 +494,7 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
         if (param->n_scalar > 0)
         {for (kk = 0; kk < param->n_scalar; kk++)    {(*data)->s_surf[kk][ii] = (*data)->s_surf_root[kk][jj];}}
     }
+
     // enforce boundary conditions
     if (param->use_mpi == 1 & param->sim_shallowwater == 1)
     {
@@ -443,7 +519,7 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
     // calculate subgrid areas
     if (param->use_subgrid == 1)
     {
-        mpi_print("WARNING: subgrid functions have not been implemented!",0);
+        init_subgrid(data, smap, param, irank, nrank);
     }
     else
     {
@@ -474,6 +550,7 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
             (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
         }
     }
+
     if (param->use_mpi == 1 & param->sim_shallowwater == 1)
     {
         mpi_exchange_surf((*data)->Vs, smap, 2, param, irank, nrank);
@@ -509,6 +586,8 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
         (*data)->Ex[ii] = 0.0;  (*data)->Ey[ii] = 0.0;
         (*data)->Fv[ii] = 0.0;  (*data)->Fv[ii] = 0.0;
         (*data)->uy[ii] = 0.0;  (*data)->vx[ii] = 0.0;
+        (*data)->un[ii] = (*data)->uu[ii];
+        (*data)->vn[ii] = (*data)->vv[ii];
         (*data)->wtfx[ii] = 0;  (*data)->wtfy[ii] = 0;
     }
 }
@@ -815,16 +894,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         (*data)->Ksx[ii] = param->Ksx;
         (*data)->Ksy[ii] = param->Ksy;
         (*data)->Ksz[ii] = param->Ksz;
-        // Maina heterogeneous problem
-        // if (gmap->kk[ii] > 600 & gmap->kk[ii] < 1200)
-        // if (gmap->kk[ii] > 120 & gmap->kk[ii] < 240)
-        // {
-        //     (*data)->vga[ii] = 1.04;
-        //     (*data)->vgn[ii] = 1.395;
-        //     (*data)->wcr[ii] = 0.106;
-        //     (*data)->wcs[ii] = 0.469;
-        //     (*data)->Ksz[ii] = 0.00000151;
-        // }
     }
     // if init_wc within [wcr, wcs], initialize domain with init_wc
     if (param->init_wc >= param->wcr & param->init_wc <= param->wcs)
@@ -838,7 +907,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             {
                 if (gmap->actv[ii] == 1)
                 {
-                    h_incre = (*data)->bottom[gmap->top2d[ii]] - gmap->bot3d[ii] + 0.5*gmap->dz3d[ii];
+                    h_incre = (*data)->bottom[gmap->top2d[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->h[ii] = (*data)->dept[gmap->top2d[ii]] + h_incre;
                 }
                 else
@@ -849,11 +918,15 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         else
         {
             for (ii = 0; ii < param->n3ct; ii++)
-            {(*data)->h[ii] = compute_hwc(*data, ii, param);}
+            {
+                (*data)->h[ii] = compute_hwc(*data, ii, param);
+                // h_incre = (*data)->bottom[gmap->top2d[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                // (*data)->h[ii] = compute_hwc(*data, ii, param) + (*data)->dept[gmap->top2d[ii]] + h_incre;
+            }
         }
     }
     // else if init_h < 0, initialize domain with init_h
-    else if (param->init_h < 0)
+    else if (param->init_h <= 0)
     {
         for (ii = 0; ii < param->n3ct; ii++)
         {
@@ -882,8 +955,8 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     // (*data)->wc[ii] = param->wcr +
                         // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
 
-                    (*data)->wc[ii] = param->wcr + 0.01;
-                    // (*data)->wc[ii] = 0.38;
+                    // (*data)->wc[ii] = param->wcr + 0.01;
+                    (*data)->wc[ii] = 0.38;
                     (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }
@@ -903,10 +976,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
-                // if (gmap->ii[ii] == 45 & gmap->jj[ii] == 112 & gmap->istop[ii] == 1)
-                // {
-                //     printf(" !!!!! h->wc : %f->%f, bot=%f, dept=%f \n",(*data)->h[ii],(*data)->wc[ii],gmap->bot3d[ii],(*data)->dept[gmap->top2d[ii]]);
-                // }
+                
             }
         }
     }
@@ -943,7 +1013,13 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         (*data)->qz[ii] = 0.0;
         (*data)->r_rho[ii] = 1.0;
         (*data)->r_rhon[ii] = 1.0;
+        (*data)->r_rhoxp[ii] = 1.0;
+        (*data)->r_rhoyp[ii] = 1.0;
+        (*data)->r_rhozp[ii] = 1.0;
         (*data)->r_visc[ii] = 1.0;
+        (*data)->r_viscxp[ii] = 1.0;
+        (*data)->r_viscyp[ii] = 1.0;
+        (*data)->r_visczp[ii] = 1.0;
         (*data)->Vg[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
         (*data)->Vgn[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
     }
@@ -965,7 +1041,12 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             {
 
                 for (ii = 0; ii < param->n3ct; ii++)
-                {(*data)->s_subs[kk][ii] = param->init_s_subs[kk];}
+                {
+                    (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
+                    // if (gmap->jj[ii] == 2)   {(*data)->s_subs[kk][ii] = 25.0;}
+                }
+                // ex5_baroclinic1d, ZhiLi20210411
+                // (*data)->s_subs[kk][0] = 25.0;
             }
             for (ii = 0; ii < param->n3ct; ii++)
             {(*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vg[ii];}
@@ -983,8 +1064,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             {
                 for (ii = 0; ii < param->n3ct; ii++)
                 {
-                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00065;
-                    (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.0015;
+                    // (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00065;
+                    // (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.0015;
+                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00078;
+                    (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
                     (*data)->r_rhon[ii] = (*data)->r_rho[ii];
                 }
             }
@@ -1029,4 +1112,110 @@ void restart_subsurface(double *ic_array, char *fname, Config *param, int irank)
             count += 1;
         }
     }
+}
+
+
+// >>>>> Initialize subgrid variables
+void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)
+{
+    int ii, jj, kk, offind;
+    char fullname[100];
+    // load subgrid variables and assign to each rank
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Vxp");
+    load_data((*data)->Vxp_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Vxm");
+    load_data((*data)->Vxm_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Vyp");
+    load_data((*data)->Vyp_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Vym");
+    load_data((*data)->Vym_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Axp");
+    load_data((*data)->Axp_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Axm");
+    load_data((*data)->Axm_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Ayp");
+    load_data((*data)->Ayp_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Aym");
+    load_data((*data)->Aym_sub_root, fullname, param->N2CI*param->nlay_sub);
+    strcpy(fullname, param->finput);
+    strcat(fullname, "Asz");
+    load_data((*data)->Asz_sub_root, fullname, param->N2CI*param->nlay_sub);
+    for (ii = 0; ii < param->nlay_sub; ii++)
+    {
+        offind = ii * param->N2CI;
+        root_to_rank((*data)->Vxp_sub_root, (*data)->Vxp_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Vxm_sub_root, (*data)->Vxm_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Vyp_sub_root, (*data)->Vyp_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Vym_sub_root, (*data)->Vym_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Axp_sub_root, (*data)->Axp_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Axm_sub_root, (*data)->Axm_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Ayp_sub_root, (*data)->Ayp_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Aym_sub_root, (*data)->Aym_sub[ii], param, irank, nrank, offind, 0.0);
+        root_to_rank((*data)->Asz_sub_root, (*data)->Asz_sub[ii], param, irank, nrank, offind, 0.0);
+    }
+    // initialize index of eta
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        if ((*data)->eta[ii] < (*data)->layers_sub[0])
+        {(*data)->eta_ind[ii] = 0;}
+        else if ((*data)->eta[ii] >= (*data)->layers_sub[param->nlay_sub-1])
+        {(*data)->eta_ind[ii] = param->nlay_sub-1;}
+        else
+        {
+            for (jj = 0; jj < param->nlay_sub-1; jj++)
+            {
+                if ((*data)->eta[ii] >= (*data)->layers_sub[jj] & (*data)->eta[ii] < (*data)->layers_sub[jj+1])
+                {
+                    (*data)->eta_ind[ii] = jj;
+                    break;
+                }
+            }
+        }
+       
+    }
+    // extract and combine subgrid variables for a given surface elevation
+    subgrid_interp_and_combine(data, smap, param, irank, nrank);
+    // subgrid variables along boundaries
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->Vs[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+        (*data)->Vs[smap->jPou[ii]] = (*data)->Vs[smap->jPin[ii]];
+        (*data)->Asx[smap->jMou[ii]] = (*data)->Asx[smap->jMin[ii]];
+        (*data)->Asx[smap->jPou[ii]] = (*data)->Asx[smap->jPin[ii]];
+        (*data)->Asy[smap->jMou[ii]] = (*data)->Asy[smap->jMin[ii]];
+        (*data)->Asy[smap->jPou[ii]] = (*data)->Asy[smap->jPin[ii]];
+        (*data)->Asz[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+        (*data)->Asz[smap->jPou[ii]] = (*data)->Asz[smap->jPin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->Vs[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+        (*data)->Vs[smap->iPou[ii]] = (*data)->Vs[smap->iPin[ii]];
+        (*data)->Asx[smap->iMou[ii]] = (*data)->Asx[smap->iMin[ii]];
+        (*data)->Asx[smap->iPou[ii]] = (*data)->Asx[smap->iPin[ii]];
+        (*data)->Asy[smap->iMou[ii]] = (*data)->Asy[smap->iMin[ii]];
+        (*data)->Asy[smap->iPou[ii]] = (*data)->Asy[smap->iPin[ii]];
+        (*data)->Asz[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+        (*data)->Asz[smap->iPou[ii]] = (*data)->Asz[smap->iPin[ii]];
+    }
+    for (ii = 0; ii < param->nx; ii++)
+    {
+        (*data)->Vsy[smap->jMou[ii]] = (*data)->Vs[smap->jMin[ii]];
+        (*data)->Aszy[smap->jMou[ii]] = (*data)->Asz[smap->jMin[ii]];
+    }
+    for (ii = 0; ii < param->ny; ii++)
+    {
+        (*data)->Vsx[smap->iMou[ii]] = (*data)->Vs[smap->iMin[ii]];
+        (*data)->Aszx[smap->iMou[ii]] = (*data)->Asz[smap->iMin[ii]];
+    }
+    for (ii = 0; ii < param->n2ct; ii++)    {(*data)->Vsn[ii] = (*data)->Vs[ii];}
+
 }
