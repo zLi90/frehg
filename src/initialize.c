@@ -54,15 +54,18 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     ic_surface(data, *smap, *gmap, *param, irank, nrank);
     mpi_print(" >>> Initial conditions constructed for surface domain !", irank);
     update_drag_coef(data, *param);
-    // subgrid model
-    // if ((*param)->use_subgrid)
-    // {init_subgrid(data, *smap, *param, irank, nrank);}
     // initial condition for groundwater solver
     if ((*param)->sim_groundwater == 1)
     {
         ic_subsurface(data, *gmap, *param, irank, nrank);
         mpi_print(" >>> Initial conditions constructed for subsurface domain !", irank);
         // boundary condition for groundwater solver
+        if ((*param)->n_scalar > 0)
+        {
+            for (ii = 0; ii < (*param)->n_scalar; ii++)    {enforce_scalar_bc(data, *gmap, *param, ii, irank);}
+            if ((*param)->baroclinic == 1)
+            {update_rhovisc(data, *gmap, *param, irank);}
+        }
         enforce_head_bc(data, *gmap, *param);
         mpi_print(" >>> Initial conditions applied !", irank);
     }
@@ -423,10 +426,6 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
         for (ii = 0; ii < param->N2CI; ii++)
         {
             (*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];
-            // if (smap->jj[ii] < 85)
-            // {
-            //     (*data)->eta_root[ii] = 0.4 + (*data)->offset[0];
-            // }
         }
     }
     else
@@ -920,8 +919,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             for (ii = 0; ii < param->n3ct; ii++)
             {
                 (*data)->h[ii] = compute_hwc(*data, ii, param);
-                // h_incre = (*data)->bottom[gmap->top2d[ii]] - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                // (*data)->h[ii] = compute_hwc(*data, ii, param) + (*data)->dept[gmap->top2d[ii]] + h_incre;
             }
         }
     }
@@ -976,7 +973,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
-                
             }
         }
     }
@@ -1039,14 +1035,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             }
             else
             {
-
                 for (ii = 0; ii < param->n3ct; ii++)
                 {
                     (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
-                    // if (gmap->jj[ii] == 2)   {(*data)->s_subs[kk][ii] = 25.0;}
                 }
-                // ex5_baroclinic1d, ZhiLi20210411
-                // (*data)->s_subs[kk][0] = 25.0;
             }
             for (ii = 0; ii < param->n3ct; ii++)
             {(*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vg[ii];}
@@ -1064,9 +1056,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             {
                 for (ii = 0; ii < param->n3ct; ii++)
                 {
-                    // (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00065;
-                    // (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.0015;
-                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00078;
+                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.0007;
                     (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
                     (*data)->r_rhon[ii] = (*data)->r_rho[ii];
                 }
@@ -1179,7 +1169,6 @@ void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)
                 }
             }
         }
-       
     }
     // extract and combine subgrid variables for a given surface elevation
     subgrid_interp_and_combine(data, smap, param, irank, nrank);
