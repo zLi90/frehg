@@ -1104,7 +1104,6 @@ void restart_subsurface(double *ic_array, char *fname, Config *param, int irank)
     }
 }
 
-
 // >>>>> Initialize subgrid variables
 void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)
 {
