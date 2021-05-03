@@ -12,6 +12,7 @@ double compute_hwc(Data *data, int ii, Config *param);
 double compute_ch(Data *data, int ii, Config *param);
 double compute_K(Data *data, double *Ksat, int ii, Config *param);
 double compute_dKdwc(Data *data, double *Ksat, int ii, Config *param);
+double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param);
 char* read_one_input(char field[], char fname[]);
 double read_one_input_double(char field[], char fname[]);
 int * read_one_input_array(char field[], char fname[], int n);

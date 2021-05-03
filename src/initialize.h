@@ -43,7 +43,7 @@ typedef struct Data
     double **tide, **t_tide, *current_tide;
     double *rain, *evap, *q_rain, *t_rain, *q_evap, *t_evap, *rain_sum;
     double **inflow, **t_inflow, *current_inflow;
-    double *wind_dir, *wind_spd;
+    double *wind_dir, *wind_spd, *current_windspd, *current_winddir, *t_wind;
     // scalar
     double **s_surf, **sm_surf, **s_surf_root, **s_surf_out, **s_surfkP;
     double **s_subs, **sm_subs, **s_subs_root, **s_subs_out;

@@ -15,7 +15,6 @@
 void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int nrank, int kk);
 void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nrank, int kk);
 void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk);
-double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param);
 double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk, char* axis);
 void enforce_scalar_bc(Data **data, Map *gmap, Config *param, int kk, int irank);
 void update_rhovisc(Data **data, Map *gmap, Config *param, int irank);
@@ -38,14 +37,72 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
         // // scalar mass
         (*data)->sm_surf[kk][ii] = (*data)->s_surf[kk][ii] * (*data)->Vsn[ii];
         // scalar advection
-        if ((*data)->Fu[ii] > 0)    {sip = (*data)->s_surf[kk][ii];}
-        else    {sip = (*data)->s_surf[kk][smap->iPjc[ii]];}
-        if ((*data)->Fu[smap->iMjc[ii]] > 0)    {sim = (*data)->s_surf[kk][smap->iMjc[ii]];}
-        else    {sim = (*data)->s_surf[kk][ii];}
-        if ((*data)->Fv[ii] > 0)    {sjp = (*data)->s_surf[kk][ii];}
-        else    {sjp = (*data)->s_surf[kk][smap->icjP[ii]];}
-        if ((*data)->Fv[smap->icjM[ii]] > 0)    {sjm = (*data)->s_surf[kk][smap->icjM[ii]];}
-        else    {sjm = (*data)->s_surf[kk][ii];}
+        // x advection
+        if ((*data)->Fu[ii] > 0)
+        {
+            sip = (*data)->s_surf[kk][ii];
+            if (param->superbee == 1)   {
+                sip = tvd_superbee((*data)->s_surf[kk][smap->iPjc[ii]], (*data)->s_surf[kk][ii],
+                    (*data)->s_surf[kk][smap->iMjc[ii]], (*data)->uu[ii], param->dx, param);
+            }
+        }
+        else
+        {
+            sip = (*data)->s_surf[kk][smap->iPjc[ii]];
+            if (param->superbee == 1 & smap->ii[ii] != param->nx-1) {
+                sip = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->iPjc[ii]],
+                    (*data)->s_surf[kk][smap->iPjc[smap->iPjc[ii]]], (*data)->uu[ii], param->dx, param);
+            }
+        }
+        if ((*data)->Fu[smap->iMjc[ii]] > 0)
+        {
+            sim = (*data)->s_surf[kk][smap->iMjc[ii]];
+            if (param->superbee == 1 & smap->ii[ii] != 0)   {
+                sim = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->iMjc[ii]],
+                    (*data)->s_surf[kk][smap->iMjc[smap->iMjc[ii]]], (*data)->uu[smap->iMjc[ii]], param->dx, param);
+            }
+        }
+        else
+        {
+            sim = (*data)->s_surf[kk][ii];
+            if (param->superbee == 1)   {
+                sim = tvd_superbee((*data)->s_surf[kk][smap->iMjc[ii]], (*data)->s_surf[kk][ii],
+                    (*data)->s_surf[kk][smap->iPjc[ii]], (*data)->uu[smap->iMjc[ii]], param->dx, param);
+            }
+        }
+        // y advetcion
+        if ((*data)->Fv[ii] > 0)
+        {
+            sjp = (*data)->s_surf[kk][ii];
+            if (param->superbee == 1)   {
+                sjp = tvd_superbee((*data)->s_surf[kk][smap->icjP[ii]], (*data)->s_surf[kk][ii],
+                    (*data)->s_surf[kk][smap->icjM[ii]], (*data)->vv[ii], param->dy, param);
+            }
+        }
+        else
+        {
+            sjp = (*data)->s_surf[kk][smap->icjP[ii]];
+            if (param->superbee == 1 & smap->jj[ii] != param->ny-1) {
+                sjp = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->icjP[ii]],
+                    (*data)->s_surf[kk][smap->icjP[smap->icjP[ii]]], (*data)->vv[ii], param->dy, param);
+            }
+        }
+        if ((*data)->Fv[smap->icjM[ii]] > 0)
+        {
+            sjm = (*data)->s_surf[kk][smap->icjM[ii]];
+            if (param->superbee == 1 & smap->jj[ii] != 0)   {
+                sjm = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->icjM[ii]],
+                    (*data)->s_surf[kk][smap->icjM[smap->icjM[ii]]], (*data)->vv[smap->icjM[ii]], param->dy, param);
+            }
+        }
+        else
+        {
+            sjm = (*data)->s_surf[kk][ii];
+            if (param->superbee == 1)   {
+                sjm = tvd_superbee((*data)->s_surf[kk][smap->icjM[ii]], (*data)->s_surf[kk][ii],
+                    (*data)->s_surf[kk][smap->icjP[ii]], (*data)->vv[smap->icjM[ii]], param->dy, param);
+            }
+        }
         (*data)->sm_surf[kk][ii] = (*data)->sm_surf[kk][ii] + param->dt *
             (-(*data)->Fu[ii]*sip + (*data)->Fu[smap->iMjc[ii]]*sim - (*data)->Fv[ii]*sjp + (*data)->Fv[smap->icjM[ii]]*sjm);
         // scalar diffusion
@@ -336,7 +393,6 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         else if ((*data)->s_subs[kk][ii] < 0 & gmap->actv[ii] == 1)
         {
             mpi_print("WARNING: Scalar extremes < 0  detected for groundwater!", irank);
-            // printf("scalar (%d,%d,%d) = %f   actv=%d wc=%f\n",gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],(*data)->s_subs[kk][ii],gmap->actv[ii],(*data)->wc[ii]);
             (*data)->s_subs[kk][ii] = 0.0;
         }
         if (gmap->actv[ii] == 0)    {(*data)->s_subs[kk][ii] = 0.0;}
@@ -543,29 +599,6 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
 
 }
 
-
-// >>>>> 2nd-order TVD scheme with superbee limiter
-double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param)
-{
-    double phi, r, coef, r1, r2;
-    coef = fabs(u) * param->dt / delta;
-    r1 = 1.0;
-    r2 = 2.0;
-    phi = 0.0;
-    if (sp != sc)
-    {
-        r = (sc - sm) / (sp - sc);
-        if (2.0*r < 1.0)  {r1 = 2.0*r;}
-        if (r < 2.0)    {r2 = r;}
-        if (r1 > 0.0 | r2 > 0.0)
-        {
-            if (r1 > r2)    {phi = r1;}
-            else    {phi = r2;}
-        }
-    }
-    return sc + 0.5*phi*(1.0-coef)*(sp - sc);
-}
-
 // >>>>> calculate diffusive-dispersive flux across one face
 double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk, char* axis)
 {
@@ -687,6 +720,12 @@ void enforce_scalar_bc(Data **data, Map *gmap, Config *param, int kk, int irank)
             if (param->bctype_GW[2] != 0 & irank >= param->mpi_nx*(param->mpi_ny-1))
             {
                 (*data)->s_subs[kk][gmap->icjPkc[ii]] = param->s_yp[kk];
+                // Henry's problem, ZhiLi20210413
+                if (gmap->kk[ii] < 2)
+                {
+                    (*data)->s_subs[kk][gmap->icjPkc[ii]] = (*data)->s_subs[kk][ii];
+                }
+
             }
             else
             {
@@ -736,6 +775,7 @@ void update_rhovisc(Data **data, Map *gmap, Config *param, int irank)
                 (*data)->r_rho[ii] = 1.0;
                 (*data)->r_visc[ii] = 1.0;
             }
+
         }
     }
 }

@@ -15,6 +15,7 @@ double compute_hwc(Data *data, int ii, Config *param);
 double compute_ch(Data *data, int ii, Config *param);
 double compute_K(Data *data, double *Ksat, int ii, Config *param);
 double compute_dKdwc(Data *data, double *Ksat, int ii, Config *param);
+double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param);
 char* read_one_input(char field[], char fname[]);
 double read_one_input_double(char field[], char fname[]);
 int * read_one_input_array(char field[], char fname[], int n);
@@ -205,6 +206,28 @@ double compute_dKdwc(Data *data, double *Ksat, int ii, Config *param)
     }
     dKdwc = (term1 + term2) / (data->wcs[ii] - data->wcr[ii]);
     return dKdwc;
+}
+
+// >>>>> 2nd-order TVD scheme with superbee limiter
+double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param)
+{
+    double phi, r, coef, r1, r2;
+    coef = fabs(u) * param->dt / delta;
+    r1 = 1.0;
+    r2 = 2.0;
+    phi = 0.0;
+    if (sp != sc)
+    {
+        r = (sc - sm) / (sp - sc);
+        if (2.0*r < 1.0)  {r1 = 2.0*r;}
+        if (r < 2.0)    {r2 = r;}
+        if (r1 > 0.0 | r2 > 0.0)
+        {
+            if (r1 > r2)    {phi = r1;}
+            else    {phi = r2;}
+        }
+    }
+    return sc + 0.5*phi*(1.0-coef)*(sp - sc);
 }
 
 // >>>>> Read one user input field <<<<<
