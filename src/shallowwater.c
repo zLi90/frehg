@@ -80,7 +80,6 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
-    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[30],(*data)->eta[30]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -96,6 +95,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
 {
     if (param->sim_groundwater == 1)
     {subsurface_source(data, smap, param);}
+    // printf("-----\n");
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -262,13 +262,13 @@ void wind_source(Data **data, Map *smap, Config *param, int ii)
     double phi, omega, tau, pi = 3.1415926;
     double tauXP, tauYP;
     // phi is the wind direction from the north
-    phi = (*data)->wind_dir[0] + param->north_angle;
+    phi = (*data)->current_winddir[0] + param->north_angle;
     // omega is the wind direction in rad from positive x
     omega = phi * pi / 180.0;
     // tau is the total wind stress
     tau = param->rhoa * param->Cw * \
-    ((*data)->wind_spd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega)) * \
-    ((*data)->wind_spd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega));
+    ((*data)->current_windspd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega)) * \
+    ((*data)->current_windspd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega));
     // apply the thin layer model when necessary
     if ((*data)->deptx[ii] < param->hD)
     {tauXP = tau * exp(param->CwT*((*data)->deptx[ii]-param->hD)/param->hD);}
@@ -568,12 +568,15 @@ void subsurface_source(Data **data, Map *smap, Config *param)
     double diff, qz;
     // NOTE: seepage is calculated in the subsurface framework
     //       to convert it into the surface framework, multiple by param->wcs
+    // NOTE: The above note is wrong!!! Because qz is already the Darcy flux!
+    // NOTE: Which one is wrong remains undecided!!!
     for (ii = 0; ii < param->n2ci; ii++)
     {
         diff = (*data)->eta[ii] - (*data)->bottom[ii];
         // infiltration
         if ((*data)->qseepage[ii] < 0)
         {
+            // (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
             (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
             (*data)->reset_seepage[ii] = 1;
         }
@@ -585,6 +588,11 @@ void subsurface_source(Data **data, Map *smap, Config *param)
                 (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
                 (*data)->reset_seepage[ii] = 1;
             }
+            // if ((*data)->qseepage[ii]*param->dt > param->min_dept)
+            // {
+            //     (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
+            //     (*data)->reset_seepage[ii] = 1;
+            // }
             else
             {(*data)->reset_seepage[ii] = 0;}
         }

@@ -289,9 +289,6 @@ void init_Data(Data **data, Config *param)
     (*data)->cfly = malloc(param->n2ci*sizeof(double));
     (*data)->cfl_active = malloc(param->n2ci*sizeof(double));
 
-    (*data)->wind_spd = malloc(1*sizeof(double));
-    (*data)->wind_dir = malloc(1*sizeof(double));
-
     (*data)->rain = malloc(1*sizeof(double));
     (*data)->rain_sum = malloc(1*sizeof(double));
     (*data)->rain_sum[0] = 0.0;
@@ -639,7 +636,7 @@ void bc_surface(Data **data, Map *smap, Config *param, int irank)
     {
         if (param->inflow_file[kk] == 1)
         {
-            char fullname[50];
+            char fullname[150];
             strcpy(fullname, param->finput);
             strcat(fullname, "inflow");
             sprintf(fid, "%d", kk+1);
@@ -659,6 +656,41 @@ void bc_surface(Data **data, Map *smap, Config *param, int irank)
             (*data)->t_inflow[kk][0] = 0.0;
         }
     }
+
+    // load wind boundary condition (As of 20210502, wind must be applied uniformly to the entire domain)
+    (*data)->current_windspd = malloc(1*sizeof(double));
+    (*data)->current_winddir = malloc(1*sizeof(double));
+    if (param->sim_wind == 1)
+    {
+        if (param->wind_file == 1)
+        {
+            char fullname[150];
+            strcpy(fullname, param->finput);
+            strcat(fullname, "windspd");
+            if (exist(fullname))
+            {
+                (*data)->wind_spd = malloc(param->wind_dat_len*sizeof(double));
+                (*data)->t_wind = malloc(param->wind_dat_len*sizeof(double));
+                load_bc((*data)->wind_spd, (*data)->t_wind, fullname, param->wind_dat_len);
+            }
+            char dirname[150];
+            strcpy(dirname, param->finput);
+            strcat(dirname, "winddir");
+            if (exist(dirname))
+            {
+                (*data)->wind_dir = malloc(param->wind_dat_len*sizeof(double));
+                load_bc((*data)->wind_dir, (*data)->t_wind, dirname, param->wind_dat_len);
+            }
+        }
+        else
+        {
+            (*data)->wind_spd = malloc(1*sizeof(double));
+            (*data)->wind_dir = malloc(1*sizeof(double));
+            (*data)->wind_dir[0] = param->init_winddir;
+            (*data)->wind_spd[0] = param->init_windspd;
+        }
+    }
+
     // load scalar boundary condition for tide
     (*data)->s_tide = malloc(param->n_scalar*sizeof(double **));
     (*data)->t_s_tide = malloc(param->n_scalar*sizeof(double **));
@@ -673,7 +705,7 @@ void bc_surface(Data **data, Map *smap, Config *param, int irank)
             glob_ind = ss * param->n_tide + kk;
             if (param->scalar_tide_file[glob_ind] == 1)
             {
-                char fullname[50];
+                char fullname[150];
                 strcpy(fullname, param->finput);
                 strcat(fullname, "scalar");
                 sprintf(fid, "%d", ss+1);
@@ -730,8 +762,6 @@ void get_BC_location(int **loc, int *loc_len, Config *param, int irank, int n_bc
     int ii, jj, kk, ll, ind, n_glob, xrank, yrank, col, row;
     int locX1, locX2, locY1, locY2;
     int *loc_glob;
-    // loc = malloc(n_bc*sizeof(int *));
-    // loc_len = malloc(n_bc*sizeof(int));
     for (kk = 0; kk < n_bc; kk++)
     {
         loc_len[kk] = 0;
@@ -916,9 +946,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         else
         {
             for (ii = 0; ii < param->n3ct; ii++)
-            {
-                (*data)->h[ii] = compute_hwc(*data, ii, param);
-            }
+            {(*data)->h[ii] = compute_hwc(*data, ii, param);}
         }
     }
     // else if init_h < 0, initialize domain with init_h
@@ -1030,7 +1058,9 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             else
             {
                 for (ii = 0; ii < param->n3ct; ii++)
-                {(*data)->s_subs[kk][ii] = param->init_s_subs[kk];}
+                {
+                    (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
+                }
             }
             for (ii = 0; ii < param->n3ct; ii++)
             {(*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vg[ii];}

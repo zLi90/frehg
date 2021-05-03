@@ -59,6 +59,7 @@ void read_input(Config **param)
     // Wind parameters
     (*param)->sim_wind = (int) read_one_input_double("sim_wind", "input");
     (*param)->wind_file = (int) read_one_input_double("wind_file", "input");
+    (*param)->wind_dat_len = (int) read_one_input_double("wind_dat_len", "input");
     (*param)->init_windspd = read_one_input_double("init_windspd", "input");
     (*param)->init_winddir = read_one_input_double("init_winddir", "input");
     (*param)->Cw = read_one_input_double("Cw", "input");
