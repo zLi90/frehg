@@ -38,7 +38,7 @@ typedef struct Config
     int *bctype_GW, h_file, wc_file;
     // Scalar
     int n_scalar, *scalar_surf_file, *scalar_tide_datlen, *scalar_tide_file, *scalar_inflow_datlen, *scalar_inflow_file;
-    int *scalar_subs_file, baroclinic;
+    int *scalar_subs_file, baroclinic, superbee;
     double difux, difuy, difuz, disp_lat, disp_lon;
     double *init_s_surf, *init_s_subs;
     double *s_tide, *s_inflow, *s_yp, *s_ym;

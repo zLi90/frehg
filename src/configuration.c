@@ -139,6 +139,7 @@ void read_input(Config **param)
     // Scalar transport
     (*param)->n_scalar = (int) read_one_input_double("n_scalar", "input");
     (*param)->baroclinic = (int) read_one_input_double("baroclinic", "input");
+    (*param)->superbee = (int) read_one_input_double("superbee", "input");
 
     (*param)->scalar_surf_file = read_one_input_array("scalar_surf_file", "input", (*param)->n_scalar);
     (*param)->scalar_tide_file = read_one_input_array("scalar_tide_file", "input", (*param)->n_scalar*(*param)->n_tide);

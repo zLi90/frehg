@@ -54,7 +54,6 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     ic_surface(data, *smap, *gmap, *param, irank, nrank);
     mpi_print(" >>> Initial conditions constructed for surface domain !", irank);
     update_drag_coef(data, *param);
-    // initial condition for groundwater solver
     if ((*param)->sim_groundwater == 1)
     {
         ic_subsurface(data, *gmap, *param, irank, nrank);
@@ -947,13 +946,8 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 }
                 else
                 {
-                    // (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    // (*data)->wc[ii] = compute_wch(*data, ii, param);
-                    // (*data)->wc[ii] = param->wcr +
-                        // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
-
-                    // (*data)->wc[ii] = param->wcr + 0.01;
-                    (*data)->wc[ii] = 0.38;
+                    (*data)->wc[ii] = param->wcr + 0.02;
+                    // (*data)->wc[ii] = 0.38;
                     (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }
@@ -1036,9 +1030,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             else
             {
                 for (ii = 0; ii < param->n3ct; ii++)
-                {
-                    (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
-                }
+                {(*data)->s_subs[kk][ii] = param->init_s_subs[kk];}
             }
             for (ii = 0; ii < param->n3ct; ii++)
             {(*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vg[ii];}
@@ -1056,7 +1048,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
             {
                 for (ii = 0; ii < param->n3ct; ii++)
                 {
-                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.0007;
+                    (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00078;
                     (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
                     (*data)->r_rhon[ii] = (*data)->r_rho[ii];
                 }
@@ -1082,7 +1074,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
 void restart_subsurface(double *ic_array, char *fname, Config *param, int irank)
 {
     int ii, jj, kk, xrank, yrank, col, row, count;
-    char fullname[50];
+    char fullname[150];
     double *ic_root = malloc(param->N3CI*sizeof(double));
     strcpy(fullname, param->finput);
     strcat(fullname, fname);
@@ -1103,6 +1095,7 @@ void restart_subsurface(double *ic_array, char *fname, Config *param, int irank)
         }
     }
 }
+
 
 // >>>>> Initialize subgrid variables
 void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)

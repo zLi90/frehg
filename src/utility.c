@@ -52,6 +52,13 @@ double compute_wch(Data *data, int ii, Config *param)
     if (wc > data->wcs[ii])    {wc = data->wcs[ii];}
     else if (wc < data->wcr[ii])   {wc = data->wcr[ii];}
 
+    // Warrick 1971
+    // if (h < 0.0)
+    // {
+    //     if (h <= -0.29484)  {wc = 0.6829 - 0.09524*log(fabs(h)*100.0);}
+    //     else    {wc = 0.4531 - 0.02732*log(fabs(h)*100.0);}
+    // }
+
     return wc;
 }
 
@@ -79,6 +86,14 @@ double compute_hwc(Data *data, int ii, Config *param)
     {
         printf("h, wcm, wc = %f, %f, %f\n",h,wcm,wc);
     }
+
+    // Warrick 1971
+    // if (wc < 0.38-eps)
+    // {
+    //     if (wc < 0.36/0.38)    {h = -exp((2.95 - wc/0.38)/0.25) / 9810.0;}
+    //     else    {h = -exp((1.52 - wc/0.38)/0.07) / 9810.0;}
+    // }
+
     return h;
 }
 
@@ -97,6 +112,14 @@ double compute_ch(Data *data, int ii, Config *param)
         pow(fabs(data->vga[ii]*h),data->vgn[ii]-1);
     deno = pow((1.0 + pow(fabs(data->vga[ii]*h),data->vgn[ii])), m+1);
     c = nume / deno;
+
+    // Warrick 1971
+    // if (h < 0.0)
+    // {
+    //     if (h <= -0.29484)  {c = 0.09524 / (fabs(h));}
+    //     else    {c = 0.02732 / (fabs(h));}
+    // }
+
     if (param->use_mvg == 1)
     {if (h > param->aev)  {c = 0.0;}}
     else
@@ -126,6 +149,14 @@ double compute_K(Data *data, double *Ksat, int ii, Config *param)
     }
     else
     {Keff = Ks * pow(s,0.5) * pow(1-pow(1-pow(s,1.0/m),m), 2.0);}
+
+    // Warrick 1971
+    // if (h < 0.0)
+    // {
+    //     if (h < -0.29484)   {Keff = 19.34 * 1e4 * pow(fabs(h)*100.0, -3.4095) / (1e2 * 86400.0);}
+    //     else    {Keff = 516.8 * pow(fabs(h)*100.0, -0.97814) / (1e2 * 86400.0);}
+    // }
+
     if (Keff > Ks)  {Keff = Ks;}
     if (param->use_mvg == 1)
     {if (h > param->aev)  {Keff = Ks;}}

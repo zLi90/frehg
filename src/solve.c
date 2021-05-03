@@ -33,11 +33,11 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
     mpi_print(" >>> Beginning Time loop !", irank);
     while (t_current < param->Tend)
     {
+
         if (irank == 0) {t0 = clock();}
         (*data)->repeat[0] = 0;
         t_current += param->dt;
         // get boundary condition
-        // get_tide(data, param, t_current);
         get_current_bc(data, param, t_current);
         get_evaprain(data, gmap, param);
         // execute solvers
@@ -67,7 +67,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         {shallowwater_velocity(data, smap, gmap, param, irank, nrank);}
 
         // check CFL number
-
         max_CFLx = getMax((*data)->cflx, param->n2ci);
         max_CFLy = getMax((*data)->cfly, param->n2ci);
         if (max_CFLx > max_CFLy)    {max_CFL = max_CFLx;}
@@ -79,7 +78,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
             if (irank == 0) {max_CFL = getMax(max_CFL_root, param->mpi_ny*param->mpi_nx);   free(max_CFL_root);}
             mpi_bcast_double(&max_CFL, 1, 0);
         }
-
         // scalar transport
         if (param->n_scalar > 0 & param->sim_shallowwater == 1)
         {for (kk = 0; kk < param->n_scalar; kk++)    {scalar_shallowwater(data, smap, param, irank, nrank, kk);}}
@@ -113,7 +111,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         }
         tt += 1;
     }
-    // printf("  >> Qin = %f, Qout = %f\n",(*data)->qbc[0],(*data)->qbc[1]);
     print_end_info(data, smap, gmap, param, irank);
 }
 
@@ -256,13 +253,6 @@ void get_evaprain(Data **data, Map *gmap, Config *param)
             // interpolate evaporation data
         }
         for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii];}
-
-        // for Geng2015
-        for (ii = 0; ii < param->n3ci; ii++)
-        {
-            if (gmap->istop[ii] == 1)
-            {if (gmap->top2d[ii] < 10 | gmap->top2d[ii] >= 190)    {(*data)->qtop[gmap->top2d[ii]] = 0.0;}}
-        }
 
     }
 }

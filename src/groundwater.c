@@ -271,7 +271,6 @@ void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank)
             }
         }
     }
-
 }
 
 // >>>>> Compute hydraulic conductivity on cell faces <<<<<
@@ -471,15 +470,8 @@ void groundwater_rhs(Data **data, Map *gmap, Config *param, int irank)
             {
                 if (param->bctype_GW[5] == 2)
                 {
-                    // if ((*data)->qtop > 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
-                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
-                    // else if ((*data)->qtop < 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
-                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
-                    // else
-                    // {(*data)->Grhs[ii] += - param->dt * (*data)->Kz[gmap->icjckM[ii]] / gmap->dz3d[ii];}
                     (*data)->Grhs[ii] += - param->dt * (*data)->r_rhozp[gmap->icjckM[ii]] * \
                         ((*data)->qtop[gmap->top2d[ii]] + (*data)->Kz[gmap->icjckM[ii]] * (*data)->r_rhozp[gmap->icjckM[ii]] * (*data)->r_visczp[gmap->icjckM[ii]]) / gmap->dz3d[ii];
-                    // printf("  >> Top flux = %f\n",86400.0*100.0*(*data)->qtop);
                 }
                 else if (param->bctype_GW[5] == 1)
                 {(*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->htop;}
@@ -553,6 +545,7 @@ void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, V
             row[7]=data->Grhs[im];
 
         }
+
     }
 }
 
@@ -623,7 +616,6 @@ void enforce_head_bc(Data **data, Map *gmap, Config *param)
             {if (gmap->istop[ii] == 1)  {(*data)->h[gmap->icjckM[ii]] = (*data)->h[ii];}}
         }
     }
-
 }
 
 // >>>>> calculate flux between cells <<<<<
@@ -691,13 +683,9 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                     (*data)->qz[ii] = (*data)->Kz[ii] * (*data)->r_visczp[ii] * (((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->r_rhozp[ii]);
                     if ((*data)->qz[ii] < 0)
                     {
-                        // check if infiltration > depth available
                         vseep = fabs((*data)->qz[ii])*param->dt*(*data)->wcs[jj];
                         if (vseep > (*data)->dept[gmap->top2d[jj]])
                         {(*data)->qz[ii] = -(*data)->dept[gmap->top2d[jj]]/(param->dt*(*data)->wcs[jj]);}
-                        // check if infiltration > void volume in the first subsurface cell
-                        // else if (vseep/(*data)->wcs[jj] > gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj]))
-                        // {(*data)->qz[ii] = -gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj])/param->dt;}
                     }
                 }
                 else if (param->bctype_GW[5] == 2)
@@ -749,7 +737,6 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                 {(*data)->qz[ii] = -(*data)->Kz[ii] * (*data)->r_visczp[ii] * (*data)->r_rhozp[ii];}
                 else
                 {(*data)->qz[ii] = 0.0;}
-
             }
         }
     }
@@ -776,9 +763,6 @@ void update_water_content(Data **data, Map *gmap, Config *param)
     double coeff, dqx, dqy, dqz, room_col;
     for (ii = 0; ii < param->n3ci; ii++)
     {
-        // update water content
-        // coeff = (*data)->r_rho[ii] + (*data)->r_rho[ii] * param->Ss * ((*data)->h[ii]-(*data)->hn[ii]) / (*data)->wcs[ii] + \
-                ((*data)->r_rho[ii] - (*data)->r_rhon[ii]);
         coeff = (*data)->r_rho[ii] + (*data)->r_rho[ii] * param->Ss * ((*data)->h[ii]-(*data)->hn[ii]) / (*data)->wcs[ii];
         dqx = param->dt * ((*data)->qx[ii]*(*data)->r_rhoxp[ii] - (*data)->qx[gmap->iMjckc[ii]]*(*data)->r_rhoxp[gmap->iMjckc[ii]]) / param->dx;
         dqy = param->dt * ((*data)->qy[ii]*(*data)->r_rhoyp[ii] - (*data)->qy[gmap->icjMkc[ii]]*(*data)->r_rhoyp[gmap->icjMkc[ii]]) / param->dy;
@@ -853,7 +837,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
                 // isolated unsaturated cell
                 if (adj_sat == 0)
                 {
-                    // if ((*data)->h[ii] < 0)
                     if ((*data)->wc[ii] < 0.9999*(*data)->wcs[ii])
                     {(*data)->h[ii] = (*data)->hwc[ii]; alloc_type2 += 1;}
                 }
@@ -897,7 +880,6 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
         }
 
     }
-
 }
 
 // >>>>> Check if a grid cell is adjacent to a saturated cell <<<<<
@@ -1431,9 +1413,7 @@ void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int ira
     else if (dq_max < 0.01) {(*param)->dt = (*param)->dt * r_inc;}
     if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
     if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
-    // if (sat == 1 & unsat == 0) {(*param)->dt = (*param)->dt_max;}
     // apply the Courant number criteria
-    // if ((*param)->dt > dt_Comin & sat == 1 & unsat == 1)   {(*param)->dt = dt_Comin;}
     if ((*param)->dt > dt_Comin)   {(*param)->dt = dt_Comin;}
     if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
     if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
