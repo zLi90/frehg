@@ -80,6 +80,7 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
+    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[30],(*data)->eta[30]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -144,6 +145,9 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->vx, smap, 2, param, irank, nrank);
     }
 
+
+    // if (param->sim_groundwater == 1)
+    // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
 }
 
 // >>>>> Momentum source term
@@ -446,6 +450,17 @@ void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, 
 void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vector x, Config *param)
 {
     size_t ii;
+    // for (ii = 0; ii < param->n2ci; ii++)
+    // {
+    //     if (smap->ii[ii] == 80 & smap->jj[ii] == 200)
+    //     // if ((*data)->dept[ii] > 0.0)
+    //     {
+    //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
+    //             -(*data)->Sym[ii]*1e5,-(*data)->Sxm[ii]*1e5,(*data)->Sct[ii]*1e5,-(*data)->Sxp[ii]*1e5,-(*data)->Syp[ii]*1e5,(*data)->Srhs[ii]*1e5,(*data)->eta[ii]*1e5);
+    //         printf("------\n");
+    //     }
+    // }
+
     V_SetAllCmp(&x, 0.0);
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
@@ -474,6 +489,7 @@ void enforce_surf_bc(Data **data, Map *smap, Config *param, int irank, int nrank
             {
                 jj = (*data)->tideloc[kk][ii];
                 (*data)->eta[jj] = (*data)->current_tide[kk];
+                // printf("IRANK=%d  :  TIDE #%d -> tideloc=%d, elevation=%f, eta=%f\n",irank,kk,(*data)->tideloc[kk][ii],(*data)->current_tide[kk],(*data)->eta[jj]);
             }
         }
     }
@@ -741,6 +757,11 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
         (*data)->cfly[ii] = fabs((*data)->vv[ii] * param->dt / param->dy);
         if ((*data)->cflx[ii] > 1 | (*data)->cfly[ii] > 1)
         {printf("WARNING: CFL = %f, %f for cell (%d,%d) of rank %d!\n",(*data)->cflx[ii],(*data)->cfly[ii],smap->ii[ii],smap->jj[ii],irank);}
+        // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
+        // {
+        //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
+        //         (*data)->qseepage[ii]*param->dt*param->wcs);
+        // }
     }
 
 }
@@ -939,8 +960,17 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
                 }
             }
         }
+        // rainfall
+        if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
+        {
+            if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
+            {if ((*data)->rain_sum[0] > param->min_dept) {(*data)->Vflux[ii] += (*data)->rain_sum[0] * (*data)->Asz[ii];}}
+        }
+        // evaporation
+        // only apply evaporation when rainfall = 0
+        if ((*data)->rain[0] == 0.0)
+        {(*data)->Vflux[ii] -= (*data)->evap[ii] * param->dt * (*data)->Asz[ii];}
     }
-
 }
 
 
