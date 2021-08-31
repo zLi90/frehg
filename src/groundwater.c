@@ -161,7 +161,6 @@ void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int ira
     enforce_moisture_bc(data, gmap, param);
     if (param->use_mpi == 1)
     {mpi_exchange_subsurf((*data)->wc, gmap, 2, param, irank, nrank);}
-
     // >>> Adaptive time stepping
     if (param->dt_adjust == 1)
     {adaptive_time_step(*data, gmap, &param, 0, irank);}
@@ -386,6 +385,7 @@ void groundwater_mat_coeff(Data **data, Map *gmap, Config *param, int irank)
             {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
             else if (param->bctype_GW[5] == 1)
             {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
+            // printf(" Gct = %f, Gzp = %f\n",(*data)->Gct[ii],(*data)->Gzp[ii]);
         }
         else
         {(*data)->Gct[ii] -= (*data)->Gzm[ii];}
@@ -470,8 +470,15 @@ void groundwater_rhs(Data **data, Map *gmap, Config *param, int irank)
             {
                 if (param->bctype_GW[5] == 2)
                 {
+                    // if ((*data)->qtop > 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
+                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                    // else if ((*data)->qtop < 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
+                    // {(*data)->Grhs[ii] += - param->dt * ((*data)->qtop + (*data)->Kz[gmap->icjckM[ii]]) / gmap->dz3d[ii];}
+                    // else
+                    // {(*data)->Grhs[ii] += - param->dt * (*data)->Kz[gmap->icjckM[ii]] / gmap->dz3d[ii];}
                     (*data)->Grhs[ii] += - param->dt * (*data)->r_rhozp[gmap->icjckM[ii]] * \
                         ((*data)->qtop[gmap->top2d[ii]] + (*data)->Kz[gmap->icjckM[ii]] * (*data)->r_rhozp[gmap->icjckM[ii]] * (*data)->r_visczp[gmap->icjckM[ii]]) / gmap->dz3d[ii];
+                    // printf("  >> Top flux = %f\n",86400.0*100.0*(*data)->qtop);
                 }
                 else if (param->bctype_GW[5] == 1)
                 {(*data)->Grhs[ii] -= (*data)->Gzm[ii] * (*data)->htop;}
@@ -545,6 +552,8 @@ void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, V
             row[7]=data->Grhs[im];
 
         }
+        // printf("(%d,%d,%d) - [%f, %f, %f, (%f), %f, %f, %f][h] = [%f]\n",gmap->ii[im],gmap->jj[im],gmap->kk[im],row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]);
+        // if (gmap->kk[im] == param->nz-1)    {printf("------------------------\n");}
 
     }
 }
@@ -683,9 +692,16 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                     (*data)->qz[ii] = (*data)->Kz[ii] * (*data)->r_visczp[ii] * (((*data)->h[jj]-(*data)->h[ii]) / dzf - (*data)->r_rhozp[ii]);
                     if ((*data)->qz[ii] < 0)
                     {
+                        // check if infiltration > depth available
+                        // vseep = fabs((*data)->qz[ii])*param->dt;
+                        // if (vseep > (*data)->dept[gmap->top2d[jj]])
+                        // {(*data)->qz[ii] = -(*data)->dept[gmap->top2d[jj]]/param->dt;}
                         vseep = fabs((*data)->qz[ii])*param->dt*(*data)->wcs[jj];
                         if (vseep > (*data)->dept[gmap->top2d[jj]])
                         {(*data)->qz[ii] = -(*data)->dept[gmap->top2d[jj]]/(param->dt*(*data)->wcs[jj]);}
+                        // check if infiltration > void volume in the first subsurface cell
+                        // else if (vseep/(*data)->wcs[jj] > gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj]))
+                        // {(*data)->qz[ii] = -gmap->dz3d[jj]*((*data)->wcs[jj] - (*data)->wc[jj])/param->dt;}
                     }
                 }
                 else if (param->bctype_GW[5] == 2)
@@ -737,6 +753,10 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                 {(*data)->qz[ii] = -(*data)->Kz[ii] * (*data)->r_visczp[ii] * (*data)->r_rhozp[ii];}
                 else
                 {(*data)->qz[ii] = 0.0;}
+
+                // Geng 2015
+                // if (gmap->ii[jj] < 5 | gmap->ii[jj] >= 95)    {(*data)->qz[ii] = 0.0;}
+
             }
         }
     }
@@ -763,11 +783,16 @@ void update_water_content(Data **data, Map *gmap, Config *param)
     double coeff, dqx, dqy, dqz, room_col;
     for (ii = 0; ii < param->n3ci; ii++)
     {
+        // update water content
         coeff = (*data)->r_rho[ii] + (*data)->r_rho[ii] * param->Ss * ((*data)->h[ii]-(*data)->hn[ii]) / (*data)->wcs[ii];
         dqx = param->dt * ((*data)->qx[ii]*(*data)->r_rhoxp[ii] - (*data)->qx[gmap->iMjckc[ii]]*(*data)->r_rhoxp[gmap->iMjckc[ii]]) / param->dx;
         dqy = param->dt * ((*data)->qy[ii]*(*data)->r_rhoyp[ii] - (*data)->qy[gmap->icjMkc[ii]]*(*data)->r_rhoyp[gmap->icjMkc[ii]]) / param->dy;
         dqz = param->dt * ((*data)->qz[ii]*(*data)->r_rhozp[ii] - (*data)->qz[gmap->icjckM[ii]]*(*data)->r_rhozp[gmap->icjckM[ii]]) / gmap->dz3d[ii];
         (*data)->wc[ii] = ((*data)->wcn[ii]*(*data)->r_rho[ii] + dqx + dqy + dqz) / coeff;
+
+
+        // Warrick 1971
+        // if (ii == 0)    {(*data)->wc[ii] = (*data)->wcs[ii];}
     }
 }
 
@@ -801,7 +826,7 @@ void enforce_moisture_bc(Data **data, Map *gmap, Config *param)
 void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
 {
     int ii, adj_sat, dir, alloc_type1=0, alloc_type2=0, alloc_type3=0, alloc_type4=0;
-    double dV, wcp;
+    double wcp, dV, dV_tot = 0.0;
 
     int flag = 0;
     for (ii = 0; ii < param->n3ci; ii++)
@@ -820,6 +845,7 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
                     dV = ((*data)->wc[ii] - (*data)->wcs[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
                     if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
                     {
+                        // printf("1 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wcs[ii]);
                         (*data)->repeat[0] = 1;
                     }
                     check_head_gradient(data, gmap, param, ii);
@@ -837,6 +863,7 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
                 // isolated unsaturated cell
                 if (adj_sat == 0)
                 {
+                    // if ((*data)->h[ii] < 0)
                     if ((*data)->wc[ii] < 0.9999*(*data)->wcs[ii])
                     {(*data)->h[ii] = (*data)->hwc[ii]; alloc_type2 += 1;}
                 }
@@ -852,10 +879,9 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
                             if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
                             {(*data)->repeat[0] = 1;}
                             check_head_gradient(data, gmap, param, ii);
-                            // dV = allocate_recv(data, gmap, param, ii, dV);
+                            dV = allocate_recv(data, gmap, param, ii, dV);
                             // if (dV > 0) {dV = allocate_recv(data, gmap, param, ii, dV);}
                             alloc_type3 += 1;
-                            //
                         }
                         // send moisture
                         else
@@ -863,6 +889,7 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
                             dV = ((*data)->wc[ii] - (*data)->wch[ii]) * gmap->dz3d[ii] * param->dx * param->dy;
                             if (dV > 0.1 * (*data)->wcs[ii]*gmap->dz3d[ii]*param->dx*param->dy)
                             {
+                                // printf("3 : ii = %d, wc = %f, dwc = %f\n",ii,(*data)->wc[ii],(*data)->wc[ii] - (*data)->wch[ii]);
                                 (*data)->repeat[0] = 1;
                             }
                             check_head_gradient(data, gmap, param, ii);
@@ -872,14 +899,22 @@ void reallocate_water_content(Data **data, Map *gmap, Config *param, int irank)
 
                         }
                     }
+
+                    dV_tot += dV;
                     (*data)->wc[ii] = (*data)->wch[ii];
+                    // if (dV < 1e-20) {
+                    //     (*data)->wc[ii] = (*data)->wch[ii];
+                    // }
+                    // else {
+                    //     (*data)->h[ii] = (*data)->hwc[ii];
+                    // }
                     (*data)->room[ii] = ((*data)->wcs[ii] - (*data)->wc[ii]) * param->dx*param->dy*gmap->dz3d[ii];
                 }
             }
-
         }
-
     }
+    // printf(" >> Total number of alloc type1=%d, type2=%d, type3=%d, type4=%d\n",alloc_type1,alloc_type2,alloc_type3,alloc_type4);
+    printf(" >> Total volume loss = %f\n",dV_tot);
 }
 
 // >>>>> Check if a grid cell is adjacent to a saturated cell <<<<<
@@ -1011,7 +1046,7 @@ double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV)
                     (*data)->wc[ll] += dVzm / (param->dx*param->dy*gmap->dz3d[ll]);
                     (*data)->room[ll] -= dVzm;
                     (*data)->qz[ll] += dVzm / (param->dx * param->dy * param->dt);
-                    dV = 0.0;
+                    dVzm = 0.0;
                     break;
                 }
                 else
@@ -1038,7 +1073,11 @@ double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV)
             }
             else
             {
-                if (param->bctype_GW[5] == 1)   {dVzm = 0.0;}
+                if (param->bctype_GW[5] == 1)
+                {
+                    (*data)->qz[gmap->icjckM[ll]] += dVzm / (param->dx * param->dy * param->dt);
+                    dVzm = 0.0;
+                }
                 // if top surface is no-flux or fixed q, send extra moisture back down
                 else
                 {
@@ -1066,14 +1105,13 @@ double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV)
                     }
                 }
             }
-
+            // Print warning if too much water remains after redistribution
             if (dVzm / (param->dx*param->dy*gmap->dz3d[ii]) > 1e-2)
             {
                 printf(" WARNING : extra moisture amount %f during 'send up' for cell (%d, %d, %d)\n", \
                     dVzm / (param->dx*param->dy*gmap->dz3d[ii]), gmap->ii[ii],gmap->jj[ii],gmap->kk[ii]);
                 dVzm = 0.0;
             }
-
         }
     }
     // send down
@@ -1113,7 +1151,7 @@ double allocate_send(Data **data, Map *gmap, Config *param, int ii, double dV)
                 {
                     printf(" WARNING : extra moisture amount %f during 'send down' for cell (%d, %d, %d)\n", \
                         dVzp / (param->dx*param->dy*gmap->dz3d[ii]), gmap->ii[ii],gmap->jj[ii],gmap->kk[ii]);
-                    dVzm = 0.0;
+                    dVzp = 0.0;
                 }
             }
         }
@@ -1339,6 +1377,100 @@ double allocate_recv(Data **data, Map *gmap, Config *param, int ii, double dV)
         }
         if (dVzp > 0.0) {if (param->bctype_GW[4] == 1)   {dVzp = 0.0;}}
     }
+    // // send in x direction
+    // if ((*data)->rsplit[0] > 0)
+    // {
+    //     dVxp = dV * (*data)->rsplit[0];
+    //     ll = gmap->iPjckc[ii];
+    //     if ((*data)->wc[ll] > (*data)->wcr[ll])
+    //     {
+    //         if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVxp / (param->dx*param->dy*gmap->dz3d[ll]))
+    //         {
+    //             (*data)->wc[ll] -= dVxp / (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qx[gmap->iMjckc[ll]] += dVxp / (gmap->dz3d[ll] * param->dy * param->dt);
+    //             (*data)->room[ll] += dVxp;
+    //             dVxp = 0.0;
+    //         }
+    //         else
+    //         {
+    //             dVxp -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qx[gmap->iMjckc[ll]] += ((*data)->wc[ll]-(*data)->wcr[ll]) / (gmap->dz3d[ll] * param->dy * param->dt);
+    //             (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->wc[ll] = (*data)->wcr[ll];
+    //         }
+    //     }
+    // }
+    // if ((*data)->rsplit[1] > 0)
+    // {
+    //     dVxm = dV * (*data)->rsplit[1];
+    //     ll = gmap->iMjckc[ii];
+    //     if ((*data)->wc[ll] > (*data)->wcr[ll])
+    //     {
+    //         if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVxm / (param->dx*param->dy*gmap->dz3d[ll]))
+    //         {
+    //             (*data)->wc[ll] -= dVxm / (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qx[ll] -= dVxm / (gmap->dz3d[ll] * param->dy * param->dt);
+    //             (*data)->room[ll] += dVxm;
+    //             dVxm = 0.0;
+    //         }
+    //         else
+    //         {
+    //             dVxm -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qx[ll] -= ((*data)->wc[ll]-(*data)->wcr[ll]) / (gmap->dz3d[ll] * param->dy * param->dt);
+    //             (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->wc[ll] = (*data)->wcr[ll];
+    //         }
+    //     }
+    // }
+    // // send in y direction
+    // if ((*data)->rsplit[2] > 0)
+    // {
+    //     dVyp = dV * (*data)->rsplit[2];
+    //     ll = gmap->icjPkc[ii];
+    //     if ((*data)->wc[ll] > (*data)->wcr[ll])
+    //     {
+    //         if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVyp / (param->dx*param->dy*gmap->dz3d[ll]))
+    //         {
+    //             (*data)->wc[ll] -= dVyp / (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qy[gmap->icjMkc[ll]] += dVyp / (gmap->dz3d[ll] * param->dx * param->dt);
+    //             (*data)->room[ll] += dVyp;
+    //             dVyp = 0.0;
+    //         }
+    //         else
+    //         {
+    //             dVyp -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qy[gmap->icjMkc[ll]] += ((*data)->wc[ll]-(*data)->wcr[ll]) / (gmap->dz3d[ll] * param->dx * param->dt);
+    //             (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->wc[ll] = (*data)->wcr[ll];
+    //         }
+    //     }
+    //     // limite recv to 1 adjacent cell, ZhiLi20200827
+    //     dVyp = 0.0;
+    // }
+    // if ((*data)->rsplit[3] > 0)
+    // {
+    //     dVym = dV * (*data)->rsplit[3];
+    //     ll = gmap->icjMkc[ii];
+    //     if ((*data)->wc[ll] > (*data)->wcr[ll])
+    //     {
+    //         if (((*data)->wc[ll]-(*data)->wcr[ll]) > dVym / (param->dx*param->dy*gmap->dz3d[ll]))
+    //         {
+    //             (*data)->wc[ll] -= dVym / (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qy[ll] -= dVym / (gmap->dz3d[ll] * param->dx * param->dt);
+    //             (*data)->room[ll] += dVym;
+    //             dVym = 0.0;
+    //         }
+    //         else
+    //         {
+    //             dVym -= ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->qy[ll] -= ((*data)->wc[ll]-(*data)->wcr[ll]) / (gmap->dz3d[ll] * param->dx * param->dt);
+    //             (*data)->room[ll] += ((*data)->wc[ll]-(*data)->wcr[ll]) * (param->dx*param->dy*gmap->dz3d[ll]);
+    //             (*data)->wc[ll] = (*data)->wcr[ll];
+    //         }
+    //     }
+    //     // limite recv to 1 adjacent cell, ZhiLi20200827
+    //     dVym = 0.0;
+    // }
     // Check if reversed send is needed
     if (dVzp + dVzm > 0)
     {
@@ -1413,10 +1545,13 @@ void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int ira
     else if (dq_max < 0.01) {(*param)->dt = (*param)->dt * r_inc;}
     if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
     if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
+    // if (sat == 1 & unsat == 0) {(*param)->dt = (*param)->dt_max;}
     // apply the Courant number criteria
+    // if ((*param)->dt > dt_Comin & sat == 1 & unsat == 1)   {(*param)->dt = dt_Comin;}
     if ((*param)->dt > dt_Comin)   {(*param)->dt = dt_Comin;}
     if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
     if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
+    // printf("  >> dt by CO = %f\n",dt_Comin);
     // unify dt for all processes
     if ((*param)->use_mpi == 1)
     {

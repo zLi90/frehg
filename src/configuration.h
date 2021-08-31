@@ -25,7 +25,7 @@ typedef struct Config
     int *bctype_SW, *inflow_locX, *inflow_locY;
     int n_tide, n_inflow, *tide_locX, *tide_locY;
     int *tide_dat_len, *inflow_dat_len;
-    int *tide_file, *inflow_file, evap_file, rain_file, evap_model;
+    int *tide_file, *inflow_file, evap_file, rain_file, evap_model, rain_dat_len, evap_dat_len;
     int sim_wind, wind_file, wind_dat_len;
     double init_winddir, init_windspd, Cw, CwT, north_angle;
     // subgrid model

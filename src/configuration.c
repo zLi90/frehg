@@ -85,8 +85,10 @@ void read_input(Config **param)
     (*param)->evap_file = (int) read_one_input_double("evap_file", "input");
     (*param)->evap_model = (int) read_one_input_double("evap_model", "input");
     (*param)->q_evap = read_one_input_double("q_evap", "input");
+    (*param)->evap_dat_len = (int) read_one_input_double("evap_dat_len", "input");
     (*param)->rain_file = (int) read_one_input_double("rain_file", "input");
     (*param)->q_rain = read_one_input_double("q_rain", "input");
+    (*param)->rain_dat_len = (int) read_one_input_double("rain_dat_len", "input");
 
     (*param)->n_inflow = (int) read_one_input_double("n_inflow", "input");
     (*param)->inflow_locX = read_one_input_array("inflow_locX", "input", 2*(*param)->n_inflow);

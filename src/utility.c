@@ -516,8 +516,8 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
         write_one_file((*data)->dept_out, "depth", param, tt, param->N2CI);
         write_one_file((*data)->uu_out, "uu", param, tt, param->N2CI);
         write_one_file((*data)->vv_out, "vv", param, tt, param->N2CI);
-        write_one_file((*data)->un_out, "un", param, tt, param->N2CI);
-        write_one_file((*data)->vn_out, "vn", param, tt, param->N2CI);
+        // write_one_file((*data)->un_out, "un", param, tt, param->N2CI);
+        // write_one_file((*data)->vn_out, "vn", param, tt, param->N2CI);
 
         if (param->sim_groundwater == 1)
         {write_one_file((*data)->seep_out, "seepage", param, tt, param->N2CI);}

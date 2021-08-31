@@ -42,6 +42,7 @@ typedef struct Data
     int **tideloc, *tideloc_len, **inflowloc, *inflowloc_len;
     double **tide, **t_tide, *current_tide;
     double *rain, *evap, *q_rain, *t_rain, *q_evap, *t_evap, *rain_sum;
+    double *rain_data, *evap_data, *current_rain, *current_evap;
     double **inflow, **t_inflow, *current_inflow;
     double *wind_dir, *wind_spd, *current_windspd, *current_winddir, *t_wind;
     // scalar

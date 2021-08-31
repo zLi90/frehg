@@ -126,7 +126,6 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
     update_velocity(data, smap, param, irank);
     // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
-    // printf("Velocity NEW : velo = %f, %f\n",(*data)->uu[30],(*data)->vv[30]);
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
@@ -271,11 +270,19 @@ void wind_source(Data **data, Map *smap, Config *param, int ii)
     ((*data)->current_windspd[0] - (*data)->uu[ii]*cos(omega) - (*data)->vv[ii]*sin(omega));
     // apply the thin layer model when necessary
     if ((*data)->deptx[ii] < param->hD)
-    {tauXP = tau * exp(param->CwT*((*data)->deptx[ii]-param->hD)/param->hD);}
+    {
+        tauXP = tau * exp(param->CwT*((*data)->deptx[ii]-param->hD)/param->hD);
+        if ((*data)->deptx[ii] < 0.5*param->hD) {tauXP = 0.0;}
+        // tauXP = 0.0;
+    }
     else
     {tauXP = tau;}
     if ((*data)->depty[ii] < param->hD)
-    {tauYP = tau * exp(param->CwT*((*data)->depty[ii]-param->hD)/param->hD);}
+    {
+        tauYP = tau * exp(param->CwT*((*data)->depty[ii]-param->hD)/param->hD);
+        if ((*data)->depty[ii] < 0.5*param->hD) {tauYP = 0.0;}
+        // tauYP = 0.0;
+    }
     else
     {tauYP = tau;}
     // add wind drag to the source term
@@ -450,7 +457,6 @@ void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vect
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
-
 }
 
 // >>>>> Enforce boundary condition for free surface
@@ -588,11 +594,6 @@ void subsurface_source(Data **data, Map *smap, Config *param)
                 (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
                 (*data)->reset_seepage[ii] = 1;
             }
-            // if ((*data)->qseepage[ii]*param->dt > param->min_dept)
-            // {
-            //     (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
-            //     (*data)->reset_seepage[ii] = 1;
-            // }
             else
             {(*data)->reset_seepage[ii] = 0;}
         }

@@ -36,6 +36,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
     {
         // // scalar mass
         (*data)->sm_surf[kk][ii] = (*data)->s_surf[kk][ii] * (*data)->Vsn[ii];
+
         // scalar advection
         // x advection
         if ((*data)->Fu[ii] > 0)
@@ -105,6 +106,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
         }
         (*data)->sm_surf[kk][ii] = (*data)->sm_surf[kk][ii] + param->dt *
             (-(*data)->Fu[ii]*sip + (*data)->Fu[smap->iMjc[ii]]*sim - (*data)->Fv[ii]*sjp + (*data)->Fv[smap->icjM[ii]]*sjm);
+
         // scalar diffusion
         (*data)->sm_surf[kk][ii] = (*data)->sm_surf[kk][ii] + param->dt *
             ((param->difux*(*data)->Asx[ii]/param->dx) * ((*data)->s_surf[kk][smap->iPjc[ii]]-(*data)->s_surf[kk][ii]) -
@@ -156,6 +158,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
                 }
             }
         }
+
     }
     // update scalar
     for (ii = 0; ii < param->n2ci; ii++)
@@ -164,6 +167,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
         {(*data)->s_surf[kk][ii] = (*data)->sm_surf[kk][ii] / (*data)->Vflux[ii];}
         else
         {(*data)->s_surf[kk][ii] = 0.0;}
+
         // apply the limiter
         if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0)
         {
@@ -284,6 +288,8 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
             else
             {jkm = dispersive_flux(data, gmap, param, gmap->icjckM[ii], kk, "z");}
         }
+        // printf("(%d,%d) : sm=%f, (jp,jm)=(%f,%f), (kp,km)=(%f,%f) sm-->%f\n",gmap->jj[ii],gmap->kk[ii],(*data)->sm_subs[kk][ii],jjp,jjm,jkp,jkm,
+        //     (*data)->sm_subs[kk][ii] + param->dt * ((jip - jim) + (jjp - jjm) + (jkp - jkm)));
         (*data)->sm_subs[kk][ii] = (*data)->sm_subs[kk][ii] + param->dt * ((jip - jim) + (jjp - jjm) + (jkp - jkm));
 
         // surface-subsurface exchange
@@ -359,30 +365,24 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                 }
             }
         }
+
     }
     for (ii = 0; ii < param->n3ci; ii++)
     {
+
+        // (*data)->Vgflux[ii] = (*data)->wc[ii] * param->dx * param->dy * gmap->dz3d[ii];
         // update salinity
         if ((*data)->Vgflux[ii] > 0)
         {(*data)->s_subs[kk][ii] = (*data)->sm_subs[kk][ii] / (*data)->Vgflux[ii];}
         else
         {(*data)->s_subs[kk][ii] = 0.0;}
 
-        if (gmap->jj[ii] == 0 & param->bctype_GW[3] == 2)
-        {
-            // remove limiter for side boundaries
-        }
-        else if (gmap->jj[ii] == param->ny-1 & param->bctype_GW[2] == 2)
-        {
-            // remove limiter for side boundaries
-        }
-        else
-        {
-            if ((*data)->s_subs[kk][ii] > s_max[ii] & s_max[ii] < s_lim_hi)
-            {(*data)->s_subs[kk][ii] = s_max[ii];}
-            else if ((*data)->s_subs[kk][ii] < s_min[ii] & s_min[ii] > 0)
-            {(*data)->s_subs[kk][ii] = s_min[ii];}
-        }
+
+        // scalar limiter considering evaporation, Geng2015
+        // if (gmap->istop[ii] == 1 & param->bctype_GW[5] != 0 & gmap->ii[ii] >= 5 & gmap->ii[ii] < 95)
+        // {
+        //     s_max[ii] += 0.01;
+        // }
 
         // detect extreme values
         if ((*data)->s_subs[kk][ii] > s_lim_hi & gmap->actv[ii] == 1)
@@ -393,6 +393,7 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         else if ((*data)->s_subs[kk][ii] < 0 & gmap->actv[ii] == 1)
         {
             mpi_print("WARNING: Scalar extremes < 0  detected for groundwater!", irank);
+            // printf("scalar (%d,%d,%d) = %f   actv=%d wc=%f\n",gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],(*data)->s_subs[kk][ii],gmap->actv[ii],(*data)->wc[ii]);
             (*data)->s_subs[kk][ii] = 0.0;
         }
         if (gmap->actv[ii] == 0)    {(*data)->s_subs[kk][ii] = 0.0;}
@@ -571,6 +572,13 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             }
         }
         else    {skm = 0.0;}
+        // scalar doesn't leave subsurface domain if surface is dry
+        if (param->bctype_GW[5] == 2 & gmap->istop[icell] == 1)
+        {
+            // scalar doesn't leave subsurface domain if surface is dry
+            if (param->sim_shallowwater == 1 & (*data)->dept[gmap->top2d[icell]] <= 0.0)   {skm = 0.0;}
+            else if (param->sim_shallowwater == 0)  {skm = 0.0;}
+        }
     }
     else
     {
@@ -721,10 +729,10 @@ void enforce_scalar_bc(Data **data, Map *gmap, Config *param, int kk, int irank)
             {
                 (*data)->s_subs[kk][gmap->icjPkc[ii]] = param->s_yp[kk];
                 // Henry's problem, ZhiLi20210413
-                if (gmap->kk[ii] < 2)
-                {
-                    (*data)->s_subs[kk][gmap->icjPkc[ii]] = (*data)->s_subs[kk][ii];
-                }
+                // if (gmap->kk[ii] < 2)
+                // {
+                //     (*data)->s_subs[kk][gmap->icjPkc[ii]] = (*data)->s_subs[kk][ii];
+                // }
 
             }
             else
@@ -767,8 +775,11 @@ void update_rhovisc(Data **data, Map *gmap, Config *param, int irank)
             (*data)->r_rhon[ii] = (*data)->r_rho[ii];
             if (gmap->actv[ii] == 1)
             {
+                // (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
+                // (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.00156;
                 (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.0007;
                 (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
+                // (*data)->r_visc[ii] = 1.0;
             }
             else
             {
