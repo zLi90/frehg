@@ -1,7 +1,7 @@
 # frehg
 Frehg stands for Fine Resolution Environmental Hydrodynamic and Groundwater model. It is a coupled 2D depth-integrated hydrodynamic and 3D variably-saturated groundwater model.
 
-Currently the Frehg model is still under development. As of 2021-01, the capabilities of Frehg includes:
+Currently the Frehg model is still under development. As of 2021-10, the capabilities of Frehg includes:
 - Simulate overland flow with either 2D depth-integrated Navier-Stokes equations, or a diffusive wave approximation of the shallow water equation.
 - Simulate overland flow on coarse grids with subgrid-scale topography.
 - Simulate 3D variably-saturated groundwater flow with the predictor-corrector method.
