@@ -41,6 +41,9 @@ void read_input(Config **param)
     (*param)->dt_out = read_one_input_double("dt_out", "input");
     if ((*param)->use_mpi == 1)
     {(*param)->dt_root = malloc((*param)->mpi_nx*(*param)->mpi_ny*sizeof(double));}
+    (*param)->n_monitor = (int) read_one_input_double("n_monitor", "input");
+    (*param)->monitor_locX = read_one_input_array("monitor_locX", "input", (*param)->n_monitor);
+    (*param)->monitor_locY = read_one_input_array("monitor_locY", "input", (*param)->n_monitor);
 
     // Bathymetry
     (*param)->bath_file = (int) read_one_input_double("bath_file", "input");

@@ -18,6 +18,7 @@ typedef struct Data
     double *uu_out, *vv_out, *un_out, *vn_out, *eta_out, *dept_out, *seep_out;
     double *Fu, *Fv, *Ex, *Ey, *Dx, *Dy, *CDx, *CDy, *wtfx, *wtfy, *cflx, *cfly, *cfl_active;
     double *Vs, *Vsn, *Vflux, *Vsx, *Vsy, *Asx, *Asy, *Asz, *Aszx, *Aszy;
+    int *monitor, *monitor_rank;
     // subgrid settings
     int *eta_ind;
     double *layers_sub;

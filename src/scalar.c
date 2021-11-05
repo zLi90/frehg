@@ -26,7 +26,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
     int ii, jj, ll;
     double sip, sim, sjp, sjm, s_lim_hi, s_lim_lo, s_rainevap, Vre;
     double *s_min, *s_max;
-    s_lim_hi = 1000.0;
+    s_lim_hi = 200.0;
     s_lim_lo = 0.0;
     s_min = malloc(param->n2ci*sizeof(double));
     s_max = malloc(param->n2ci*sizeof(double));
@@ -158,7 +158,6 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
                 }
             }
         }
-
     }
     // update scalar
     for (ii = 0; ii < param->n2ci; ii++)
@@ -175,17 +174,23 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             {(*data)->s_surf[kk][ii] = s_max[ii];}
             else if ((*data)->s_surf[kk][ii] < s_min[ii] & s_min[ii] != s_lim_hi)
             {(*data)->s_surf[kk][ii] = s_min[ii];}
-            if ((*data)->s_surf[kk][ii] >= s_lim_hi | (*data)->s_surf[kk][ii] < s_lim_lo)
+            if ((*data)->s_surf[kk][ii] >= s_lim_hi)
             {
-                mpi_print("WARNING: Scalar extremes detected! Enforce the problematic cell to dry!", irank);
-                printf("(ii,jj)=(%d,%d)  surf=%f, dept=%f, s=%f\n",smap->ii[ii],smap->jj[ii],(*data)->eta[ii],(*data)->dept[ii],(*data)->s_surf[kk][ii]);
-                (*data)->s_surf[kk][ii] = 0.0;
-                (*data)->eta[ii] -= (*data)->dept[ii];
-                (*data)->dept[ii] = 0.0;
+                // mpi_print("WARNING: Surface scalar extremes detected! Enforce the problematic cell to dry!", irank);
+                // printf("(ii,jj)=(%d,%d)  surf=%f, dept=%f, s=%f\n",smap->ii[ii],smap->jj[ii],(*data)->eta[ii],(*data)->dept[ii],(*data)->s_surf[kk][ii]);
+                // (*data)->s_surf[kk][ii] = 0.0;
+                // (*data)->eta[ii] -= (*data)->dept[ii];
+                // (*data)->dept[ii] = 0.0;
+                (*data)->s_surf[kk][ii] = s_lim_hi;
+                
+            }
+            else if ((*data)->s_surf[kk][ii] < s_lim_lo)
+            {
+                (*data)->s_surf[kk][ii] = s_lim_lo;
             }
         }
         // rainfall/evaporation
-        if ((*data)->Vs[ii] > 0 & (*data)->dept[ii] > 0)
+        if ((*data)->Vs[ii] > 0)
         {
             if ((*data)->rain_sum[0] > param->min_dept)
             {Vre = ((*data)->rain_sum[0] - (*data)->evap[0]) * (*data)->Asz[ii] * param->dt;}
@@ -194,6 +199,12 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             (*data)->s_surf[kk][ii] = (*data)->s_surf[kk][ii] * (*data)->Vs[ii] / ((*data)->Vs[ii] + Vre);
         }
     }
+    // Kuan 2019
+    // for (ii = 0; ii < param->n2ci; ii++)
+    // {
+    //     if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0)
+    //     {(*data)->s_surf[kk][ii] = 35.0;}
+    // }
     // enforce scalar boundary condition
     for (ii = 0; ii < param->nx; ii++)
     {
@@ -240,7 +251,7 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
     double sip, sim, sjp, sjm, skp, skm, s_lim_hi, s_lim_lo, s_rainevap;
     double jip, jim, jjp, jjm, jkp, jkm, coeff;
     double *s_min, *s_max;
-    s_lim_hi = 1000.0;
+    s_lim_hi = 200.0;
     s_lim_lo = 0.0;
     s_min = malloc(param->n3ci*sizeof(double));
     s_max = malloc(param->n3ci*sizeof(double));
@@ -253,6 +264,8 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
     {
         // scalar mass
         (*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vgn[ii];
+
+        // (*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vgflux[ii];
 
         // scalar of kM boundary
         if (gmap->istop[ii] == 1)
@@ -275,7 +288,9 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         jip = dispersive_flux(data, gmap, param, ii, kk, "x");
         jim = dispersive_flux(data, gmap, param, gmap->iMjckc[ii], kk, "x");
         jjp = dispersive_flux(data, gmap, param, ii, kk, "y");
+        if (gmap->jj[ii] == param->ny-1 & irank >= param->mpi_nx*(param->mpi_ny-1)) {jjp = jjp * 2.0;}
         jjm = dispersive_flux(data, gmap, param, gmap->icjMkc[ii], kk, "y");
+        if (gmap->jj[ii] == 0 & irank < param->mpi_nx) {jjm = jjm * 2.0;}
         jkp = dispersive_flux(data, gmap, param, ii, kk, "z");
         if (gmap->istop[ii] != 1)
         {jkm = dispersive_flux(data, gmap, param, gmap->icjckM[ii], kk, "z");}
@@ -290,6 +305,7 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         }
         // printf("(%d,%d) : sm=%f, (jp,jm)=(%f,%f), (kp,km)=(%f,%f) sm-->%f\n",gmap->jj[ii],gmap->kk[ii],(*data)->sm_subs[kk][ii],jjp,jjm,jkp,jkm,
         //     (*data)->sm_subs[kk][ii] + param->dt * ((jip - jim) + (jjp - jjm) + (jkp - jkm)));
+
         (*data)->sm_subs[kk][ii] = (*data)->sm_subs[kk][ii] + param->dt * ((jip - jim) + (jjp - jjm) + (jkp - jkm));
 
         // surface-subsurface exchange
@@ -339,17 +355,10 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
         {
             if (gmap->istop[ii] == 1)
             {
-                if (param->sim_shallowwater == 1)
+                if (param->sim_shallowwater == 1 & (*data)->dept[gmap->top2d[ii]] > 0)
                 {
-                    if ((*data)->dept[gmap->top2d[ii]] > 0)
-                    {
-                        if ((*data)->s_subs[kk][gmap->icjckM[ii]] > s_max[ii])    {s_max[ii] = (*data)->s_subs[kk][gmap->icjckM[ii]];}
-                        if ((*data)->s_subs[kk][gmap->icjckM[ii]] < s_min[ii])    {s_min[ii] = (*data)->s_subs[kk][gmap->icjckM[ii]];}
-                    }
-                    else
-                    {
-                        // nothing is needed
-                    }
+                    if ((*data)->s_subs[kk][gmap->icjckM[ii]] > s_max[ii])    {s_max[ii] = (*data)->s_subs[kk][gmap->icjckM[ii]];}
+                    if ((*data)->s_subs[kk][gmap->icjckM[ii]] < s_min[ii])    {s_min[ii] = (*data)->s_subs[kk][gmap->icjckM[ii]];}
                 }
                 else
                 {
@@ -365,35 +374,51 @@ void scalar_groundwater(Data **data, Map *gmap, Config *param, int irank, int nr
                 }
             }
         }
-
     }
     for (ii = 0; ii < param->n3ci; ii++)
     {
-
-        // (*data)->Vgflux[ii] = (*data)->wc[ii] * param->dx * param->dy * gmap->dz3d[ii];
-        // update salinity
+        // update scalar concentration
         if ((*data)->Vgflux[ii] > 0)
         {(*data)->s_subs[kk][ii] = (*data)->sm_subs[kk][ii] / (*data)->Vgflux[ii];}
         else
         {(*data)->s_subs[kk][ii] = 0.0;}
 
-
         // scalar limiter considering evaporation, Geng2015
-        // if (gmap->istop[ii] == 1 & param->bctype_GW[5] != 0 & gmap->ii[ii] >= 5 & gmap->ii[ii] < 95)
+        // if (gmap->istop[ii] == 1 & param->bctype_GW[5] != 0 & gmap->jj[ii] >= 20)
         // {
-        //     s_max[ii] += 0.01;
+        //     s_max[ii] += 0.02;
         // }
+
+        if (param->sim_shallowwater == 1)
+        {
+            if (gmap->istop[ii] == 1 & (*data)->qtop[gmap->top2d[ii]] > 0 & (*data)->dept[gmap->top2d[ii]] <= 0.0)
+            {
+                s_max[ii] += 0.01;
+            }
+        }
+
+        // apply scalar limiter in the interior
+        if ((*data)->s_subs[kk][ii] > s_max[ii] & s_max[ii] < s_lim_hi)
+        {(*data)->s_subs[kk][ii] = s_max[ii];}
+        else if ((*data)->s_subs[kk][ii] < s_min[ii] & s_min[ii] > 0)
+        {(*data)->s_subs[kk][ii] = s_min[ii];}
 
         // detect extreme values
         if ((*data)->s_subs[kk][ii] > s_lim_hi & gmap->actv[ii] == 1)
         {
-            mpi_print("WARNING: Scalar extremes > 1000 detected for groundwater!", irank);
-            (*data)->s_subs[kk][ii] = 0.0;
+            // mpi_print("WARNING: Scalar extremes > 1000 detected for groundwater!", irank);
+            // printf("(ii,jj,kk,irank)=(%d,%d,%d,%d)  head=%f, wc=%f, s=%f\n",
+            //     gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],irank,(*data)->h[ii],(*data)->wc[ii],(*data)->s_subs[kk][ii]);
+            // (*data)->s_subs[kk][ii] = 0.0;
+            (*data)->s_subs[kk][ii] = s_lim_hi;
         }
         else if ((*data)->s_subs[kk][ii] < 0 & gmap->actv[ii] == 1)
         {
-            mpi_print("WARNING: Scalar extremes < 0  detected for groundwater!", irank);
-            // printf("scalar (%d,%d,%d) = %f   actv=%d wc=%f\n",gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],(*data)->s_subs[kk][ii],gmap->actv[ii],(*data)->wc[ii]);
+            if ((*data)->s_subs[kk][ii] < -0.01) {
+                mpi_print("WARNING: Scalar extremes < 0  detected for groundwater!", irank);
+                printf("(ii,jj,kk,irank)=(%d,%d,%d,%d)  head=%f, wc=%f, s=%f\n",
+                    gmap->ii[ii],gmap->jj[ii],gmap->kk[ii],irank,(*data)->h[ii],(*data)->wc[ii],(*data)->s_subs[kk][ii]);
+            }
             (*data)->s_subs[kk][ii] = 0.0;
         }
         if (gmap->actv[ii] == 0)    {(*data)->s_subs[kk][ii] = 0.0;}
@@ -623,7 +648,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
         {
             fx = coeff * (*data)->Dxx[icell] * ((*data)->s_subs[kk][gmap->iPjckc[icell]] - (*data)->s_subs[kk][icell]) / param->dx / param->dx;
         }
-        if ((*data)->Ky[icell] > 0 & gmap->actv[gmap->icjPkc[icell]] == 1)
+        if ((*data)->Ky[icell] > 0 & gmap->actv[gmap->icjPkc[icell]] == 1 & icell < param->n3ci)
         {
             iPjP = gmap->iPjckc[icell] + param->nz*param->nx;
             iPjM = gmap->iPjckc[icell] - param->nz*param->nx;
@@ -631,7 +656,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
             sym = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->iPjckc[icell]] + (*data)->s_subs[kk][gmap->icjMkc[icell]] + (*data)->s_subs[kk][iPjM]);
             fy = coeff * (*data)->Dxy[icell] * (syp - sym) / param->dy / param->dy;
         }
-        if ((*data)->Kz[icell] > 0 & gmap->actv[gmap->icjckP[icell]] == 1)
+        if ((*data)->Kz[icell] > 0 & gmap->actv[gmap->icjckP[icell]] == 1 & icell < param->n3ci)
         {
             iPkP = gmap->iPjckc[icell] + 1;
             iPkM = gmap->iPjckc[icell] - 1;
@@ -643,7 +668,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
     else if (strcmp(axis, "y") == 0 & gmap->actv[icell] == 1)
     {
         coeff = gmap->dz3d[icell] * param->dy * param->dx;
-        if ((*data)->Kx[icell] > 0 & gmap->actv[gmap->iPjckc[icell]] == 1)
+        if ((*data)->Kx[icell] > 0 & gmap->actv[gmap->iPjckc[icell]] == 1 & icell < param->n3ci)
         {
             iPjP = gmap->icjPkc[icell] + param->nz;
             iMjP = gmap->icjPkc[icell] - param->nz;
@@ -656,7 +681,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
             fy = coeff * (*data)->Dyy[icell] * ((*data)->s_subs[kk][gmap->icjPkc[icell]] - (*data)->s_subs[kk][icell]) / param->dy / param->dy;
             // if (gmap->jj[icell] == param->ny-1 & param->bctype_GW[2] == 1)  {fy = fy * 2.0;}
         }
-        if ((*data)->Kz[icell] > 0 & gmap->actv[gmap->icjckP[icell]] == 1)
+        if ((*data)->Kz[icell] > 0 & gmap->actv[gmap->icjckP[icell]] == 1 & icell < param->n3ci)
         {
             jPkP = gmap->icjPkc[icell] + 1;
             jPkM = gmap->icjPkc[icell] - 1;
@@ -668,7 +693,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
     else if (strcmp(axis, "z") == 0 & gmap->actv[icell] == 1)
     {
         coeff = gmap->dz3d[icell] * param->dy * param->dx;
-        if ((*data)->Kx[icell] > 0 & gmap->actv[gmap->iPjckc[icell]] == 1)
+        if ((*data)->Kx[icell] > 0 & gmap->actv[gmap->iPjckc[icell]] == 1 & icell < param->n3ci)
         {
             iPkP = gmap->icjckP[icell] + param->nz;
             iMkP = gmap->icjckP[icell] - param->nz;
@@ -676,7 +701,7 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
             sxm = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->iMjckc[icell]] + (*data)->s_subs[kk][gmap->icjckP[icell]] + (*data)->s_subs[kk][iMkP]);
             fx = coeff * (*data)->Dzx[icell] * (sxp - sxm) / param->dx / param->dx;
         }
-        if ((*data)->Ky[icell] > 0 & gmap->actv[gmap->icjPkc[icell]] == 1)
+        if ((*data)->Ky[icell] > 0 & gmap->actv[gmap->icjPkc[icell]] == 1 & icell < param->n3ci)
         {
             jPkP = gmap->icjckP[icell] + param->nz*param->nx;
             jMkP = gmap->icjckP[icell] - param->nz*param->nx;
@@ -773,19 +798,26 @@ void update_rhovisc(Data **data, Map *gmap, Config *param, int irank)
         for (ii = 0; ii < param->n3ct; ii++)
         {
             (*data)->r_rhon[ii] = (*data)->r_rho[ii];
-            if (gmap->actv[ii] == 1)
-            {
-                // (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
-                // (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.00156;
-                (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.0007;
-                (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
-                // (*data)->r_visc[ii] = 1.0;
-            }
-            else
-            {
-                (*data)->r_rho[ii] = 1.0;
-                (*data)->r_visc[ii] = 1.0;
-            }
+            (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
+            (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
+            // if (gmap->actv[ii] == 1)
+            // {
+            //     (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
+            //     // (*data)->r_visc[ii] = 1.0 - (*data)->s_subs[0][ii] * 0.00156;
+            //     // (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.00068;
+            //     (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
+            //     // (*data)->r_visc[ii] = 1.0;
+            // }
+            // else if (ii > param->n3ci)
+            // {
+            //     (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
+            //     (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
+            // }
+            // else
+            // {
+            //     (*data)->r_rho[ii] = 1.0;
+            //     (*data)->r_visc[ii] = 1.0;
+            // }
 
         }
     }
@@ -799,13 +831,13 @@ void dispersion_tensor(Data **data, Map *gmap, Config *param)
     double q_abs;
     for (ii = 0; ii < param->n3ct; ii++)
     {
-        (*data)->Dxx[ii] = param->difux;
+        (*data)->Dxx[ii] = param->difux * (*data)->wcs[ii];
         (*data)->Dxy[ii] = 0.0;
         (*data)->Dxz[ii] = 0.0;
-        (*data)->Dyy[ii] = param->difuy;
+        (*data)->Dyy[ii] = param->difuy * (*data)->wcs[ii];
         (*data)->Dyx[ii] = 0.0;
         (*data)->Dyz[ii] = 0.0;
-        (*data)->Dzz[ii] = param->difuz;
+        (*data)->Dzz[ii] = param->difuz * (*data)->wcs[ii];
         (*data)->Dzx[ii] = 0.0;
         (*data)->Dzy[ii] = 0.0;
     }

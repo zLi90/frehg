@@ -39,7 +39,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         // get boundary condition
         get_current_bc(data, param, t_current);
         get_evaprain(data, gmap, param, t_current);
-
         // execute solvers
         if (param->sim_shallowwater == 1)
         {solve_shallowwater(data, smap, gmap, param, irank, nrank);}
@@ -47,8 +46,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         if (param->sim_groundwater == 1)
         {
             solve_groundwater(data, smap, gmap, param, irank, nrank);
-            if ((*data)->repeat[0] == 1)
-            {mpi_print("  >>> CFL limiter violated for groundwater solver! Should reduce dt!\n",irank);}
         }
 
         if (param->sim_shallowwater == 1)
@@ -77,12 +74,47 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         if ((*data)->rain_sum[0] > param->min_dept)     {(*data)->rain_sum[0] = 0.0;}
 
         // model output
-        if (fabs(t_current - last_save - param->dt_out) < 0.5*param->dt)
+        if (fabs(t_current - last_save - param->dt_out) <= param->dt)
         {
             t_save = round(t_current / param->dt_out) * param->dt_out;
-            last_save = t_current;
+            last_save = t_save;
             write_output(data, gmap, param, t_save, 0, irank);
         }
+        if (param->n_monitor > 0 & param->sim_shallowwater == 1)
+        {
+            for (ii = 0; ii < param->n_monitor; ii++)
+            {
+                if (irank == (*data)->monitor_rank[ii])
+                {
+                    char fullname[50], fid[2];
+                    strcpy(fullname, "monitor");
+                    sprintf(fid, "%d", ii+1);
+                    strcat(fullname, fid);
+                    strcat(fullname, "_surf");
+                    append_to_file(fullname, (*data)->eta[(*data)->monitor[ii]] - (*data)->offset[0], param);
+                    if (param->n_scalar > 0)
+                    {
+                        for (kk = 0; kk < param->n_scalar; kk++)
+                        {
+                            char fullname[50], fid[2];
+                            strcpy(fullname, "monitor");
+                            sprintf(fid, "%d", ii+1);
+                            strcat(fullname, fid);
+                            strcat(fullname, "_scalar");
+                            sprintf(fid, "%d", kk+1);
+                            strcat(fullname, fid);
+                            append_to_file(fullname, (*data)->s_surf[kk][(*data)->monitor[ii]], param);
+                        }
+                    }
+                }
+            }
+        }
+        // if (max_CFL > 1.0)
+        // {
+        //     t_save = round(t_current);
+        //     printf("Save output at large CFL number!, tsave=%d\n",t_save);
+        //     write_output(data, gmap, param, t_save, 0, irank);
+        // }
         // report time
         if (irank == 0)
         {
@@ -107,7 +139,6 @@ void get_current_bc(Data **data, Config *param, double t_current)
         {
             (*data)->current_windspd[0] = interp_bc((*data)->t_wind,(*data)->wind_spd,t_current,param->wind_dat_len);
             (*data)->current_winddir[0] = interp_bc((*data)->t_wind,(*data)->wind_dir,t_current,param->wind_dat_len);
-
             // (*data)->current_winddir[0] = (*data)->wind_dir[0];
             if (t_current > 0.0)
             {
@@ -119,8 +150,6 @@ void get_current_bc(Data **data, Config *param, double t_current)
                 }
                 (*data)->current_winddir[0] = (*data)->wind_dir[ind-1];
             }
-            // a temporary limiter, ZhiLi20210502
-            // if ((*data)->current_windspd[0] > 5.0)  {(*data)->current_windspd[0] = 5.0;}
         }
         else
         {
@@ -137,7 +166,6 @@ void get_current_bc(Data **data, Config *param, double t_current)
             {(*data)->current_tide[kk] = param->init_tide[kk] + (*data)->offset[0];}
             else
             {(*data)->current_tide[kk] = interp_bc((*data)->t_tide[kk],(*data)->tide[kk],t_current,param->tide_dat_len[kk])+(*data)->offset[0];}
-
         }
     }
     // inflow
@@ -193,7 +221,7 @@ void get_current_bc(Data **data, Config *param, double t_current)
 void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
 {
     int ii, jj;
-    double temp, velo, pres, humi;
+    double temp, velo, pres, humi, t_residual;
     double rhoa, rhow, esat, qsat, resi, alpha, qsuf, qsub;
     // rainfall
     // For now, only consider uniform rainfall, ZhiLi20201117
@@ -210,34 +238,39 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
     {(*data)->current_evap[0] = interp_bc((*data)->t_evap,(*data)->evap_data,t_current,param->evap_dat_len);}
     else
     {(*data)->current_evap[0] = param->q_evap;}
+
+    // remove evaporation at night
+    // t_residual = (int)floor(t_current) % 86400;
+    // if (t_residual < 6.0 * 3600 | t_residual > 18.0 * 3600)
+    // {(*data)->current_evap[0] = 0.0;}
+
     // use the aerodynamic evap model
-    if (param->sim_groundwater)
+    if (param->sim_groundwater == 1)
     {
         if (param->evap_model == 0)
         {
             for (ii = 0; ii < param->n2ci; ii++)
-            {(*data)->evap[ii] = param->q_evap;}
+            {(*data)->evap[ii] = (*data)->current_evap[0];}
         }
         else if (param->evap_model == 1)
         {
             if (param->sim_wind == 0)   {velo = 1.0;}
-            else    {velo = (*data)->wind_spd[0];   if (velo>5.0)   {velo=5.0;}}
-            // else    {velo = (*data)->wind_spd[0];}
+            else    {velo = (*data)->wind_spd[0];}
             temp = 20.0;
             pres = 101.325;
             humi = 0.0029;
             rhoa = param->rhoa;
             rhow = param->rhow;
             esat = 0.6108 * exp(17.27 * temp / (temp + 237.3));
-            qsat = 0.622 * esat / (pres + 0.376 * esat);
+            qsat = 0.622 * esat / (pres - 0.376 * esat);
             resi = 94.909 * pow(velo, -0.9036);
             for (ii = 0; ii < param->n3ci; ii++)
             {
                 if (gmap->istop[ii] == 1)
                 {
                     jj = gmap->top2d[ii];
-                    if ((*data)->dept[jj] > 0.0)
-                    {(*data)->evap[jj] = param->q_evap;}
+                    if ((*data)->dept[jj] > 0.0 & param->sim_shallowwater == 1)
+                    {(*data)->evap[jj] = (*data)->current_evap[0];}
                     else
                     {
                         alpha = 1.8 * ((*data)->wc[ii] - param->wcr) / ((*data)->wc[ii] - param->wcr + 0.3);
@@ -249,21 +282,27 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
                 }
             }
         }
+
+        if (param->evap_file == 1 | param->evap_model == 1)
+        {
+            for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii] / (*data)->wcs[ii];}
+        }
     }
-    // assign evap data to open water
-    for (ii = 0; ii < param->n2ci; ii++)
+    else
     {
-        if ((*data)->dept[ii] > 0.0)
+        for (ii = 0; ii < param->n2ci; ii++)
         {(*data)->evap[ii] = (*data)->current_evap[0];}
     }
 
-    for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii];}
+
 
     // for Geng2015
     // for (ii = 0; ii < param->n3ci; ii++)
     // {
     //     if (gmap->istop[ii] == 1)
-    //     {if (gmap->top2d[ii] < 5 | gmap->top2d[ii] >= 95)    {(*data)->qtop[gmap->top2d[ii]] = 0.0;}}
+    //     {
+    //         if (gmap->top2d[ii] < 20)    {(*data)->qtop[gmap->top2d[ii]] = 0.0;}
+    //     }
     // }
 }
 

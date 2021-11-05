@@ -226,12 +226,19 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->jj = malloc(param->n3ci*sizeof(int));
         (*map)->kk = malloc(param->n3ci*sizeof(int));
         (*map)->actv = malloc(param->n3ct*sizeof(int));
+        (*map)->actvXp = malloc(param->n3ct*sizeof(int));
+        (*map)->actvYp = malloc(param->n3ct*sizeof(int));
         (*map)->bot3d = malloc(param->n3ci*sizeof(double));
         (*map)->dz3d = malloc(param->n3ct*sizeof(double));
         (*map)->istop = malloc(param->n3ci*sizeof(int));
         (*map)->top2d = malloc(param->n3ci*sizeof(int));
 
-        for (ii = 0; ii < param->n3ct; ii++)    {(*map)->actv[ii] = 0;}
+        for (ii = 0; ii < param->n3ct; ii++)
+        {
+            (*map)->actv[ii] = 0;
+            (*map)->actvXp[ii] = 0;
+            (*map)->actvYp[ii] = 0;
+        }
         for (ii = 0; ii < param->n3ci; ii++)
         {
             (*map)->cntr[ii] = ii;
@@ -273,7 +280,6 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             }
 
         }
-
         // get the top cell index
         for (ii = 0; ii < param->n3ci; ii++)
         {
@@ -293,7 +299,6 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             (*map)->zcntr[ii] = (*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii] - offset[0];
             if ((*map)->actv[ii] == 1)  {(*map)->nactv += 1;}
         }
-
         // calculate iP, iM, jP, jM, kP, kM maps
         (*map)->iPjckc = malloc(param->n3ci*sizeof(int));
         (*map)->iMjckc = malloc(param->n3ci*sizeof(int));
@@ -332,7 +337,6 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             else
             {(*map)->icjckM[ii] = (*map)->cntr[ii] - 1;}
         }
-
         // calculate boundary maps
         (*map)->iPin = malloc(param->ny*param->nz*sizeof(int));
         (*map)->iPou = malloc(param->ny*param->nz*sizeof(int));
@@ -392,11 +396,9 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             (*map)->actv[(*map)->jPou[ii]] = (*map)->actv[(*map)->jPin[ii]];
             (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
         }
-
         // ZhiLi20201229!!!
         for (ii = 0; ii < param->n3ct; ii++)
         {(*map)->dz3d[ii] = param->dz;}
-
         // output the z-coordinates
         if (param->use_mpi == 1)
         {
@@ -421,4 +423,5 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
     free(bath_max_arr);
     free(bath_min_global);
     free(bath_min_arr);
+
 }

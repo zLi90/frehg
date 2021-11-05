@@ -58,6 +58,9 @@ double compute_wch(Data *data, int ii, Config *param)
     // {
     //     if (h <= -0.29484)  {wc = 0.6829 - 0.09524*log(fabs(h)*100.0);}
     //     else    {wc = 0.4531 - 0.02732*log(fabs(h)*100.0);}
+    //     if (h > param->aev)  {wc = data->wcs[ii];}
+    //     if (wc > data->wcs[ii])    {wc = data->wcs[ii];}
+    //     else if (wc < data->wcr[ii])   {wc = data->wcr[ii];}
     // }
 
     return wc;
@@ -82,11 +85,6 @@ double compute_hwc(Data *data, int ii, Config *param)
             pow(pow((wcm - data->wcr[ii])/(wc - data->wcr[ii]),(1.0/m)) - 1.0,(1.0/data->vgn[ii]));
     }
     else    {h = 0.0;}
-
-    if (isnan(h))
-    {
-        printf("h, wcm, wc = %f, %f, %f\n",h,wcm,wc);
-    }
 
     // Warrick 1971
     // if (wc < 0.38-eps)

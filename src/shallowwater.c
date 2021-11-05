@@ -80,6 +80,7 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
+    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[30],(*data)->eta[30]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -126,6 +127,7 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
     update_velocity(data, smap, param, irank);
     // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
+    // printf("Velocity NEW : velo = %f, %f\n",(*data)->uu[30],(*data)->vv[30]);
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
@@ -143,6 +145,9 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->vx, smap, 2, param, irank, nrank);
     }
 
+
+    // if (param->sim_groundwater == 1)
+    // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
 }
 
 // >>>>> Momentum source term
@@ -453,10 +458,22 @@ void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, 
 void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vector x, Config *param)
 {
     size_t ii;
+    // for (ii = 0; ii < param->n2ci; ii++)
+    // {
+    //     // if (smap->ii[ii] == 80 & smap->jj[ii] == 200)
+    //     if ((*data)->dept[ii] > 0.0 & smap->jj[ii] == 67)
+    //     {
+    //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
+    //             -(*data)->Sym[ii]*1e5,-(*data)->Sxm[ii]*1e5,(*data)->Sct[ii]*1e5,-(*data)->Sxp[ii]*1e5,-(*data)->Syp[ii]*1e5,(*data)->Srhs[ii]*1e5,(*data)->eta[ii]-(*data)->offset[0]);
+    //         printf("------\n");
+    //     }
+    // }
+
     V_SetAllCmp(&x, 0.0);
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
+
 }
 
 // >>>>> Enforce boundary condition for free surface
@@ -480,6 +497,7 @@ void enforce_surf_bc(Data **data, Map *smap, Config *param, int irank, int nrank
             {
                 jj = (*data)->tideloc[kk][ii];
                 (*data)->eta[jj] = (*data)->current_tide[kk];
+                // printf("IRANK=%d  :  TIDE #%d -> tideloc=%d, elevation=%f, eta=%f\n",irank,kk,(*data)->tideloc[kk][ii],(*data)->current_tide[kk],(*data)->eta[jj]);
             }
         }
     }
@@ -531,6 +549,16 @@ void cfl_limiter(Data **data, Map *smap, Config *param)
         diff = (*data)->eta[ii] - (*data)->bottom[ii];
         if (diff > 0 & diff < param->min_dept)
         {(*data)->eta[ii] = (*data)->bottom[ii];}
+
+        // if (diff > 0)
+        // {
+        //     if (diff < param->min_dept)
+        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
+        //     else if ((*data)->eta[ii]-(*data)->offset[0] < 0.05)
+        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
+        //     else if ((*data)->eta[ii]-(*data)->offset[0] > 0.85)
+        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
+        // }
     }
 }
 
@@ -538,32 +566,49 @@ void cfl_limiter(Data **data, Map *smap, Config *param)
 void evaprain(Data **data, Map *smap, Config *param)
 {
     int ii;
-    double diff;
+    double diff, devap;
     // rainfall
     (*data)->rain_sum[0] += (*data)->rain[0] * param->dt;
-    for (ii = 0; ii < param->n2ci; ii++)
+    if (param->sim_groundwater == 0)
     {
-        if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
+        for (ii = 0; ii < param->n2ci; ii++)
         {
-            if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
-            {if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0];}}
+            if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
+            {
+                if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
+                {
+                    if ((*data)->rain_sum[0] > param->min_dept & (*data)->dept[ii] > param->min_dept)
+                    {(*data)->eta[ii] += (*data)->rain_sum[0];}
+                }
+            }
         }
     }
-    // evaporation
-    // only apply evaporation when rainfall = 0
-    if ((*data)->rain[0] == 0.0)
+    else
     {
         for (ii = 0; ii < param->n2ci; ii++)
-        {(*data)->eta[ii] -= (*data)->evap[ii] * param->dt;}
-        // remove negative or small depth
-        for (ii = 0; ii < param->n2ci; ii++)
-        {
-            diff = (*data)->eta[ii] - (*data)->bottom[ii];
-            if (diff < 0)
-            {(*data)->eta[ii] = (*data)->bottom[ii];}
-            else if (diff < param->min_dept)
-            {(*data)->eta[ii] = (*data)->bottom[ii];}
-        }
+        {if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0];}}
+    }
+    // evaporation
+
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        diff = (*data)->eta[ii] - (*data)->bottom[ii];
+        devap = (*data)->evap[ii] * param->dt;
+        // if (diff > devap + param->min_dept)
+        // {
+        //     (*data)->eta[ii] -= (*data)->evap[ii] * param->dt;
+        // }
+
+        (*data)->eta[ii] -= (*data)->evap[ii] * param->dt;
+    }
+    // remove negative or small depth
+    for (ii = 0; ii < param->n2ci; ii++)
+    {
+        diff = (*data)->eta[ii] - (*data)->bottom[ii];
+        if (diff < 0)
+        {(*data)->eta[ii] = (*data)->bottom[ii];}
+        else if (diff < param->min_dept)
+        {(*data)->eta[ii] = (*data)->bottom[ii];}
     }
 }
 
@@ -594,6 +639,11 @@ void subsurface_source(Data **data, Map *smap, Config *param)
                 (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
                 (*data)->reset_seepage[ii] = 1;
             }
+            // if ((*data)->qseepage[ii]*param->dt > param->min_dept)
+            // {
+            //     (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
+            //     (*data)->reset_seepage[ii] = 1;
+            // }
             else
             {(*data)->reset_seepage[ii] = 0;}
         }
@@ -742,6 +792,11 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
         (*data)->cfly[ii] = fabs((*data)->vv[ii] * param->dt / param->dy);
         if ((*data)->cflx[ii] > 1 | (*data)->cfly[ii] > 1)
         {printf("WARNING: CFL = %f, %f for cell (%d,%d) of rank %d!\n",(*data)->cflx[ii],(*data)->cfly[ii],smap->ii[ii],smap->jj[ii],irank);}
+        // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
+        // {
+        //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
+        //         (*data)->qseepage[ii]*param->dt*param->wcs);
+        // }
     }
 
 }
@@ -1160,13 +1215,84 @@ void subgrid_interp_and_combine(Data **data, Map *smap, Config *param, int irank
         (*data)->Vs[ii] = (*data)->Vxp[ii] + (*data)->Vxm[ii];
         (*data)->Vsx[ii] = (*data)->Vxp[ii] + (*data)->Vxm[smap->iPjc[ii]];
         (*data)->Vsy[ii] = (*data)->Vyp[ii] + (*data)->Vym[smap->icjP[ii]];
-        // areas
-        (*data)->Asx[ii] = (*data)->Axp[ii];
-        if ((*data)->Axm[smap->iPjc[ii]] < (*data)->Axp[ii])
-        {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
-        (*data)->Asy[ii] = (*data)->Ayp[ii];
-        if ((*data)->Aym[smap->icjP[ii]] < (*data)->Ayp[ii])
-        {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+        // // areas
+        if ((*data)->Axp[ii] <= 0.0)
+        {
+            if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
+            {(*data)->Asx[ii] = 0.0;}
+            else
+            {
+                (*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];
+            }
+        }
+        else
+        {
+            if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
+            {
+                // (*data)->Asx[ii] = (*data)->Axp[ii];
+                if (smap->ii[ii] > param->nx-3 | smap->ii[ii] < 10)
+                {
+                    (*data)->Asx[ii] = 0.0;
+                }
+                else
+                {
+                    (*data)->Asx[ii] = (*data)->Axp[ii];
+                }
+            }
+            else
+            {
+                if ((*data)->Axp[ii] > (*data)->Axm[smap->iPjc[ii]])
+                {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
+                else
+                {(*data)->Asx[ii] = (*data)->Axp[ii];}
+            }
+        }
+
+        // (*data)->Asx[ii] = (*data)->Axp[ii];
+        // if ((*data)->Axm[smap->iPjc[ii]] < (*data)->Axp[ii])
+        // {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
+        // if ((*data)->Axp[ii] <= 0.0 | (*data)->Axm[smap->iPjc[ii]] <= 0.0)
+        // if (smap->ii[ii] > param->nx-3 | smap->ii[ii] < 10)
+        // {(*data)->Asx[ii] = 0.0;}
+
+        if ((*data)->Ayp[ii] <= 0.0)
+        {
+            if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
+            {(*data)->Asy[ii] = 0.0;}
+            else
+            {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+        }
+        else
+        {
+            if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
+            {(*data)->Asy[ii] = (*data)->Ayp[ii];}
+            else
+            {
+                if ((*data)->Ayp[ii] > (*data)->Aym[smap->icjP[ii]])
+                {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+                else
+                {(*data)->Asy[ii] = (*data)->Ayp[ii];}
+            }
+        }
+
+        // (*data)->Asy[ii] = (*data)->Ayp[ii];
+        // if ((*data)->Aym[smap->icjP[ii]] < (*data)->Ayp[ii])
+        // {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+        // if ((*data)->Ayp[ii] <= 0.0 | (*data)->Aym[smap->icjP[ii]] <= 0.0)
+        // {(*data)->Asy[ii] = 0.0;}
+
+        if (smap->ii[ii] < 3)
+        {
+            (*data)->Asy[ii] = 0.0;
+            (*data)->Asx[ii] = 0.0;
+        }
+
+        // if (smap->ii[ii] == 18 & smap->jj[ii] == 64)
+        // {
+        //     printf("  eta, ind = (%f,%d)  (%f,%d)    Ayp, Aym = %f, %f   Asy = %f --> vv=%f\n",(*data)->eta[ii]-(*data)->offset[0],(*data)->eta_ind[ii],
+        //     (*data)->eta[smap->icjP[ii]]-(*data)->offset[0],
+        //         (*data)->eta_ind[smap->icjP[ii]],(*data)->Ayp[ii],(*data)->Aym[smap->icjP[ii]],(*data)->Asy[ii],(*data)->vv[ii]);
+        // }
     }
 
     // other subgrid variables

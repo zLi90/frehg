@@ -14,6 +14,7 @@ typedef struct Config
     // Time Control
     int NT;
     double dt, Tend, dt_out, *dt_root;
+    int n_monitor, *monitor_locX, *monitor_locY;
     // Bathymetry
     int bath_file;
     // parameters
