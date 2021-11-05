@@ -1,15 +1,14 @@
 # frehg
 Frehg stands for Fine Resolution Environmental Hydrodynamic and Groundwater model. It is a coupled 2D depth-integrated hydrodynamic and 3D variably-saturated groundwater model.
 
-Currently the Frehg model is still under development. As of 2021-01, the capabilities of Frehg includes:
+Currently the Frehg model is still under development. As of 2021-10, the capabilities of Frehg includes:
 - Simulate overland flow with either 2D depth-integrated Navier-Stokes equations, or a diffusive wave approximation of the shallow water equation.
+- Simulate overland flow on coarse grids with subgrid-scale topography.
 - Simulate 3D variably-saturated groundwater flow with the predictor-corrector method.
 - Simulate coupled surface-subsurface flow under prescribed tidal elevation, river stage, inflow, wind, rainfall and evaporation rates.
 - Simulate transport of passive scalars in both surface and subsurface domains.
-
-Plans for future development include:
-- Enable simulation of the subgrid-scale topography.
-- Enable more types of boundary conditions for the subsurface domain (currently the side and bottom boundaries must be impermeable).
+- Simulate density-driven transport of scalars in the subsurface domain.
+- Parallel simulation with MPI.
 
 The hydrodynamic part of Frehg is built based on:<br />
     Li, Z., Hodges, B.R. (2019) Model instability and channel connectivity for 2D coastal marsh simulations. Environ Fluid Mech 19, 1309–1338  doi:10.1007/s10652-018-9623-7 <br />
