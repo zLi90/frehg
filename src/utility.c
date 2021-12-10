@@ -162,11 +162,11 @@ double compute_K(Data *data, double *Ksat, int ii, Config *param)
     else
     {if (h > 0.0)  {Keff = Ks;}}
 
-    if (isnan(Keff))
-    {
-        printf("ii=%d, nume=%f, deno=%f, h=%f, s=%f, (wcs,wcr,wcm)=(%f,%f,%f)\n",
-            ii,nume,deno,h,s,data->wcs[ii],data->wcr[ii],wcm);
-    }
+    // if (isnan(Keff))
+    // {
+    //     printf("ii=%d, nume=%f, deno=%f, h=%f, s=%f, (wcs,wcr,wcm)=(%f,%f,%f)\n",
+    //         ii,nume,deno,h,s,data->wcs[ii],data->wcr[ii],wcm);
+    // }
 
     return Keff;
 }

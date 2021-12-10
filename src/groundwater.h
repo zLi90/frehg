@@ -3,6 +3,8 @@
 #include "initialize.h"
 #include "map.h"
 
+#include "linsys.h"
+
 // #include "laspack/vector.h"
 // #include "laspack/qmatrix.h"
 // #include "laspack/rtc.h"
@@ -19,7 +21,7 @@
 #include "laspack/itersolv.h"
 #include "laspack/mlsolv.h"
 
-void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
+void solve_groundwater(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void baroclinic_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void groundwater_mat_coeff(Data **data, Map *gmap, Config *param, int irank);

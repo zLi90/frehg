@@ -80,7 +80,6 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     build_shallowwater_system(*data, smap, param, A, b);
     solve_shallowwater_system(data, smap, A, b, x, param);
     enforce_surf_bc(data, smap, param, irank, nrank);
-    // printf("Surface NEW : depth, surf = %f, %f\n",(*data)->dept[30],(*data)->eta[30]);
     // Update depth
     cfl_limiter(data, smap, param);
     evaprain(data, smap, param);
@@ -377,17 +376,20 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
             if (irank % param->mpi_nx == 0) {(*data)->Sct[ii] -= (*data)->Sxm[ii];}
             // inner boundary (Dirichlet type)
             else    {(*data)->Srhs[ii] += (*data)->Sxm[ii] * (*data)->eta[smap->iMjc[ii]];}
+            if (param->nx == 1) {(*data)->Sct[ii] -= (*data)->Sxp[ii];}
         }
         else if (smap->ii[ii] == param->nx-1)
         {
             if (irank % param->mpi_nx == param->mpi_nx - 1) {(*data)->Sct[ii] -= (*data)->Sxp[ii];}
             else {(*data)->Srhs[ii] += (*data)->Sxp[ii] * (*data)->eta[smap->iPjc[ii]];}
         }
+
         // y-boundary
         if (smap->jj[ii] == 0)
         {
             if (irank < param->mpi_nx)  {(*data)->Sct[ii] -= (*data)->Sym[ii];}
             else    {(*data)->Srhs[ii] += (*data)->Sym[ii] * (*data)->eta[smap->icjM[ii]];}
+            if (param->ny == 1) {(*data)->Sct[ii] -= (*data)->Syp[ii];}
         }
         else if (smap->jj[ii] == param->ny-1)
         {
@@ -412,6 +414,7 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
             }
         }
     }
+
 }
 
 // >>>>> Setup the linear system of equations
@@ -461,7 +464,7 @@ void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vect
     // for (ii = 0; ii < param->n2ci; ii++)
     // {
     //     // if (smap->ii[ii] == 80 & smap->jj[ii] == 200)
-    //     if ((*data)->dept[ii] > 0.0 & smap->jj[ii] == 67)
+    //     if ((*data)->dept[ii] > 0.0)
     //     {
     //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
     //             -(*data)->Sym[ii]*1e5,-(*data)->Sxm[ii]*1e5,(*data)->Sct[ii]*1e5,-(*data)->Sxp[ii]*1e5,-(*data)->Syp[ii]*1e5,(*data)->Srhs[ii]*1e5,(*data)->eta[ii]-(*data)->offset[0]);
@@ -577,8 +580,11 @@ void evaprain(Data **data, Map *smap, Config *param)
             {
                 if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
                 {
-                    if ((*data)->rain_sum[0] > param->min_dept & (*data)->dept[ii] > param->min_dept)
-                    {(*data)->eta[ii] += (*data)->rain_sum[0];}
+                    // if ((*data)->rain_sum[0] > param->min_dept & (*data)->dept[ii] > param->min_dept)
+                    // {(*data)->eta[ii] += (*data)->rain_sum[0];}
+
+                    // Only apply rainfall on wet regions
+                    if ((*data)->dept[ii] > param->min_dept)    {(*data)->eta[ii] += (*data)->rain[0] * param->dt;}
                 }
             }
         }
@@ -628,6 +634,7 @@ void subsurface_source(Data **data, Map *smap, Config *param)
         if ((*data)->qseepage[ii] < 0)
         {
             // (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
+            // Kuan2019
             (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
             (*data)->reset_seepage[ii] = 1;
         }

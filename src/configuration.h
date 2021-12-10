@@ -8,7 +8,7 @@ typedef struct Config
     // Directory
     char finput[200], foutput[200], sim_id[6];
     // Domain Geometry
-    int NX, NY, NZ, nx, ny, nz, use_mpi, mpi_nx, mpi_ny;
+    int NX, NY, NZ, nx, ny, nz, use_mpi, mpi_nx, mpi_ny, nthreads;
     int n2ci, n2ct, N2CI, n3ci, n3ct, N3CI;
     double dx, dy, dz, botZ, dz_incre;
     // Time Control

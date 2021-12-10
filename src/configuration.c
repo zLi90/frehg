@@ -33,6 +33,7 @@ void read_input(Config **param)
     (*param)->use_mpi = (int) read_one_input_double("use_mpi", "input");
     (*param)->mpi_nx = (int) read_one_input_double("mpi_nx", "input");
     (*param)->mpi_ny = (int) read_one_input_double("mpi_ny", "input");
+    (*param)->nthreads = (int) read_one_input_double("nthreads", "input");
 
     // Time control
     (*param)->dt = read_one_input_double("dt", "input");

@@ -453,6 +453,10 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
         for (ii = 0; ii < param->N2CI; ii++)
         {
             (*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];
+            // if (smap->jj[ii] < 85)
+            // {
+            //     (*data)->eta_root[ii] = 0.4 + (*data)->offset[0];
+            // }
         }
     }
     else
@@ -524,7 +528,8 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
             for (kk = 0; kk < param->n_scalar; kk++)
             {
                 (*data)->s_surf[kk][ii] = (*data)->s_surf_root[kk][jj];
-                if ((*data)->eta[ii] <= (*data)->bottom[ii]+(*data)->offset[0])   {(*data)->s_surf[kk][ii] = 0.0;}
+                // if ((*data)->eta[ii] <= (*data)->bottom[ii]+(*data)->offset[0])   {(*data)->s_surf[kk][ii] = 0.0;}
+                if ((*data)->eta[ii] <= (*data)->bottom[ii])   {(*data)->s_surf[kk][ii] = 0.0;}
             }
         }
     }
@@ -993,7 +998,16 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         (*data)->Ksx[ii] = param->Ksx;
         (*data)->Ksy[ii] = param->Ksy;
         (*data)->Ksz[ii] = param->Ksz;
-
+        // Maina heterogeneous problem
+        // if (gmap->kk[ii] > 600 & gmap->kk[ii] < 1200)
+        // if (gmap->kk[ii] > 120 & gmap->kk[ii] < 240)
+        // {
+        //     (*data)->vga[ii] = 1.04;
+        //     (*data)->vgn[ii] = 1.395;
+        //     (*data)->wcr[ii] = 0.106;
+        //     (*data)->wcs[ii] = 0.469;
+        //     (*data)->Ksz[ii] = 0.00000151;
+        // }
     }
     // if init_wc within [wcr, wcs], initialize domain with init_wc
     if (param->init_wc >= param->wcr & param->init_wc <= param->wcs)
@@ -1050,6 +1064,11 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 }
                 else
                 {
+                    // (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    // (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    // (*data)->wc[ii] = param->wcr +
+                        // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
+
                     (*data)->wc[ii] = param->wcr + 0.02;
                     // (*data)->wc[ii] = 0.38;
                     (*data)->h[ii] = compute_hwc(*data, ii, param);
@@ -1071,6 +1090,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
+                // if (gmap->jj[ii] == 10)
+                // {
+                //     printf(" !!!!! kk=%d, h->wc : %f->%f, bot=%f, dept=%f \n",gmap->kk[ii],(*data)->h[ii],(*data)->wc[ii],gmap->bot3d[ii],(*data)->dept[gmap->top2d[ii]]);
+                // }
             }
         }
     }
@@ -1137,7 +1160,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 for (ii = 0; ii < param->n3ct; ii++)
                 {
                     (*data)->s_subs[kk][ii] = param->init_s_subs[kk];
+                    // if (gmap->jj[ii] == 2)   {(*data)->s_subs[kk][ii] = 25.0;}
                 }
+                // ex5_baroclinic1d, ZhiLi20210411
+                // (*data)->s_subs[kk][0] = 25.0;
             }
             for (ii = 0; ii < param->n3ct; ii++)
             {(*data)->sm_subs[kk][ii] = (*data)->s_subs[kk][ii] * (*data)->Vg[ii];}
@@ -1270,7 +1296,15 @@ void init_subgrid(Data **data, Map *smap, Config *param, int irank, int nrank)
                 }
             }
         }
-        
+        // error checking
+        // if ((*data)->dept[ii] > 0)
+        // {
+        //     if ((*data)->eta_ind[ii] == 0 || (*data)->eta_ind[ii] == param->nlay_sub-1)
+        //     {
+        //         printf("WARNING: Surface elevation exceeds range of look-up table!\n");
+        //         printf("        ---> at rank %d, cell %d (1D), eta=%f\n", irank, ii, (*data)->eta[ii]);
+        //     }
+        // }
     }
     // extract and combine subgrid variables for a given surface elevation
     subgrid_interp_and_combine(data, smap, param, irank, nrank);
