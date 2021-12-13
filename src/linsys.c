@@ -25,19 +25,20 @@
 #include "laspack/mlsolv.h"
 
 void cgsolve(Lisy **sysm, QMatrix A, double *rhs, double *out, int nrow);
-void decompose(Lisy **sysm);
+void decompose(Lisy **sysm, double omega);
 void init_crs_matrix(Data *data, Lisy **sysm, Config *param, int nrow, int domain);
 void build_crs_matrix(Data *data, Lisy **sysm, Config *param, int domain);
 
 
 void cgsolve(Lisy **sysm, QMatrix A, double *rhs, double *out, int nrow)
 {
-    double rho, rho0, alpha, beta, deno, eps = 1.0, eps0 = 1e-10;
-    int ii, id, nd, iter = 1, iter_max = 10000000;
+    double rho, rho0, alpha, beta, deno, eps = 1.0, eps0 = 1e-10, omega = 1.0;
+    int ii, jj, id, nd, iter = 1, iter_max = 10000000;
 
     double *val = (*sysm)->val;
     int *col = (*sysm)->col;
     int *row_ptr = (*sysm)->row_ptr;
+    double *prod = malloc(nrow*sizeof(double));
 
     // create preconditioner
     Vector prec;
@@ -54,67 +55,95 @@ void cgsolve(Lisy **sysm, QMatrix A, double *rhs, double *out, int nrow)
     // get initial residual
     for (ii = 0; ii < nrow; ii++)   {
         (*sysm)->resi[ii] = 0.0;
-        for (int jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
+        for (jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
             (*sysm)->resi[ii] += val[jj] * (*sysm)->x[col[jj]];
         }
         (*sysm)->resi[ii] = rhs[ii] - (*sysm)->resi[ii];
     }
 
+
     // iterate to update solution
     while (eps > eps0 & iter < iter_max)    {
         // preconditioner
-        // #pragma omp parallel for
-        for (ii = 0; ii < nrow; ii++)   {V_SetCmp(&rvec, ii+1, (*sysm)->resi[ii]);}
-        SSORPrecond(&A, &prec, &rvec, 1.0);
-        // #pragma omp parallel for
-        for (ii = 0; ii < nrow; ii++)    {(*sysm)->z[ii] = V_GetCmp(&prec, ii+1);}
-
-        rho = 0.0;
-        deno = 0.0;
-        // rho = r * z
-        #pragma omp parallel for reduction (+:rho)
+        decompose(sysm, omega);
+        for (ii = 0; ii < nrow; ii++)   {prod[ii] = (*sysm)->resi[ii];}
+        // forward substitution
         for (ii = 0; ii < nrow; ii++)   {
-            rho += (*sysm)->resi[ii] * (*sysm)->z[ii];
-        }
-        // p = beta*p + z
-        if (iter == 1)  {beta = 0.0;}
-        else    {beta = rho / rho0;}
-        rho0 = rho;
-        #pragma omp parallel for
-        for (ii = 0; ii < nrow; ii++)   {(*sysm)->p[ii] = beta * (*sysm)->p[ii] + (*sysm)->z[ii];}
-        // q = Ap
-        #pragma omp parallel for reduction (+:deno)
-        for (ii = 0; ii < nrow; ii++)   {
-            (*sysm)->q[ii] = 0.0;
-            for (int jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
-                (*sysm)->q[ii] += val[jj] * (*sysm)->p[col[jj]];
+            for (jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
+                if (col[jj] < ii)   {prod[ii] -= (*sysm)->ltri[jj] * prod[col[jj]];}
+                else if (col[jj] == ii) {prod[ii] = prod[ii] / (*sysm)->ltri[jj];}
             }
-            deno += (*sysm)->p[ii] * (*sysm)->q[ii];
         }
-        // alpha = rho / pq
-        alpha = rho / deno;
+        // scaling
+        for (ii = 0; ii < nrow; ii++)   {
+            for (jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
+                if (col[jj] == ii) {prod[ii] = prod[ii] * (*sysm)->diag[jj];}
+            }
+        }
+        // backward substitution
+        for (ii = nrow-1; ii >= 0; ii--)    {
+            for (jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
+                if (col[jj] > ii)   {prod[ii] -= (*sysm)->utri[jj] * prod[col[jj]];}
+                else if (col[jj] == ii) {prod[ii] = prod[ii] / (*sysm)->utri[jj];}
+            }
+        }
+        // scaling
+        for (ii = 0; ii < nrow; ii++)   {(*sysm)->z[ii] = (2.0 - omega) * prod[ii] / omega;}
+
+        //
+        // for (ii = 0; ii < nrow; ii++)   {V_SetCmp(&rvec, ii+1, (*sysm)->resi[ii]);}
+        // SSORPrecond(&A, &prec, &rvec, 1.0);
+        // for (ii = 0; ii < nrow; ii++)    {(*sysm)->z[ii] = V_GetCmp(&prec, ii+1);}
+
+        // for (ii = 0; ii < nrow; ii++)   {printf(" z = %f\n", (*sysm)->z[ii]);}
+        // printf(" ----- \n");
+
         #pragma omp parallel
         {
+            rho = 0.0;
+            deno = 0.0;
+            // rho = r * z
+            #pragma omp for private(ii) reduction (+:rho)
+            for (ii = 0; ii < nrow; ii++)   {
+                rho += (*sysm)->resi[ii] * (*sysm)->z[ii];
+            }
+            // p = beta*p + z
+            if (iter == 1)  {beta = 0.0;}
+            else    {beta = rho / rho0;}
+            rho0 = rho;
+
+            #pragma omp for private(ii)
+            for (ii = 0; ii < nrow; ii++)   {(*sysm)->p[ii] = beta * (*sysm)->p[ii] + (*sysm)->z[ii];   (*sysm)->q[ii] = 0.0;}
+            // q = Ap
+            #pragma omp for private(ii, jj) reduction (+:deno)
+            for (ii = 0; ii < nrow; ii++)   {
+                for (jj = row_ptr[ii]; jj < row_ptr[ii+1]; jj++)    {
+                    (*sysm)->q[ii] += val[jj] * (*sysm)->p[col[jj]];
+                }
+                deno += (*sysm)->p[ii] * (*sysm)->q[ii];
+            }
+            // alpha = rho / pq
+            alpha = rho / deno;
             // x = x + alpha * p
-            #pragma omp for nowait
+            #pragma omp for private(ii) nowait
             for (ii = 0; ii < nrow; ii++)   {(*sysm)->x[ii] += alpha * (*sysm)->p[ii];}
             // r = r - alpha * q
-            #pragma omp for nowait
+            #pragma omp for private(ii)
             for (ii = 0; ii < nrow; ii++)   {(*sysm)->resi[ii] -= alpha * (*sysm)->q[ii];}
         }
         eps = getMax((*sysm)->resi, nrow);
         // printf("   --pcgsolve--  iter %d is completed! eps=%f\n",iter,eps);
         iter += 1;
     }
-    #pragma omp parallel for
     for (ii = 0; ii < nrow; ii++)   {out[ii] = (*sysm)->x[ii];}
-    printf("   --pcgsolve--  iter %d is completed!\n",iter);
+    // printf("   --pcgsolve--  iter %d is completed!\n",iter);
     V_Destr(&rvec);
     V_Destr(&prec);
+    free(prod);
 }
 
 
-void decompose(Lisy **sysm)
+void decompose(Lisy **sysm, double omega)
 {
     int ii, jj;
     int nrow = (*sysm)->nrow[0];
@@ -127,7 +156,11 @@ void decompose(Lisy **sysm)
     }
     for (ii = 0; ii < nrow; ii++)   {
         for (jj = (*sysm)->row_ptr[ii]; jj < (*sysm)->row_ptr[ii+1]; jj++)    {
-            if (col[jj] == ii)  {(*sysm)->diag[jj] = (*sysm)->val[jj];}
+            if (col[jj] == ii)  {
+                (*sysm)->diag[jj] = (*sysm)->val[jj];
+                (*sysm)->ltri[jj] = (*sysm)->val[jj] / omega;
+                (*sysm)->utri[jj] = (*sysm)->val[jj] / omega;
+            }
             else if (col[jj] > ii)  {(*sysm)->utri[jj] = (*sysm)->val[jj];}
             else    {(*sysm)->ltri[jj] = (*sysm)->val[jj];}
         }

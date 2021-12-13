@@ -29,6 +29,6 @@ typedef struct Lisy
 #endif
 
 void cgsolve(Lisy **sysm, QMatrix A, double *rhs, double *out, int nrow);
-void decompose(Lisy **sysm);
+void decompose(Lisy **sysm, double omega);
 void init_crs_matrix(Data *data, Lisy **sysm, Config *param, int nrow, int domain);
 void build_crs_matrix(Data *data, Lisy **sysm, Config *param, int domain);
