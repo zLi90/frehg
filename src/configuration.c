@@ -33,6 +33,7 @@ void read_input(Config **param)
     (*param)->use_mpi = (int) read_one_input_double("use_mpi", "input");
     (*param)->mpi_nx = (int) read_one_input_double("mpi_nx", "input");
     (*param)->mpi_ny = (int) read_one_input_double("mpi_ny", "input");
+    (*param)->nthreads = (int) read_one_input_double("nthreads", "input");
 
     // Time control
     (*param)->dt = read_one_input_double("dt", "input");
@@ -110,9 +111,11 @@ void read_input(Config **param)
     // Groundwater solver
     (*param)->sim_groundwater = (int) read_one_input_double("sim_groundwater", "input");
     (*param)->use_full3d = (int) read_one_input_double("use_full3d", "input");
+    (*param)->iter_solve = (int) read_one_input_double("iter_solve", "input");
     (*param)->dt_adjust = (int) read_one_input_double("dt_adjust", "input");
     (*param)->use_corrector = (int) read_one_input_double("use_corrector", "input");
     (*param)->post_allocate = (int) read_one_input_double("post_allocate", "input");
+    (*param)->use_vg = (int) read_one_input_double("use_vg", "input");
     (*param)->use_mvg = (int) read_one_input_double("use_mvg", "input");
     (*param)->aev = read_one_input_double("aev", "input");
     (*param)->dt_max = read_one_input_double("dt_max", "input");

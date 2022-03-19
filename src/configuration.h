@@ -8,7 +8,7 @@ typedef struct Config
     // Directory
     char finput[200], foutput[200], sim_id[6];
     // Domain Geometry
-    int NX, NY, NZ, nx, ny, nz, use_mpi, mpi_nx, mpi_ny;
+    int NX, NY, NZ, nx, ny, nz, use_mpi, mpi_nx, mpi_ny, nthreads;
     int n2ci, n2ct, N2CI, n3ci, n3ct, N3CI;
     double dx, dy, dz, botZ, dz_incre;
     // Time Control
@@ -33,7 +33,7 @@ typedef struct Config
     int use_subgrid, nlay_sub;
     double r_sub, eta_sub_max, eta_sub_min, deta_sub;
     // Groundwater
-    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d;
+    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d, iter_solve, use_vg;
     double init_h, init_wc, init_wt_abs, init_wt_rel, qtop, qbot, htop, hbot, aev, qyp, qym;
     double dt_max, dt_min, Co_max, Ksx, Ksy, Ksz, Ss, wcr, wcs, soil_a, soil_n;
     int *bctype_GW, h_file, wc_file;

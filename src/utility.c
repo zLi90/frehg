@@ -15,6 +15,8 @@ double compute_hwc(Data *data, int ii, Config *param);
 double compute_ch(Data *data, int ii, Config *param);
 double compute_K(Data *data, double *Ksat, int ii, Config *param);
 double compute_dKdwc(Data *data, double *Ksat, int ii, Config *param);
+double compute_dKdh(Data *data, double *Ksat, int ii, Config *param);
+double compute_dwcdh(Data *data, int ii, Config *param);
 double tvd_superbee(double sp, double sc, double sm, double u, double delta, Config *param);
 char* read_one_input(char field[], char fname[]);
 double read_one_input_double(char field[], char fname[]);
@@ -41,15 +43,20 @@ double compute_wch(Data *data, int ii, Config *param)
 {
     double wc, m, s, h, wcs, wcm;
     h = data->h[ii];
-    m = 1.0 - 1.0/data->vgn[ii];
-    if (param->use_mvg == 1)
-    {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
-    else
-    {wcm = data->wcs[ii];}
-    s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
+    if (param->use_vg == 1) {
+        m = 1.0 - 1.0/data->vgn[ii];
+        if (param->use_mvg == 1)
+        {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
+        else
+        {wcm = data->wcs[ii];}
+        s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
 
-    if (h > param->aev)  {wc = data->wcs[ii];}
-    else    {wc = data->wcr[ii] + (wcm-data->wcr[ii]) * s;}
+        if (h > param->aev)  {wc = data->wcs[ii];}
+        else    {wc = data->wcr[ii] + (wcm-data->wcr[ii]) * s;}
+    }
+    else
+    {wc = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii]) * exp(0.1634*h);}
+
     if (wc > data->wcs[ii])    {wc = data->wcs[ii];}
     else if (wc < data->wcr[ii])   {wc = data->wcr[ii];}
 
@@ -71,20 +78,24 @@ double compute_hwc(Data *data, int ii, Config *param)
 {
     double wc, wcs, h, m, wcm, eps = 1e-7;
     wc = data->wc[ii];
-    m = 1.0 - 1.0/data->vgn[ii];
 
-    if (param->use_mvg == 1)
-    {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
-    else
-    {wcm = data->wcs[ii];}
+    if (param->use_vg == 1)  {
+        m = 1.0 - 1.0/data->vgn[ii];
+        if (param->use_mvg == 1)
+        {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
+        else
+        {wcm = data->wcs[ii];}
 
-    if (wc - data->wcr[ii] < eps)  {wc = data->wcr[ii] + eps;}
-    if (wc < data->wcs[ii])
-    {
-        h = -(1.0/data->vga[ii]) *
-            pow(pow((wcm - data->wcr[ii])/(wc - data->wcr[ii]),(1.0/m)) - 1.0,(1.0/data->vgn[ii]));
+        if (wc - data->wcr[ii] < eps)  {wc = data->wcr[ii] + eps;}
+        if (wc < data->wcs[ii])
+        {
+            h = -(1.0/data->vga[ii]) *
+                pow(pow((wcm - data->wcr[ii])/(wc - data->wcr[ii]),(1.0/m)) - 1.0,(1.0/data->vgn[ii]));
+        }
+        else    {h = 0.0;}
     }
-    else    {h = 0.0;}
+    else
+    {h = log((wc - data->wcr[ii])/(data->wcs[ii] - data->wcr[ii])) / 0.1634;}
 
     // Warrick 1971
     // if (wc < 0.38-eps)
@@ -132,22 +143,26 @@ double compute_K(Data *data, double *Ksat, int ii, Config *param)
     double m, wcs, Keff, s, h, Ks, wcm, nume, deno, ratio;
     Ks = Ksat[ii];
     h = data->h[ii];
-    m = 1.0 - 1.0/data->vgn[ii];
-    s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
-    if (param->use_mvg == 1)
-    {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
-    else
-    {wcm = data->wcs[ii];}
-    nume = 1.0-pow(1.0-pow(s*(data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
-    deno = 1.0-pow(1.0-pow((data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
 
-    if (param->use_mvg == 1)
-    {
-        if (deno == 0.0)    {Keff = Ks;}
-        else    {Keff = Ks * pow(s,0.5) * pow(nume/deno, 2.0);}
+    if (param->use_vg == 1) {
+        m = 1.0 - 1.0/data->vgn[ii];
+        s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
+        if (param->use_mvg == 1)
+        {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
+        else
+        {wcm = data->wcs[ii];}
+        nume = 1.0-pow(1.0-pow(s*(data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
+        deno = 1.0-pow(1.0-pow((data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
+
+        if (param->use_mvg == 1)
+        {
+            if (deno == 0.0)    {Keff = Ks;}
+            else    {Keff = Ks * pow(s,0.5) * pow(nume/deno, 2.0);}
+        }
+        else
+        {Keff = Ks * pow(s,0.5) * pow(1-pow(1-pow(s,1.0/m),m), 2.0);}
     }
-    else
-    {Keff = Ks * pow(s,0.5) * pow(1-pow(1-pow(s,1.0/m),m), 2.0);}
+    else {Keff = Ks * exp(0.1634 * h);}
 
     // Warrick 1971
     // if (h < 0.0)
@@ -161,12 +176,6 @@ double compute_K(Data *data, double *Ksat, int ii, Config *param)
     {if (h > param->aev)  {Keff = Ks;}}
     else
     {if (h > 0.0)  {Keff = Ks;}}
-
-    if (isnan(Keff))
-    {
-        printf("ii=%d, nume=%f, deno=%f, h=%f, s=%f, (wcs,wcr,wcm)=(%f,%f,%f)\n",
-            ii,nume,deno,h,s,data->wcs[ii],data->wcr[ii],wcm);
-    }
 
     return Keff;
 }
@@ -204,6 +213,61 @@ double compute_dKdwc(Data *data, double *Ksat, int ii, Config *param)
     }
     dKdwc = (term1 + term2) / (data->wcs[ii] - data->wcr[ii]);
     return dKdwc;
+}
+
+// >>>>> Compute dKdh for the Jacobian <<<<<
+double compute_dKdh(Data *data, double *Ksat, int ii, Config *param)
+{
+    double dkdh, k1, k2, h, m, s, wcm, deno, nume, dh=1e-3;
+    k1 = compute_K(data, Ksat, ii, param);
+    h = data->h[ii]+dh;
+    if (param->use_vg == 1) {
+        m = 1.0 - 1.0/data->vgn[ii];
+        s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
+
+        if (param->use_mvg == 1)
+        {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
+        else
+        {wcm = data->wcs[ii];}
+        nume = 1.0-pow(1.0-pow(s*(data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
+        deno = 1.0-pow(1.0-pow((data->wcs[ii]-data->wcr[ii])/(wcm-data->wcr[ii]),1.0/m),m);
+
+        if (param->use_mvg == 1)
+        {
+            if (deno == 0.0)    {k2 = Ksat[ii];}
+            else    {k2 = Ksat[ii] * pow(s,0.5) * pow(nume/deno, 2.0);}
+        }
+        else
+        {k2 = Ksat[ii] * pow(s,0.5) * pow(1-pow(1-pow(s,1.0/m),m), 2.0);}
+    }
+    else {k2 = Ksat[ii] * exp(0.1634 * h);}
+    if (k2 > Ksat[ii] || h >= 0.0)  {k2 = Ksat[ii];}
+    if (data->h[ii] > -dh)    {dkdh = 0.0;}
+    else {dkdh = 0.5 * (k2 - k1) / dh;}
+    return dkdh;
+}
+
+// >>>>> Compute dwcdh for the Jacobian <<<<<
+double compute_dwcdh(Data *data, int ii, Config *param)
+{
+    double dwcdh, wc1, wc2, h, m, s, wcm, dh=1e-3;
+    wc1 = compute_wch(data, ii, param);
+    h = data->h[ii]+dh;
+    if (param->use_vg == 1) {
+        m = 1.0 - 1.0/data->vgn[ii];
+        if (param->use_mvg == 1)
+        {wcm = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii])*pow((1.0 + pow(fabs(param->aev)*data->vga[ii],data->vgn[ii])), m);}
+        else
+        {wcm = data->wcs[ii];}
+        s = pow(1.0 + pow(fabs(data->vga[ii]*h), data->vgn[ii]), -m);
+        if (h > param->aev)  {wc2 = data->wcs[ii];}
+        else    {wc2 = data->wcr[ii] + (wcm-data->wcr[ii]) * s;}
+        wc2 = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii]) * s;
+    }
+    else {wc2 = data->wcr[ii] + (data->wcs[ii]-data->wcr[ii]) * exp(0.1634*h);}
+    if (data->h[ii] > -dh)    {dwcdh = 0.0;}
+    else {dwcdh = (wc2 - wc1) / dh;}
+    return dwcdh;
 }
 
 // >>>>> 2nd-order TVD scheme with superbee limiter

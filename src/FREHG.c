@@ -8,6 +8,7 @@
 #include<math.h>
 #include<string.h>
 #include<mpi.h>
+// #include<omp.h>
 
 #include"configuration.h"
 #include"initialize.h"
@@ -22,8 +23,9 @@ int main(int argc, char *argv[])
     Map *smap;
     Map *gmap;
     int irank = 0,  nrank = 1;
-    
+
     read_input(&param);
+    // omp_set_num_threads(param->nthreads);
     if (param->use_mpi == 1)
     {
         MPI_Init(&argc, &argv);
