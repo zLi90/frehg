@@ -28,7 +28,7 @@ typedef struct Data
     double **Axp_sub, **Axm_sub, **Ayp_sub, **Aym_sub, **Asz_sub;
     double *Vxp, *Vxm, *Vyp, *Vym, *Axp, *Axm, *Ayp, *Aym;
     // subsurface domain
-    double *h, *hn, *hp, *hwc, *h_incr, *wc, *wcn, *wcp, *wch, *h_root, *wc_root, *dh6, *rsplit;
+    double *h, *hn, *hp, *hnm, *hwc, *h_incr, *wc, *wcn, *wch, *h_root, *wc_root, *dh6, *rsplit;
     double *vloss, *vloss_root, *room, *qtop, qbot, hbot, htop;
     double *Kx, *Ky, *Kz, *qx, *qy, *qz, *qx_root, *qy_root, *qz_root, *Vg, *Vgn, *Vgflux, *ch;
     double *h_out, *wc_out, *qx_out, *qy_out, *qz_out;

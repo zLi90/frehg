@@ -84,6 +84,7 @@ void init_domain(Config **param)
 {
     int ii;
     // total number of grid cells
+    (*param)->dtn = (*param)->dt;
     (*param)->nx = (*param)->NX / (*param)->mpi_nx;
     (*param)->ny = (*param)->NY / (*param)->mpi_ny;
     (*param)->n2ci = (*param)->nx * (*param)->ny;
@@ -319,11 +320,11 @@ void init_Data(Data **data, Config *param)
         (*data)->h = malloc(param->n3ct*sizeof(double));
         (*data)->hp = malloc(param->n3ct*sizeof(double));
         (*data)->hn = malloc(param->n3ct*sizeof(double));
+        (*data)->hnm = malloc(param->n3ct*sizeof(double));
         (*data)->h_incr = malloc(param->n3ci*sizeof(double));
         (*data)->hwc = malloc(param->n3ct*sizeof(double));
         (*data)->wc = malloc(param->n3ct*sizeof(double));
         (*data)->wcn = malloc(param->n3ct*sizeof(double));
-        (*data)->wcp = malloc(param->n3ct*sizeof(double));
         (*data)->wch = malloc(param->n3ct*sizeof(double));
         (*data)->ch = malloc(param->n3ct*sizeof(double));
         (*data)->wcs = malloc(param->n3ct*sizeof(double));
@@ -1119,9 +1120,9 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
     {
         (*data)->hn[ii] = (*data)->h[ii];
         (*data)->hp[ii] = (*data)->h[ii];
+        (*data)->hnm[ii] = (*data)->h[ii];
         (*data)->hwc[ii] = compute_hwc(*data, ii, param);
         (*data)->wcn[ii] = (*data)->wc[ii];
-        (*data)->wcp[ii] = (*data)->wc[ii];
         (*data)->wch[ii] = compute_wch(*data, ii, param);
         (*data)->Kx[ii] = compute_K(*data, (*data)->Ksx, ii, param);
         (*data)->Ky[ii] = compute_K(*data, (*data)->Ksy, ii, param);

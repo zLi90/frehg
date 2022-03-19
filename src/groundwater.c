@@ -475,7 +475,7 @@ double get_residual(Data **data, Map *gmap, int ii, Config *param)
 {
     double wcp, resi, dp, dm;
     wcp = compute_wch(*data, ii, param);
-    resi = param->Ss*wcp*((*data)->h[ii]-(*data)->hn[ii])/(*data)->wcs[ii]/param->dt;
+    resi = param->Ss*wcp*((*data)->h[ii]-(*data)->hp[ii])/(*data)->wcs[ii]/param->dt;
     resi += (wcp-(*data)->wcn[ii])/param->dt;
     // >>> flux in x
     dp = param->dx;
@@ -531,7 +531,7 @@ double get_jacobian(Data **data, Map *gmap, int ii, char* axis, Config *param)
         dky = compute_dKdh(*data, (*data)->Ksy, ii, param);
         dkz = compute_dKdh(*data, (*data)->Ksz, ii, param);
         jaco = (dwc + param->Ss*wcp/(*data)->wcs[ii] +
-            param->Ss*dwc*((*data)->h[ii] - (*data)->hn[ii])/(*data)->wcs[ii]) / param->dt;
+            param->Ss*dwc*((*data)->h[ii] - (*data)->hp[ii])/(*data)->wcs[ii]) / param->dt;
         //  >>> x component
         dp = param->dx;
         dm = param->dx;
@@ -647,7 +647,9 @@ void newton_iter(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *
     int ii, iter, iter_max = 100;
     double eps, eps_min = 1e-8;
     for (ii = 0; ii < param->n3ci; ii++)    {
+        (*data)->hnm[ii] = (*data)->hn[ii];
         (*data)->hn[ii] = (*data)->h[ii];
+        (*data)->hp[ii] = (*data)->h[ii];
         (*data)->wcn[ii] = (*data)->wc[ii];
     }
     iter = 1;
@@ -660,7 +662,7 @@ void newton_iter(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *
         if (iter == 1)  {
             for (ii = 0; ii < param->n3ci; ii++)    {
                 (*data)->h[ii] += (*data)->h_incr[ii];
-                (*data)->hn[ii] = (*data)->h[ii];
+                (*data)->hp[ii] = (*data)->h[ii];
             }
         }
         else {
@@ -670,7 +672,7 @@ void newton_iter(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *
             eps = eps_min/10.0;
             for (ii = 0; ii < param->n3ci; ii++)    {
                 if (fabs((*data)->h_incr[ii]) > eps)    {eps = fabs((*data)->h_incr[ii]);}
-                (*data)->hn[ii] = (*data)->h[ii];
+                (*data)->hp[ii] = (*data)->h[ii];
             }
         }
         printf("     >>> Newton iter : %d    EPS : %f<<< \n",iter,eps);
@@ -2024,8 +2026,9 @@ void volume_by_flux_subs(Data **data, Map *gmap, Config *param)
 // >>>>> adjust dt for groundwater solver <<<<<
 void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int irank)
 {
-    double qin, qou, r_red, r_inc, dq, dq_max, dKdwc, dt_Co, dt_Comin, wcmax, hmax, rmax;
-    int ii, imax = 0, jmax = 0, kmax = 0, unsat = 0, sat = 0, itop=0;
+    double qin, qou, r_red, r_inc, dq, dq_max, dKdwc, dt_Co, dt_Comin, sqerr;
+    double err, err_max=0.0, err0=1e-3, errm=1e-9, s=0.9, rmin=0.1, rmax=4.0;
+    int ii, unsat = 0, sat = 0, itop=0;
     r_red = 0.9;
     r_inc = 1.1;
     dq_max = 0.0;
@@ -2038,14 +2041,15 @@ void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int ira
     // adjust dt
     for (ii = 0; ii < (*param)->n3ci; ii++)
     {
+        err = 0.5*(*param)->dt*fabs((data->h[ii]-data->hn[ii])/(*param)->dt - (data->hn[ii]-data->hnm[ii])/(*param)->dtn);
+        if (err > err_max)    {err_max = err;}
         if (gmap->actv[ii] == 1 & gmap->istop[ii] == 0)
         {
             qin = data->qx[ii] + data->qy[ii] + data->qz[ii];
             qou = data->qx[gmap->iMjckc[ii]] + data->qy[gmap->icjMkc[ii]] + data->qz[gmap->icjckM[ii]];
             dq = fabs(qin - qou) * (*param)->dt / gmap->dz3d[ii];
             if (dq > dq_max)    {
-                dq_max = dq; imax=gmap->ii[ii]; jmax=gmap->jj[ii]; kmax=gmap->kk[ii]; itop=gmap->istop[ii];
-                wcmax = data->wc[ii];    hmax = data->h[ii];  rmax = data->qtop[gmap->top2d[ii]];
+                dq_max = dq;
             }
             if (data->wc[ii] < (*param)->wcs)
             {
@@ -2055,27 +2059,24 @@ void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int ira
             }
         }
     }
-    if (dq_max > 0.02)
-    {
-        (*param)->dt = (*param)->dt * r_red;
+    // adjust dt
+    if ((*param)->iter_solve)  {
+        (*param)->dtn = (*param)->dt;
+        if (err_max < errm) {err_max = errm;}
+        sqerr = s*sqrt(err0/err_max);
+        if (err_max < err0)
+        {if (sqerr > rmax) {sqerr = rmax;}}
+        else
+        {if (sqerr < rmin) {sqerr = rmin;}}
+        (*param)->dt = (*param)->dt * sqerr;
     }
-    else if (dq_max < 0.01) {(*param)->dt = (*param)->dt * r_inc;}
+    else {
+        if (dq_max > 0.02)  {(*param)->dt = (*param)->dt * r_red;}
+        else if (dq_max < 0.01) {(*param)->dt = (*param)->dt * r_inc;}
+        if ((*param)->dt > dt_Comin)   {(*param)->dt = dt_Comin;}
+    }
     if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
-    if ((*param)->dt < (*param)->dt_min)
-    {
-        (*param)->dt = (*param)->dt_min;
-        printf(" >>> Min dt is reached at (%d,%d,%d): dt=%f, dqmax=%f, itop=%d, wc=%f, h=%f, rain=%f\n",
-            imax,jmax,kmax,(*param)->dt, dq_max,itop, wcmax, hmax, rmax);
-    }
-    // if (sat == 1 & unsat == 0) {(*param)->dt = (*param)->dt_max;}
-    // apply the Courant number criteria
-    // if ((*param)->dt > dt_Comin & sat == 1 & unsat == 1)   {(*param)->dt = dt_Comin;}
-    if ((*param)->dt > dt_Comin)   {(*param)->dt = dt_Comin;}
-    if ((*param)->dt > (*param)->dt_max)  {(*param)->dt = (*param)->dt_max;}
-    if ((*param)->dt < (*param)->dt_min)  {
-        (*param)->dt = (*param)->dt_min;
-    }
-    // printf("  >> dt by CO = %f\n",dt_Comin);
+    if ((*param)->dt < (*param)->dt_min)  {(*param)->dt = (*param)->dt_min;}
     // unify dt for all processes
     if ((*param)->use_mpi == 1)
     {
