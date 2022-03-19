@@ -319,6 +319,7 @@ void init_Data(Data **data, Config *param)
         (*data)->h = malloc(param->n3ct*sizeof(double));
         (*data)->hp = malloc(param->n3ct*sizeof(double));
         (*data)->hn = malloc(param->n3ct*sizeof(double));
+        (*data)->h_incr = malloc(param->n3ci*sizeof(double));
         (*data)->hwc = malloc(param->n3ct*sizeof(double));
         (*data)->wc = malloc(param->n3ct*sizeof(double));
         (*data)->wcn = malloc(param->n3ct*sizeof(double));

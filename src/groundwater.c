@@ -13,27 +13,29 @@
 #include "scalar.h"
 #include "utility.h"
 
-#include "linsys.h"
+// #include "../laspack/vector.h"
+// #include "../laspack/qmatrix.h"
+// #include "../laspack/rtc.h"
 
-// #include "laspack/vector.h"
-// #include "laspack/qmatrix.h"
-// #include "laspack/rtc.h"
+#include "../laspack/errhandl.h"
+#include "../laspack/vector.h"
+#include "../laspack/matrix.h"
+#include "../laspack/qmatrix.h"
+#include "../laspack/operats.h"
+#include "../laspack/factor.h"
+#include "../laspack/precond.h"
+#include "../laspack/eigenval.h"
+#include "../laspack/rtc.h"
+#include "../laspack/itersolv.h"
+#include "../laspack/mlsolv.h"
 
-#include "laspack/errhandl.h"
-#include "laspack/vector.h"
-#include "laspack/matrix.h"
-#include "laspack/qmatrix.h"
-#include "laspack/operats.h"
-#include "laspack/factor.h"
-#include "laspack/precond.h"
-#include "laspack/eigenval.h"
-#include "laspack/rtc.h"
-#include "laspack/itersolv.h"
-#include "laspack/mlsolv.h"
-
-void solve_groundwater(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int irank, int nrank);
+void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void compute_K_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
 void baroclinic_face(Data **data, Map *gmap, Config *param, int irank, int nrank);
+double get_residual(Data **data, Map *gmap, int ii, Config *param);
+double get_jacobian(Data **data, Map *gmap, int ii, char* axis, Config *param);
+void jacobian_mat_coeff(Data **data, Map *gmap, Config *param);
+void newton_iter(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param);
 void groundwater_mat_coeff(Data **data, Map *gmap, Config *param, int irank);
 void groundwater_rhs(Data **data, Map *gmap, Config *param, int irank);
 void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, Vector b);
@@ -52,7 +54,7 @@ void volume_by_flux_subs(Data **data, Map *gmap, Config *param);
 void adaptive_time_step(Data *data, Map *gmap, Config **param, int root, int irank);
 
 // >>>>> Top level groundwater solver <<<<<
-void solve_groundwater(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int irank, int nrank)
+void solve_groundwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int ii;
     // allocate linear system
@@ -96,13 +98,15 @@ void solve_groundwater(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *p
     // >>> Predictor step
     compute_K_face(data, gmap, param, irank, nrank);
     baroclinic_face(data, gmap, param, irank, nrank);
-    groundwater_mat_coeff(data, gmap, param, irank);
-    groundwater_rhs(data, gmap, param, irank);
-    build_groundwater_system(*data, gmap, param, A, b);
-    // solve_groundwater_system(data, gmap, A, b, x, param);
-    build_crs_matrix(*data, sysm, param, 1);
-    cgsolve(sysm, A, (*data)->Grhs, (*data)->h, param->n3ci);
-    for (ii = 0; ii < 5; ii++) {printf("(%d,%d) : h=%f\n",gmap->jj[ii],gmap->kk[ii],(*data)->h[ii]);}
+    if (param->iter_solve == 1) {newton_iter(data, gmap, A, b, x, param);}
+    else
+    {
+        groundwater_mat_coeff(data, gmap, param, irank);
+        groundwater_rhs(data, gmap, param, irank);
+        build_groundwater_system(*data, gmap, param, A, b);
+        solve_groundwater_system(data, gmap, A, b, x, param);
+    }
+    // for (ii = 0; ii < 5; ii++) {printf("(%d,%d) : h=%f\n",gmap->jj[ii],gmap->kk[ii],(*data)->h[ii]);}
     enforce_head_bc(data, gmap, param);
     if (param->use_mpi == 1)
     {mpi_exchange_subsurf((*data)->h, gmap, 2, param, irank, nrank);}
@@ -135,7 +139,7 @@ void solve_groundwater(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *p
     }
 
     // >>> Post-allocation step
-    if (param->use_corrector == 1)
+    if (param->use_corrector == 1 & param->iter_solve == 0)
     {reallocate_water_content(data, gmap, param, irank);}
 
     (*data)->qbc[0] -= (*data)->qz[0] * param->dt;
@@ -466,6 +470,216 @@ void baroclinic_face(Data **data, Map *gmap, Config *param, int irank, int nrank
     }
 }
 
+// >>>>> calculate Newton residual
+double get_residual(Data **data, Map *gmap, int ii, Config *param)
+{
+    double wcp, resi, dp, dm;
+    wcp = compute_wch(*data, ii, param);
+    resi = param->Ss*wcp*((*data)->h[ii]-(*data)->hn[ii])/(*data)->wcs[ii]/param->dt;
+    resi += (wcp-(*data)->wcn[ii])/param->dt;
+    // >>> flux in x
+    dp = param->dx;
+    dm = param->dx;
+    if (gmap->ii[ii] == 0)  {dm = 0.5*dm;}
+    else if (gmap->ii[ii] == param->nx-1)   {dp = 0.5*dp;}
+    resi -= (*data)->Kx[ii]*((*data)->h[gmap->iPjckc[ii]]-(*data)->h[ii])/dp/param->dx;
+    resi += (*data)->Kx[gmap->iMjckc[ii]]*((*data)->h[ii]-(*data)->h[gmap->iMjckc[ii]])/dm/param->dx;
+    // >>> flux in y
+    dp = param->dy;
+    dm = param->dy;
+    if (gmap->jj[ii] == 0)  {dm = 0.5*dm;}
+    else if (gmap->jj[ii] == param->ny-1)   {dp = 0.5*dp;}
+    resi -= (*data)->Ky[ii]*((*data)->h[gmap->icjPkc[ii]]-(*data)->h[ii])/dp/param->dy;
+    resi += (*data)->Ky[gmap->icjMkc[ii]]*((*data)->h[ii]-(*data)->h[gmap->icjMkc[ii]])/dm/param->dy;
+    // >>> flux in z
+    if (gmap->istop[ii] == 1)    {
+        dp = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        resi -= (*data)->Kz[ii]*(((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii])/dp - 1.0)/gmap->dz3d[ii];
+        if (param->bctype_GW[5] == 2)   {resi += (*data)->qtop[gmap->top2d[ii]];}
+        else {
+            dm = 0.5*gmap->dz3d[ii];
+            resi += (*data)->Kz[gmap->icjckM[ii]]*(((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]])/dm - 1.0)/gmap->dz3d[ii];
+        }
+    }
+    else if (gmap->kk[ii] == param->nz-1)    {
+        dm = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
+        resi += (*data)->Kz[gmap->icjckM[ii]]*(((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]])/dm - 1.0)/gmap->dz3d[ii];
+        if (param->bctype_GW[4] == 2)   {resi -= (*data)->qbot;}
+        else    {
+            dp = 0.5*gmap->dz3d[ii];
+            resi -= (*data)->Kz[ii]*(((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii])/dp - 1.0)/gmap->dz3d[ii];
+        }
+    }
+    else    {
+        dp = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        dm = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
+        resi -= (*data)->Kz[ii]*(((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii])/dp - 1.0)/gmap->dz3d[ii];
+        resi += (*data)->Kz[gmap->icjckM[ii]]*(((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]])/dm - 1.0)/gmap->dz3d[ii];
+    }
+
+    return resi;
+}
+
+// >>>>> compute the Jacobian
+double get_jacobian(Data **data, Map *gmap, int ii, char* axis, Config *param)
+{
+    double wcp, dwc, dkx, dky, dkz, dm, dp, jaco;
+    if (strcmp(axis, "ct") == 0)    {
+        wcp = compute_wch(*data, ii, param);
+        dwc = compute_dwcdh(*data, ii, param);
+        dkx = compute_dKdh(*data, (*data)->Ksx, ii, param);
+        dky = compute_dKdh(*data, (*data)->Ksy, ii, param);
+        dkz = compute_dKdh(*data, (*data)->Ksz, ii, param);
+        jaco = (dwc + param->Ss*wcp/(*data)->wcs[ii] +
+            param->Ss*dwc*((*data)->h[ii] - (*data)->hn[ii])/(*data)->wcs[ii]) / param->dt;
+        //  >>> x component
+        dp = param->dx;
+        dm = param->dx;
+        if (gmap->ii[ii] == 0)  {dm = 0.5*dm;}
+        else if (gmap->ii[ii] == param->nx-1)   {dp = 0.5*dp;}
+        jaco += (((*data)->h[ii]-(*data)->h[gmap->iMjckc[ii]]) * dkx + (*data)->Kx[gmap->iMjckc[ii]]) / dm / param->dx;
+        jaco -= (((*data)->h[gmap->iPjckc[ii]]-(*data)->h[ii]) * dkx - (*data)->Kx[ii]) / dp / param->dx;
+        //  >>> y component
+        dp = param->dy;
+        dm = param->dy;
+        if (gmap->jj[ii] == 0)  {dm = 0.5*dm;}
+        else if (gmap->jj[ii] == param->ny-1)   {dp = 0.5*dp;}
+        jaco += (((*data)->h[ii]-(*data)->h[gmap->icjMkc[ii]]) * dky + (*data)->Ky[gmap->icjMkc[ii]]) / dm / param->dy;
+        jaco -= (((*data)->h[gmap->icjPkc[ii]]-(*data)->h[ii]) * dky - (*data)->Ky[ii]) / dp / param->dy;
+        //  >>> z component
+        dp = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        dm = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
+        if (gmap->istop[ii] == 1)  {
+            jaco -= (((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]+dp) * dkz - (*data)->Kz[ii]) / dp / gmap->dz3d[ii];
+            if (param->bctype_GW[5] != 2)   {
+                dm = 0.5*gmap->dz3d[ii];
+                jaco += (((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]]+dm) * dkz + (*data)->Kz[gmap->icjckM[ii]]) / dm / gmap->dz3d[ii];
+            }
+        }
+        else if (gmap->kk[ii] == param->nz-1)   {
+            jaco += (((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]]+dm) * dkz + (*data)->Kz[gmap->icjckM[ii]]) / dm / gmap->dz3d[ii];
+            if (param->bctype_GW[4] != 2)   {
+                dp = 0.5*gmap->dz3d[ii];
+                jaco -= (((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]+dp) * dkz - (*data)->Kz[ii]) / dp / gmap->dz3d[ii];
+            }
+        }
+        else {
+            jaco += (((*data)->h[ii]-(*data)->h[gmap->icjckM[ii]]+dm) * dkz + (*data)->Kz[gmap->icjckM[ii]]) / dm / gmap->dz3d[ii];
+            jaco -= (((*data)->h[gmap->icjckP[ii]]-(*data)->h[ii]+dp) * dkz - (*data)->Kz[ii]) / dp / gmap->dz3d[ii];
+        }
+
+    }
+    else if (strcmp(axis, "xp") == 0)  {
+        dp = param->dx;
+        if (gmap->ii[ii] == param->nx-1)   {dp = 0.5*dp;}
+        dkx = compute_dKdh(*data, (*data)->Ksx, gmap->iPjckc[ii], param);
+        jaco = - (((*data)->h[gmap->iPjckc[ii]] - (*data)->h[ii]) * dkx + (*data)->Kx[ii]) / dp / param->dx;
+    }
+    else if (strcmp(axis, "xm") == 0)  {
+        dm = param->dx;
+        if (gmap->ii[ii] == 0)   {dm = 0.5*dm;}
+        dkx = compute_dKdh(*data, (*data)->Ksx, gmap->iMjckc[ii], param);
+        jaco = (((*data)->h[ii] - (*data)->h[gmap->iMjckc[ii]]) * dkx - (*data)->Kx[gmap->iMjckc[ii]]) / dm / param->dx;
+    }
+    else if (strcmp(axis, "yp") == 0)  {
+        dp = param->dy;
+        if (gmap->jj[ii] == param->ny-1)   {dp = 0.5*dp;}
+        dky = compute_dKdh(*data, (*data)->Ksy, gmap->icjPkc[ii], param);
+        jaco = - (((*data)->h[gmap->icjMkc[ii]] - (*data)->h[ii]) * dky + (*data)->Ky[ii]) / dp / param->dy;
+    }
+    else if (strcmp(axis, "ym") == 0)  {
+        dm = param->dy;
+        if (gmap->jj[ii] == 0)   {dm = 0.5*dm;}
+        dky = compute_dKdh(*data, (*data)->Ksy, gmap->icjMkc[ii], param);
+        jaco = (((*data)->h[ii] - (*data)->h[gmap->icjMkc[ii]]) * dky - (*data)->Ky[gmap->icjMkc[ii]]) / dm / param->dy;
+    }
+    else if (strcmp(axis, "zp") == 0)  {
+        dp = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckP[ii]]);
+        dkz = compute_dKdh(*data, (*data)->Ksz, gmap->icjckP[ii], param);
+        if (gmap->kk[ii] == param->nz-1)   {
+            if (param->bctype_GW[4] == 2)   {jaco = 0.0;}
+            else {
+                dp = 0.5*gmap->dz3d[ii];
+                jaco = - (((*data)->h[gmap->icjckP[ii]] - (*data)->h[ii] + dp) * dkz + (*data)->Kz[ii]) / dp / gmap->dz3d[ii];
+            }
+        }
+        else {jaco = - (((*data)->h[gmap->icjckP[ii]] - (*data)->h[ii] + dp) * dkz + (*data)->Kz[ii]) / dp / gmap->dz3d[ii];}
+    }
+    else if (strcmp(axis, "zm") == 0)  {
+        dm = 0.5*(gmap->dz3d[ii] + gmap->dz3d[gmap->icjckM[ii]]);
+        if (gmap->istop[ii] == 1 | gmap->kk[ii] == 0)  {
+            if (param->bctype_GW[5] == 2)   {jaco = 0.0;}
+            else {
+                dm = 0.5*gmap->dz3d[ii];
+                dkz = compute_dKdh(*data, (*data)->Ksz, ii, param);
+                jaco = (((*data)->h[ii] - (*data)->h[gmap->icjckM[ii]] + dm) * dkz - (*data)->Kz[gmap->icjckM[ii]]) / dm / gmap->dz3d[ii];
+            }
+        }
+        else {
+            dkz = compute_dKdh(*data, (*data)->Ksz, gmap->icjckM[ii], param);
+            jaco = (((*data)->h[ii] - (*data)->h[gmap->icjckM[ii]] + dm) * dkz - (*data)->Kz[gmap->icjckM[ii]]) / dm / gmap->dz3d[ii];
+        }
+    }
+    return jaco;
+}
+
+// >>>>> Build the Jacobian coefficients
+void jacobian_mat_coeff(Data **data, Map *gmap, Config *param)
+{
+    int ii, jp, jm;
+    double dzf;
+    for (ii = 0; ii < param->n3ci; ii++)
+    {
+        (*data)->Gxp[ii] = get_jacobian(data, gmap, ii, "xp", param);
+        (*data)->Gxm[ii] = get_jacobian(data, gmap, ii, "xm", param);
+        (*data)->Gyp[ii] = get_jacobian(data, gmap, ii, "yp", param);
+        (*data)->Gym[ii] = get_jacobian(data, gmap, ii, "ym", param);
+        (*data)->Gzp[ii] = get_jacobian(data, gmap, ii, "zp", param);
+        (*data)->Gzm[ii] = get_jacobian(data, gmap, ii, "zm", param);
+        (*data)->Gct[ii] = get_jacobian(data, gmap, ii, "ct", param);
+        (*data)->Grhs[ii] = -get_residual(data, gmap, ii, param);
+        // printf(" COF %d : %f, %f, %f, %f\n",ii,(*data)->Gzm[ii],(*data)->Gct[ii],(*data)->Gzp[ii],(*data)->Grhs[ii]);
+    }
+}
+
+// >>>>> The iterative Newton loop
+void newton_iter(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param) {
+    int ii, iter, iter_max = 100;
+    double eps, eps_min = 1e-8;
+    for (ii = 0; ii < param->n3ci; ii++)    {
+        (*data)->hn[ii] = (*data)->h[ii];
+        (*data)->wcn[ii] = (*data)->wc[ii];
+    }
+    iter = 1;
+    eps = 1.0;
+    while (iter < iter_max & eps > eps_min) {
+        // build Jacobian Matrix
+        jacobian_mat_coeff(data, gmap, param);
+        build_groundwater_system(*data, gmap, param, A, b);
+        solve_groundwater_system(data, gmap, A, b, x, param);
+        if (iter == 1)  {
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                (*data)->h[ii] += (*data)->h_incr[ii];
+                (*data)->hn[ii] = (*data)->h[ii];
+            }
+        }
+        else {
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                (*data)->h[ii] += (*data)->h_incr[ii];
+            }
+            eps = eps_min/10.0;
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                if (fabs((*data)->h_incr[ii]) > eps)    {eps = fabs((*data)->h_incr[ii]);}
+                (*data)->hn[ii] = (*data)->h[ii];
+            }
+        }
+        printf("     >>> Newton iter : %d    EPS : %f<<< \n",iter,eps);
+        iter += 1;
+    }
+
+}
+
+
 // >>>>> Compute matrix coefficients <<<<<
 void groundwater_mat_coeff(Data **data, Map *gmap, Config *param, int irank)
 {
@@ -739,8 +953,18 @@ void solve_groundwater_system(Data **data, Map *gmap, QMatrix A, Vector b, Vecto
     size_t ii;
     V_SetAllCmp(&x, 0.0);
     SetRTCAccuracy(0.00000001);
-    CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
-    for (ii = 0; ii < param->n3ci; ii++)    {(*data)->h[ii] = V_GetCmp(&x, ii+1);}
+    if (param->iter_solve == 1) {
+        // GMRESIter(&A, &x, &b, 10000, ILUPrecond, 1);
+        BiCGSTABIter(&A, &x, &b, 10000, ILUPrecond, 1);
+        // GMRESIter(&A, &x, &b, 100, SSORPrecond, 1);
+        // NestedMGIter(2, &A, &x, &b, NULL, NULL, 1, SSORIter, 1, 1, NULL, 1.2, GMRESIter, 10, SSORPrecond, 1.0);
+        for (ii = 0; ii < param->n3ci; ii++)    {(*data)->h_incr[ii] = V_GetCmp(&x, ii+1);}
+    }
+    else {
+        CGIter(&A, &x, &b, 10000, SSORPrecond, 1);
+        for (ii = 0; ii < param->n3ci; ii++)    {(*data)->h[ii] = V_GetCmp(&x, ii+1);}
+    }
+
 }
 
 // >>>>> enforce head boundary conditions
@@ -951,7 +1175,7 @@ void groundwater_flux(Data **data, Map *gmap, Config *param, int irank)
                 else if (param->bctype_GW[5] == 2)
                 {
                     if ((*data)->qtop[gmap->top2d[jj]] < 0.0 & (*data)->wc[ii] < (*data)->wcs[ii])
-                    {(*data)->qz[ii] = (*data)->qtop[gmap->top2d[jj]];}
+                    {(*data)->qz[ii] = (*data)->qtop[gmap->top2d[jj]];  }
                     else if ((*data)->qtop[gmap->top2d[jj]] > 0.0 & (*data)->wc[ii] > (*data)->wcr[ii])
                     {(*data)->qz[ii] = (*data)->qtop[gmap->top2d[jj]];}
                     else
@@ -1793,6 +2017,8 @@ void volume_by_flux_subs(Data **data, Map *gmap, Config *param)
         (-(*data)->qz[gmap->icjckM[ii]] + (*data)->qz[ii]) * param->dy * param->dx);
     }
 }
+
+
 
 
 // >>>>> adjust dt for groundwater solver <<<<<

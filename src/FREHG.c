@@ -8,14 +8,13 @@
 #include<math.h>
 #include<string.h>
 #include<mpi.h>
-#include<omp.h>
+// #include<omp.h>
 
 #include"configuration.h"
 #include"initialize.h"
 #include"map.h"
 #include"solve.h"
 #include"utility.h"
-#include"linsys.h"
 
 int main(int argc, char *argv[])
 {
@@ -23,11 +22,10 @@ int main(int argc, char *argv[])
     Data *data;
     Map *smap;
     Map *gmap;
-    Lisy *sysm;
     int irank = 0,  nrank = 1;
 
     read_input(&param);
-    omp_set_num_threads(param->nthreads);
+    // omp_set_num_threads(param->nthreads);
     if (param->use_mpi == 1)
     {
         MPI_Init(&argc, &argv);
@@ -38,7 +36,7 @@ int main(int argc, char *argv[])
     mpi_print("\n\n>>>>>>  Starting FREHG simulation  <<<<<< ",irank);
     mpi_print("   >>>  Author: Zhi Li(LBNL, 2020) <<<  \n\n",irank);
     init(&data, &smap, &gmap, &param, irank, nrank);
-    solve(&data, &sysm, smap, gmap, param, irank, nrank);
+    solve(&data, smap, gmap, param, irank, nrank);
 
 
     if (param->use_mpi == 1)    {MPI_Finalize();}

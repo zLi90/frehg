@@ -14,15 +14,13 @@
 #include "scalar.h"
 #include "utility.h"
 
-#include "linsys.h"
 
-
-void solve(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int irank, int nrank);
+void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void get_current_bc(Data **data, Config *param, double t_current);
 void get_evaprain(Data **data, Map *gmap, Config *param, double t_current);
 void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank);
 
-void solve(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int irank, int nrank)
+void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int t_save, tday, ii, kk, tt = 1;
     float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0;
@@ -31,7 +29,6 @@ void solve(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int ir
     dt_max = param->dt;
     mpi_print(" >>> Writing initial conditions into output files !", irank);
     write_output(data, gmap, param, 0, 0, irank);
-    init_crs_matrix(*data, sysm, param, param->n3ci, 1);
     // begin time stepping
     mpi_print(" >>> Beginning Time loop !", irank);
     while (t_current < param->Tend)
@@ -56,7 +53,7 @@ void solve(Data **data, Lisy **sysm, Map *smap, Map *gmap, Config *param, int ir
 
         if (param->sim_groundwater == 1)
         {
-            solve_groundwater(data, sysm, smap, gmap, param, irank, nrank);
+            solve_groundwater(data, smap, gmap, param, irank, nrank);
             // if ((*data)->repeat[0] == 1)
             // {
             //     if (param->dt_adjust == 1 & param->dt > param->dt_min)
@@ -276,6 +273,9 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
     // use the aerodynamic evap model
     if (param->sim_groundwater == 1)
     {
+        for (ii = 0; ii < param->n2ci; ii++)
+        {(*data)->qtop[ii] = param->qtop;}
+
         if (param->evap_model == 0)
         {
             for (ii = 0; ii < param->n2ci; ii++)
@@ -311,21 +311,13 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
                         // (*data)->evap[jj] = (*data)->evap[jj] * 50.0;
                         if ((*data)->evap[jj] < 0.0)    {(*data)->evap[jj] = 0.0;}
                     }
-
-                    // if (jj == 30)
-                    // {
-                    //     printf("   >>> wc=%f, satu=%f, rh=%f, evap=%f\n\n",(*data)->wc[ii],
-                    //         (*data)->wc[ii]/0.41, alpha, 1e7*(*data)->evap[jj]);
-                    // }
                 }
-
-
             }
         }
 
         if (param->evap_file == 1 | param->evap_model == 1)
         {
-            for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] = (*data)->evap[ii] / (*data)->wcs[ii];}
+            for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] += (*data)->evap[ii] / (*data)->wcs[ii];}
         }
         if ((*data)->rain[0] != 0.0)
         {

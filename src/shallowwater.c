@@ -13,17 +13,17 @@
 #include "scalar.h"
 #include "utility.h"
 
-#include "laspack/errhandl.h"
-#include "laspack/vector.h"
-#include "laspack/matrix.h"
-#include "laspack/qmatrix.h"
-#include "laspack/operats.h"
-#include "laspack/factor.h"
-#include "laspack/precond.h"
-#include "laspack/eigenval.h"
-#include "laspack/rtc.h"
-#include "laspack/itersolv.h"
-#include "laspack/mlsolv.h"
+#include "../laspack/errhandl.h"
+#include "../laspack/vector.h"
+#include "../laspack/matrix.h"
+#include "../laspack/qmatrix.h"
+#include "../laspack/operats.h"
+#include "../laspack/factor.h"
+#include "../laspack/precond.h"
+#include "../laspack/eigenval.h"
+#include "../laspack/rtc.h"
+#include "../laspack/itersolv.h"
+#include "../laspack/mlsolv.h"
 
 void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);

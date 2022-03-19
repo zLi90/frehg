@@ -33,7 +33,7 @@ typedef struct Config
     int use_subgrid, nlay_sub;
     double r_sub, eta_sub_max, eta_sub_min, deta_sub;
     // Groundwater
-    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d;
+    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d, iter_solve, use_vg;
     double init_h, init_wc, init_wt_abs, init_wt_rel, qtop, qbot, htop, hbot, aev, qyp, qym;
     double dt_max, dt_min, Co_max, Ksx, Ksy, Ksz, Ss, wcr, wcs, soil_a, soil_n;
     int *bctype_GW, h_file, wc_file;
