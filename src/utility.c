@@ -28,6 +28,7 @@ int get_index_sort(double *arr, double targ, double itval, int n);
 void reorder_surf(double *out, double *root, Config *param);
 void reorder_subsurf(double *out, double *root, Map *gmap, Config *param);
 void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int irank);
+void write_monitor_out(double val, char *field, int ii, Config *param);
 void write_one_file(double *ally, char *filename, Config *param, int tt, int n);
 void append_to_file(char *filename, double val, Config *param);
 void root_to_rank(double *root_array, double *rank_array, Config *param, int irank, int nrank, int offind, double offset);
@@ -618,6 +619,19 @@ void write_output(Data **data, Map *gmap, Config *param, int tt, int root, int i
             }
         }
     }
+}
+
+// >>>>> Write point monitoring results <<<<<
+void write_monitor_out(double val, char *field, int ii, Config *param)
+{
+
+    char fullname[50], fid[2];
+    strcpy(fullname, "monitor");
+    sprintf(fid, "%d", ii+1);
+    strcat(fullname, fid);
+    strcat(fullname, "_");
+    strcat(fullname, field);
+    append_to_file(fullname, val, param);
 }
 
 // >>>>> Write one output file <<<<<

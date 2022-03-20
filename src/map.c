@@ -147,7 +147,7 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
 {
     int ii, jj, nz_upper, nz_lower;
     double *bath_min, *bath_max, *bath_max_global, *bath_max_arr, *bath_min_global, *bath_min_arr;
-    double bot_new, dz_new;
+    double bot_new, dz_new, hdiff, dist;
 
     *map = malloc(sizeof(Map));
     bath_min = malloc(sizeof(double));
@@ -232,12 +232,20 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->dz3d = malloc(param->n3ct*sizeof(double));
         (*map)->istop = malloc(param->n3ci*sizeof(int));
         (*map)->top2d = malloc(param->n3ci*sizeof(int));
+        (*map)->sinx = malloc(param->n3ct*sizeof(double));
+        (*map)->siny = malloc(param->n3ct*sizeof(double));
+        (*map)->cosx = malloc(param->n3ct*sizeof(double));
+        (*map)->cosy = malloc(param->n3ct*sizeof(double));
 
         for (ii = 0; ii < param->n3ct; ii++)
         {
             (*map)->actv[ii] = 0;
             (*map)->actvXp[ii] = 0;
             (*map)->actvYp[ii] = 0;
+            (*map)->sinx[ii] = 0.0;
+            (*map)->siny[ii] = 0.0;
+            (*map)->cosx[ii] = 1.0;
+            (*map)->cosy[ii] = 1.0;
         }
         for (ii = 0; ii < param->n3ci; ii++)
         {
@@ -246,50 +254,58 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             (*map)->ii[ii] = smap->ii[(*map)->top2d[ii]];
             (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
             (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
-            (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
-            if ((*map)->kk[ii] == 0)    {(*map)->dz3d[ii] = param->dz;}
-            else    {(*map)->dz3d[ii] = (*map)->bot3d[ii-1] - (*map)->bot3d[ii];}
             (*map)->istop[ii] = 0;
         }
-        // adjust dz with respect to bathymetry
-        for (ii = 0; ii < param->n3ci; ii++)
-        {
-            if ((*map)->bot3d[ii] >= bath[(*map)->top2d[ii]] - 1e-5)
-            {
-                (*map)->actv[ii] = 0;
-                if ((*map)->bot3d[ii] - bath[(*map)->top2d[ii]] < param->dz)
-                {
-                    (*map)->bot3d[ii] = bath[(*map)->top2d[ii]];
-                }
-            }
-            else
-            {
-                (*map)->actv[ii] = 1;
-                // (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - param->dz*ceil((bath[(*map)->top2d[ii]] - (*map)->bot3d[ii])/param->dz);
 
-                if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)
+        // build terrain-following mesh
+        if (param->follow_terrain == 1) {
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                (*map)->actv[ii] = 1;
+                (*map)->dz3d[ii] = (bath[(*map)->top2d[ii]] - param->botZ) / param->nz;
+                (*map)->bot3d[ii] = bath[(*map)->top2d[ii]] - ((*map)->kk[ii]+1)*(*map)->dz3d[ii];
+                if ((*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
+            }
+        }
+        // regular cartesian mesh
+        else    {
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                (*map)->bot3d[ii] = (*map)->bot1d[(*map)->kk[ii]];
+                if ((*map)->kk[ii] == 0)    {(*map)->dz3d[ii] = param->dz;}
+                else    {(*map)->dz3d[ii] = (*map)->bot3d[ii-1] - (*map)->bot3d[ii];}
+            }
+            // adjust dz with respect to bathymetry
+            for (ii = 0; ii < param->n3ci; ii++)
+            {
+                if ((*map)->bot3d[ii] >= bath[(*map)->top2d[ii]] - 1e-5)    {
+                    (*map)->actv[ii] = 0;
+                    if ((*map)->bot3d[ii] - bath[(*map)->top2d[ii]] < param->dz)
+                    {(*map)->bot3d[ii] = bath[(*map)->top2d[ii]];}
+                }
+                else
                 {
-                    if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.25*param->dz)
-                    {(*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];}
-                    else
-                    {
-                        (*map)->actv[ii] = 0;
-                        (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                    (*map)->actv[ii] = 1;
+                    if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {
+                        if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] >= 0.25*param->dz)  {
+                            (*map)->dz3d[ii] = bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                        }
+                        else    {
+                            (*map)->actv[ii] = 0;
+                            (*map)->dz3d[ii+1] += bath[(*map)->top2d[ii]] - (*map)->bot3d[ii];
+                        }
                     }
                 }
             }
-
-        }
-        // get the top cell index
-        for (ii = 0; ii < param->n3ci; ii++)
-        {
-            if (ii == 0)    {if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {(*map)->istop[ii] = 1;}}
-            else
+            // get the top cell index
+            for (ii = 0; ii < param->n3ci; ii++)
             {
-                if ((*map)->actv[ii] == 1 & (*map)->actv[ii-1] == 0)    {(*map)->istop[ii] = 1;}
-                else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
+                if (ii == 0)    {if (bath[(*map)->top2d[ii]] - (*map)->bot3d[ii] <= param->dz)   {(*map)->istop[ii] = 1;}}
+                else    {
+                    if ((*map)->actv[ii] == 1 & (*map)->actv[ii-1] == 0)    {(*map)->istop[ii] = 1;}
+                    else if ((*map)->actv[ii] == 1 & (*map)->kk[ii] == 0)    {(*map)->istop[ii] = 1;}
+                }
             }
         }
+
         // get z-coordinates of each subsurface cell
         (*map)->nactv = 0;
         for (ii = 0; ii < param->n3ci; ii++)
@@ -383,6 +399,25 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
                 (*map)->kMou[(*map)->top2d[ii]] = (*map)->icjckM[ii];
             }
         }
+        // calculate the angles for terrain-following mesh
+        if (param->follow_terrain == 1) {
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                if ((*map)->ii[ii] < param->nx-1)    {
+                    hdiff = fabs(((*map)->bot3d[(*map)->iPjckc[ii]] + 0.5*(*map)->dz3d[(*map)->iPjckc[ii]])
+                        - ((*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii]));
+                    dist = sqrt(pow(hdiff,2.0) + pow(param->dx,2.0));
+                    (*map)->sinx[ii] = hdiff / dist;
+                    (*map)->cosx[ii] = param->dx / dist;
+                }
+                if ((*map)->jj[ii] < param->ny-1)    {
+                    hdiff = fabs(((*map)->bot3d[(*map)->icjPkc[ii]] + 0.5*(*map)->dz3d[(*map)->icjPkc[ii]])
+                        - ((*map)->bot3d[ii] + 0.5*(*map)->dz3d[ii]));
+                    dist = sqrt(pow(hdiff,2.0) + pow(param->dy,2.0));
+                    (*map)->siny[ii] = hdiff / dist;
+                    (*map)->cosy[ii] = param->dy / dist;
+                }
+            }
+        }
 
         // boundary actv
         for (ii = 0; ii < param->ny*param->nz; ii++)
@@ -397,8 +432,8 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             (*map)->actv[(*map)->jMou[ii]] = (*map)->actv[(*map)->jMin[ii]];
         }
         // ZhiLi20201229!!!
-        for (ii = 0; ii < param->n3ct; ii++)
-        {(*map)->dz3d[ii] = param->dz;}
+        // for (ii = 0; ii < param->n3ct; ii++)
+        // {(*map)->dz3d[ii] = param->dz;}
         // output the z-coordinates
         if (param->use_mpi == 1)
         {

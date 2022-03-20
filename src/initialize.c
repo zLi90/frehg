@@ -118,18 +118,6 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
         else    {(*data)->offset[0] = -z_min;}
         // bathymetry for each rank
         root_to_rank((*data)->bottom_root, (*data)->bottom, param, irank, nrank, 0, (*data)->offset[0]);
-
-        // for (ii = 0; ii < param->n2ci; ii++)
-        // {
-        //     xrank = irank % param->mpi_nx;
-        //     yrank = floor(irank/param->mpi_nx);
-        //     // jj = yrank * param->mpi_nx + xrank;
-        //     // (*data)->bottom[ii] = (*data)->bottom_root[jj*param->n2ci+ii] + (*data)->offset[0];
-        //     col = floor(ii / param->nx);
-        //     row = ii % param->nx;
-        //     jj = yrank*param->mpi_nx*param->n2ci + col*param->NX + xrank*param->nx + row;
-        //     (*data)->bottom[ii] = (*data)->bottom_root[jj] + (*data)->offset[0];
-        // }
     }
     else
     {
@@ -453,13 +441,7 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
     if (param->eta_file == 0)
     {
         for (ii = 0; ii < param->N2CI; ii++)
-        {
-            (*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];
-            // if (smap->jj[ii] < 85)
-            // {
-            //     (*data)->eta_root[ii] = 0.4 + (*data)->offset[0];
-            // }
-        }
+        {(*data)->eta_root[ii] = param->init_eta + (*data)->offset[0];}
     }
     else
     {
@@ -984,13 +966,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
     (*data)->htop = param->htop;
     (*data)->hbot = param->hbot;
 
-    for (ii = 0; ii < param->n2ci; ii++)
-    {
-        (*data)->qtop[ii] = ((*data)->evap[ii] - (*data)->rain[0]) / param->wcs;
-    }
+    for (ii = 0; ii < param->n2ci; ii++) {(*data)->qtop[ii] = ((*data)->evap[ii] - (*data)->rain[0]) / param->wcs;}
 
     // initialize soil properties
-    for (ii = 0; ii < param->n3ct; ii++)
+    for (ii = 0; ii < param->n3ci; ii++)
     {
         // homogeneous soil properties for now, Zhi Li 20200724
         (*data)->vga[ii] = param->soil_a;
@@ -1066,14 +1045,13 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 }
                 else
                 {
-                    // (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    // (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    (*data)->wc[ii] = compute_wch(*data, ii, param);
                     // (*data)->wc[ii] = param->wcr +
                         // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
-
-                    (*data)->wc[ii] = param->wcr + 0.02;
-                    // (*data)->wc[ii] = 0.38;
-                    (*data)->h[ii] = compute_hwc(*data, ii, param);
+                    // (*data)->wc[ii] = param->wcr + 0.05;
+                    // (*data)->wc[ii] = param->wcr + 0.38;
+                    // (*data)->h[ii] = compute_hwc(*data, ii, param);
                 }
             }
         }
@@ -1092,10 +1070,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
                     (*data)->wc[ii] = compute_wch(*data, ii, param);
                 }
-                // if (gmap->jj[ii] == 10)
-                // {
-                //     printf(" !!!!! kk=%d, h->wc : %f->%f, bot=%f, dept=%f \n",gmap->kk[ii],(*data)->h[ii],(*data)->wc[ii],gmap->bot3d[ii],(*data)->dept[gmap->top2d[ii]]);
-                // }
             }
         }
     }
@@ -1105,6 +1079,9 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
     {restart_subsurface((*data)->h, "head_ic", param, irank);}
     if (param->wc_file == 1)
     {restart_subsurface((*data)->wc, "moisture_ic", param, irank);}
+
+    enforce_head_bc(data, gmap, param);
+    enforce_moisture_bc(data, gmap, param);
 
     // fixed head boundary condition
     for (ii = 0; ii < param->n3ci; ii++)

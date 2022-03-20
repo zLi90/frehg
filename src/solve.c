@@ -106,35 +106,24 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
             {
                 if (irank == (*data)->monitor_rank[ii])
                 {
-                    char fullname[50], fid[2];
-                    strcpy(fullname, "monitor");
-                    sprintf(fid, "%d", ii+1);
-                    strcat(fullname, fid);
-                    strcat(fullname, "_surf");
-                    append_to_file(fullname, (*data)->eta[(*data)->monitor[ii]] - (*data)->offset[0], param);
+                    write_monitor_out((*data)->eta[(*data)->monitor[ii]] - (*data)->offset[0], "surf", ii, param);
+                    write_monitor_out((*data)->dept[(*data)->monitor[ii]], "depth", ii, param);
+                    write_monitor_out((*data)->vv[(*data)->monitor[ii]], "vv", ii, param);
                     if (param->n_scalar > 0)
                     {
                         for (kk = 0; kk < param->n_scalar; kk++)
-                        {
-                            char fullname[50], fid[2];
-                            strcpy(fullname, "monitor");
-                            sprintf(fid, "%d", ii+1);
-                            strcat(fullname, fid);
-                            strcat(fullname, "_scalar");
-                            sprintf(fid, "%d", kk+1);
-                            strcat(fullname, fid);
-                            append_to_file(fullname, (*data)->s_surf[kk][(*data)->monitor[ii]], param);
-                        }
+                        {if (kk == 0) {write_monitor_out((*data)->s_surf[kk][(*data)->monitor[ii]], "scalar1", ii, param);}}
                     }
                 }
             }
         }
-        // if (max_CFL > 1.0)
-        // {
-        //     t_save = round(t_current);
-        //     printf("Save output at large CFL number!, tsave=%d\n",t_save);
-        //     write_output(data, gmap, param, t_save, 0, irank);
-        // }
+        if (max_CFL > 1.0)
+        {
+            param->dt = param->dt / 2.0;
+            // t_save = round(t_current);
+            // printf("Save output at large CFL number!, tsave=%d\n",t_save);
+            // write_output(data, gmap, param, t_save, 0, irank);
+        }
         // report time
         if (irank == 0)
         {
@@ -255,6 +244,7 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
     {
         (*data)->current_rain[0] = interp_bc((*data)->t_rain,(*data)->rain_data,t_current,param->rain_dat_len);
         (*data)->rain[0] = (*data)->current_rain[0];
+
     }
     // evaporation
     // read evap data
@@ -322,7 +312,7 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
         if ((*data)->rain[0] != 0.0)
         {
             // A temporary limiter on max rainfall rate, ZhiLi20211209
-            if ((*data)->rain[0] > 1e-6)    {(*data)->rain[0] = 1e-6;}
+            // if ((*data)->rain[0] > 1e-5)    {(*data)->rain[0] = 1e-5;}
             for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] -= (*data)->rain[0];}
         }
     }
