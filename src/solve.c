@@ -18,13 +18,14 @@
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank);
 void get_current_bc(Data **data, Config *param, double t_current);
 void get_evaprain(Data **data, Map *gmap, Config *param, double t_current);
+double get_mass(Data **data, Map *gmap, Config *param);
 void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank);
 
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
     int t_save, tday, ii, kk, tt = 1;
     float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0;
-    double max_CFLx, max_CFLy, max_CFL, *max_CFL_root;
+    double max_CFLx, max_CFLy, max_CFL, *max_CFL_root, tot_mass;
     // save initial condition
     dt_max = param->dt;
     mpi_print(" >>> Writing initial conditions into output files !", irank);
@@ -100,6 +101,10 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
             last_save = t_save;
             write_output(data, gmap, param, t_save, 0, irank);
         }
+        // output total mass
+        tot_mass = get_mass(data, gmap, param);
+        write_monitor_out(tot_mass, "mass", 0, param);
+        // output monitored variables
         if (param->n_monitor > 0 & param->sim_shallowwater == 1)
         {
             for (ii = 0; ii < param->n_monitor; ii++)
@@ -322,8 +327,6 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
         {(*data)->evap[ii] = (*data)->current_evap[0];}
     }
 
-
-
     // for Geng2015
     // for (ii = 0; ii < param->n3ci; ii++)
     // {
@@ -332,6 +335,24 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
     //         if (gmap->top2d[ii] < 20)    {(*data)->qtop[gmap->top2d[ii]] = 0.0;}
     //     }
     // }
+}
+
+// >>>>> Calculate total mass in the domain <<<<<
+double get_mass(Data **data, Map *gmap, Config *param) {
+    int ii;
+    double mass = 0.0;
+    // actually we only calculate volume
+    if (param->sim_shallowwater == 1)   {
+        for (ii = 0; ii < param->n2ci; ii++)    {
+            mass += (*data)->Vs[ii];
+        }
+    }
+    if (param->sim_groundwater == 1)    {
+        for (ii = 0; ii < param->n3ci; ii++)    {
+            mass += (*data)->wc[ii] * param->dx * param->dy * gmap->dz3d[ii];
+        }
+    }
+    return mass;
 }
 
 // >>>>> Print information upon completion <<<<<
