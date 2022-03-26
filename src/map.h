@@ -8,7 +8,7 @@
 typedef struct Map
 {
     // surface maps
-    int *cntr, *iPjc, *iMjc, *icjP, *icjM, *ii, *jj;
+    int *cntr, *iPjc, *iMjc, *icjP, *icjM, *ii, *jj, *ibot;
     int *iPjP, *iPjM, *iMjP, *iMjM;
     int *iPin, *iPou, *iMin, *iMou, *jPin, *jPou, *jMin, *jMou;
     // subsurface maps
@@ -17,6 +17,7 @@ typedef struct Map
     int nactv;
     double *bot1d, *bot3d, *dz3d;
     double *zcntr, *zcntr_root, *zcntr_out;
+    double *sinx, *siny, *cosx, *cosy;
 }Map;
 
 #endif

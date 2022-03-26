@@ -10,6 +10,7 @@
 #include "map.h"
 #include "mpifunctions.h"
 #include "scalar.h"
+#include "subroutines.h"
 #include "utility.h"
 
 void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int nrank, int kk);
@@ -44,7 +45,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sip = (*data)->s_surf[kk][ii];
             if (param->superbee == 1)   {
                 sip = tvd_superbee((*data)->s_surf[kk][smap->iPjc[ii]], (*data)->s_surf[kk][ii],
-                    (*data)->s_surf[kk][smap->iMjc[ii]], (*data)->uu[ii], param->dx, param);
+                    (*data)->s_surf[kk][smap->iMjc[ii]], (*data)->uu[ii], param->dx, param->dt, param);
             }
         }
         else
@@ -52,7 +53,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sip = (*data)->s_surf[kk][smap->iPjc[ii]];
             if (param->superbee == 1 & smap->ii[ii] != param->nx-1) {
                 sip = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->iPjc[ii]],
-                    (*data)->s_surf[kk][smap->iPjc[smap->iPjc[ii]]], (*data)->uu[ii], param->dx, param);
+                    (*data)->s_surf[kk][smap->iPjc[smap->iPjc[ii]]], (*data)->uu[ii], param->dx, param->dt, param);
             }
         }
         if ((*data)->Fu[smap->iMjc[ii]] > 0)
@@ -60,7 +61,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sim = (*data)->s_surf[kk][smap->iMjc[ii]];
             if (param->superbee == 1 & smap->ii[ii] != 0)   {
                 sim = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->iMjc[ii]],
-                    (*data)->s_surf[kk][smap->iMjc[smap->iMjc[ii]]], (*data)->uu[smap->iMjc[ii]], param->dx, param);
+                    (*data)->s_surf[kk][smap->iMjc[smap->iMjc[ii]]], (*data)->uu[smap->iMjc[ii]], param->dx, param->dt, param);
             }
         }
         else
@@ -68,7 +69,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sim = (*data)->s_surf[kk][ii];
             if (param->superbee == 1)   {
                 sim = tvd_superbee((*data)->s_surf[kk][smap->iMjc[ii]], (*data)->s_surf[kk][ii],
-                    (*data)->s_surf[kk][smap->iPjc[ii]], (*data)->uu[smap->iMjc[ii]], param->dx, param);
+                    (*data)->s_surf[kk][smap->iPjc[ii]], (*data)->uu[smap->iMjc[ii]], param->dx, param->dt, param);
             }
         }
         // y advetcion
@@ -77,7 +78,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sjp = (*data)->s_surf[kk][ii];
             if (param->superbee == 1)   {
                 sjp = tvd_superbee((*data)->s_surf[kk][smap->icjP[ii]], (*data)->s_surf[kk][ii],
-                    (*data)->s_surf[kk][smap->icjM[ii]], (*data)->vv[ii], param->dy, param);
+                    (*data)->s_surf[kk][smap->icjM[ii]], (*data)->vv[ii], param->dy, param->dt, param);
             }
         }
         else
@@ -85,7 +86,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sjp = (*data)->s_surf[kk][smap->icjP[ii]];
             if (param->superbee == 1 & smap->jj[ii] != param->ny-1) {
                 sjp = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->icjP[ii]],
-                    (*data)->s_surf[kk][smap->icjP[smap->icjP[ii]]], (*data)->vv[ii], param->dy, param);
+                    (*data)->s_surf[kk][smap->icjP[smap->icjP[ii]]], (*data)->vv[ii], param->dy, param->dt, param);
             }
         }
         if ((*data)->Fv[smap->icjM[ii]] > 0)
@@ -93,7 +94,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sjm = (*data)->s_surf[kk][smap->icjM[ii]];
             if (param->superbee == 1 & smap->jj[ii] != 0)   {
                 sjm = tvd_superbee((*data)->s_surf[kk][ii], (*data)->s_surf[kk][smap->icjM[ii]],
-                    (*data)->s_surf[kk][smap->icjM[smap->icjM[ii]]], (*data)->vv[smap->icjM[ii]], param->dy, param);
+                    (*data)->s_surf[kk][smap->icjM[smap->icjM[ii]]], (*data)->vv[smap->icjM[ii]], param->dy, param->dt, param);
             }
         }
         else
@@ -101,7 +102,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
             sjm = (*data)->s_surf[kk][ii];
             if (param->superbee == 1)   {
                 sjm = tvd_superbee((*data)->s_surf[kk][smap->icjM[ii]], (*data)->s_surf[kk][ii],
-                    (*data)->s_surf[kk][smap->icjP[ii]], (*data)->vv[smap->icjM[ii]], param->dy, param);
+                    (*data)->s_surf[kk][smap->icjP[ii]], (*data)->vv[smap->icjM[ii]], param->dy, param->dt, param);
             }
         }
         (*data)->sm_surf[kk][ii] = (*data)->sm_surf[kk][ii] + param->dt *
@@ -205,12 +206,7 @@ void scalar_shallowwater(Data **data, Map *smap, Config *param, int irank, int n
     // Kuan 2019
     // for (ii = 0; ii < param->n2ci; ii++)
     // {
-    //     // if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0) {(*data)->s_surf[kk][ii] = 35.0;}
-    //     if (smap->jj[ii] >= 60)
-    //     {
-    //         if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0)
-    //         {(*data)->s_surf[kk][ii] = 35.0;}
-    //     }
+    //     if ((*data)->Vflux[ii] > 0 & (*data)->dept[ii] > 0) {(*data)->s_surf[kk][ii] = 35.0;}
     // }
     // enforce scalar boundary condition
     for (ii = 0; ii < param->nx; ii++)
@@ -461,13 +457,13 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 sip = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->iPjckc[icell]],
-                    (*data)->s_subs[kk][gmap->iPjckc[gmap->iPjckc[icell]]], (*data)->qx[icell], param->dx, param);
+                    (*data)->s_subs[kk][gmap->iPjckc[gmap->iPjckc[icell]]], (*data)->qx[icell], param->dx, param->dt, param);
             }
         }
         else if ((*data)->qx[icell] < 0)
         {
             sip = tvd_superbee((*data)->s_subs[kk][gmap->iPjckc[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->iMjckc[icell]], (*data)->qx[icell], param->dx, param);
+                (*data)->s_subs[kk][gmap->iMjckc[icell]], (*data)->qx[icell], param->dx, param->dt, param);
         }
         else    {skp = 0.0;}
     }
@@ -482,7 +478,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
         if ((*data)->qx[gmap->iMjckc[icell]] > 0)
         {
             sim = tvd_superbee((*data)->s_subs[kk][gmap->iMjckc[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->iPjckc[icell]], (*data)->qx[gmap->iMjckc[icell]], param->dx, param);
+                (*data)->s_subs[kk][gmap->iPjckc[icell]], (*data)->qx[gmap->iMjckc[icell]], param->dx, param->dt, param);
         }
         else if ((*data)->qx[gmap->iMjckc[icell]] < 0)
         {
@@ -491,7 +487,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 sim = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->iMjckc[icell]],
-                    (*data)->s_subs[kk][gmap->iMjckc[gmap->iMjckc[icell]]], (*data)->qx[gmap->iMjckc[icell]], param->dx, param);
+                    (*data)->s_subs[kk][gmap->iMjckc[gmap->iMjckc[icell]]], (*data)->qx[gmap->iMjckc[icell]], param->dx, param->dt, param);
             }
         }
         else    {sim = 0.0;}
@@ -503,19 +499,6 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
     }
     // consider lateral surface-subsurface exchange
     fx = ((*data)->qx[icell] * sip - (*data)->qx[gmap->iMjckc[icell]] * sim) * param->dy * gmap->dz3d[icell];
-    if (param->sim_shallowwater == 1)
-    {
-        if (gmap->actvXp[icell] == 1 & gmap->actv[icell] == 1)
-        {
-            dz_eff = (*data)->eta[gmap->top2d[gmap->iPjckc[icell]]] - (*data)->offset[0] - gmap->bot3d[icell];
-            fx = ((*data)->qx[icell] * sip * dz_eff - (*data)->qx[gmap->iMjckc[icell]] * sim * gmap->dz3d[icell]) * param->dy;
-        }
-        else if (gmap->actvXp[gmap->iMjckc[icell]] == 1 & gmap->actv[icell] == 1)
-        {
-            dz_eff = (*data)->eta[gmap->top2d[gmap->iMjckc[icell]]] - (*data)->offset[0] - gmap->bot3d[icell];
-            fx = ((*data)->qx[icell] * sip * gmap->dz3d[icell] - (*data)->qx[gmap->iMjckc[icell]] * sim * dz_eff) * param->dy;
-        }
-    }
 
     // y direction
     // yp
@@ -528,13 +511,13 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 sjp = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->icjPkc[icell]],
-                    (*data)->s_subs[kk][gmap->icjPkc[gmap->icjPkc[icell]]], (*data)->qy[icell], param->dy, param);
+                    (*data)->s_subs[kk][gmap->icjPkc[gmap->icjPkc[icell]]], (*data)->qy[icell], param->dy, param->dt, param);
             }
         }
         else if ((*data)->qy[icell] < 0)
         {
             sjp = tvd_superbee((*data)->s_subs[kk][gmap->icjPkc[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->icjMkc[icell]], (*data)->qy[icell], param->dy, param);
+                (*data)->s_subs[kk][gmap->icjMkc[icell]], (*data)->qy[icell], param->dy, param->dt, param);
         }
         else    {sjp = 0.0;}
     }
@@ -550,7 +533,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
         if ((*data)->qy[gmap->icjMkc[icell]] > 0)
         {
             sjm = tvd_superbee((*data)->s_subs[kk][gmap->icjMkc[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->icjPkc[icell]], (*data)->qy[gmap->icjMkc[icell]], param->dy, param);
+                (*data)->s_subs[kk][gmap->icjPkc[icell]], (*data)->qy[gmap->icjMkc[icell]], param->dy, param->dt, param);
         }
         else if ((*data)->qy[gmap->icjMkc[icell]] < 0)
         {
@@ -559,7 +542,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 sjm = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->icjMkc[icell]],
-                    (*data)->s_subs[kk][gmap->icjMkc[gmap->icjMkc[icell]]], (*data)->qy[gmap->icjMkc[icell]], param->dy, param);
+                    (*data)->s_subs[kk][gmap->icjMkc[gmap->icjMkc[icell]]], (*data)->qy[gmap->icjMkc[icell]], param->dy, param->dt, param);
             }
         }
         else    {sjm = 0.0;}
@@ -573,18 +556,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
     // consider lateral surface-subsurface exchange
     if (param->sim_shallowwater == 1)
     {
-        if (gmap->actvYp[icell] == 1 & gmap->actv[icell] == 1)
-        {
-            dz_eff = (*data)->eta[gmap->top2d[gmap->icjPkc[icell]]] - (*data)->offset[0] - gmap->bot3d[icell];
-            fy = ((*data)->qy[icell] * sjp * dz_eff - (*data)->qy[gmap->icjMkc[icell]] * sjm * gmap->dz3d[icell]) * param->dx;
-        }
-        else if (gmap->actvYp[gmap->icjMkc[icell]] == 1 & gmap->actv[icell] == 1)
-        {
-            dz_eff = (*data)->eta[gmap->top2d[gmap->icjMkc[icell]]] - (*data)->offset[0] - gmap->bot3d[icell];
-            fy = ((*data)->qy[icell] * sjp * gmap->dz3d[icell] - (*data)->qy[gmap->icjMkc[icell]] * sjm * dz_eff) * param->dx;
-        }
-        else
-        {fy = ((*data)->qy[icell] * sjp - (*data)->qy[gmap->icjMkc[icell]] * sjm) * param->dx * gmap->dz3d[icell];}
+        fy = ((*data)->qy[icell] * sjp - (*data)->qy[gmap->icjMkc[icell]] * sjm) * param->dx * gmap->dz3d[icell];
     }
     else
     {fy = ((*data)->qy[icell] * sjp - (*data)->qy[gmap->icjMkc[icell]] * sjm) * param->dx * gmap->dz3d[icell];}
@@ -600,13 +572,13 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 skp = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->icjckP[icell]],
-                    (*data)->s_subs[kk][gmap->icjckP[gmap->icjckP[icell]]], (*data)->qz[icell], gmap->dz3d[icell], param);
+                    (*data)->s_subs[kk][gmap->icjckP[gmap->icjckP[icell]]], (*data)->qz[icell], gmap->dz3d[icell], param->dt, param);
             }
         }
         else if ((*data)->qz[icell] < 0)
         {
             skp = tvd_superbee((*data)->s_subs[kk][gmap->icjckP[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->icjckM[icell]], (*data)->qz[icell], gmap->dz3d[icell], param);
+                (*data)->s_subs[kk][gmap->icjckM[icell]], (*data)->qz[icell], gmap->dz3d[icell], param->dt, param);
         }
         else    {skp = 0.0;}
     }
@@ -622,7 +594,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
         if ((*data)->qz[gmap->icjckM[icell]] > 0)
         {
             skm = tvd_superbee((*data)->s_subs[kk][gmap->icjckM[icell]], (*data)->s_subs[kk][icell],
-                (*data)->s_subs[kk][gmap->icjckP[icell]], (*data)->qz[gmap->icjckM[icell]], gmap->dz3d[icell], param);
+                (*data)->s_subs[kk][gmap->icjckP[icell]], (*data)->qz[gmap->icjckM[icell]], gmap->dz3d[icell], param->dt, param);
         }
         else if ((*data)->qz[gmap->icjckM[icell]] < 0)
         {
@@ -631,7 +603,7 @@ void advective_flux(Data **data, Map *gmap, Config *param, int icell, int kk)
             else
             {
                 skm = tvd_superbee((*data)->s_subs[kk][icell], (*data)->s_subs[kk][gmap->icjckM[icell]],
-                    (*data)->s_subs[kk][gmap->icjckM[gmap->icjckM[icell]]], (*data)->qz[gmap->icjckM[icell]], gmap->dz3d[icell], param);
+                    (*data)->s_subs[kk][gmap->icjckM[gmap->icjckM[icell]]], (*data)->qz[gmap->icjckM[icell]], gmap->dz3d[icell], param->dt, param);
             }
         }
         else    {skm = 0.0;}
@@ -688,8 +660,6 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
             {
                 if (gmap->actv[gmap->iPjckc[icell]] == 1)
                 {fx = coeff * (*data)->Dxx[icell] * ((*data)->s_subs[kk][gmap->iPjckc[icell]] - (*data)->s_subs[kk][icell]) / param->dx / param->dx;}
-                else if (gmap->actvXp[icell] == 1)
-                {fx = 2.0 * coeff * (*data)->Dxx[icell] * ((*data)->s_subs[kk][gmap->iPjckc[icell]] - (*data)->s_subs[kk][icell]) / param->dx / param->dx;}
             }
             if ((*data)->Ky[icell] > 0 & gmap->actv[gmap->icjPkc[icell]] == 1 & icell < param->n3ci)
             {
@@ -706,14 +676,6 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
                 szp = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->iPjckc[icell]] + (*data)->s_subs[kk][gmap->icjckP[icell]] + (*data)->s_subs[kk][iPkP]);
                 szm = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->iPjckc[icell]] + (*data)->s_subs[kk][gmap->icjckM[icell]] + (*data)->s_subs[kk][iPkM]);
                 fz = coeff * (*data)->Dxz[icell] * (szp - szm) / gmap->dz3d[icell] / gmap->dz3d[icell];
-            }
-        }
-        else
-        {
-            if (gmap->actvXp[icell] == 1)
-            {
-                coeff = 2.0 * gmap->dz3d[icell] * param->dy * param->dx;
-                fx = coeff * (*data)->Dxx[icell] * ((*data)->s_subs[kk][gmap->iPjckc[icell]] - (*data)->s_subs[kk][icell]) / param->dx / param->dx;
             }
         }
     }
@@ -734,8 +696,6 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
             {
                 if (gmap->actv[gmap->icjPkc[icell]] == 1)
                 {fy = coeff * (*data)->Dyy[icell] * ((*data)->s_subs[kk][gmap->icjPkc[icell]] - (*data)->s_subs[kk][icell]) / param->dy / param->dy;}
-                else if (gmap->actvYp[icell] == 1)
-                {fy = 2.0 * coeff * (*data)->Dyy[icell] * ((*data)->s_subs[kk][gmap->icjPkc[icell]] - (*data)->s_subs[kk][icell]) / param->dy / param->dy;}
             }
             if ((*data)->Kz[icell] > 0 & gmap->actv[gmap->icjckP[icell]] == 1 & icell < param->n3ci)
             {
@@ -744,14 +704,6 @@ double dispersive_flux(Data **data, Map *gmap, Config *param, int icell, int kk,
                 szp = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->icjPkc[icell]] + (*data)->s_subs[kk][gmap->icjckP[icell]] + (*data)->s_subs[kk][jPkP]);
                 szm = 0.25 * ((*data)->s_subs[kk][icell] + (*data)->s_subs[kk][gmap->icjPkc[icell]] + (*data)->s_subs[kk][gmap->icjckM[icell]] + (*data)->s_subs[kk][jPkM]);
                 fz = coeff * (*data)->Dyz[icell] * (szp - szm) / gmap->dz3d[icell] / gmap->dz3d[icell];
-            }
-        }
-        else
-        {
-            if (gmap->actvYp[icell] == 1)
-            {
-                coeff = 2.0 * gmap->dz3d[icell] * param->dy * param->dx;
-                fy = coeff * (*data)->Dyy[icell] * ((*data)->s_subs[kk][gmap->icjPkc[icell]] - (*data)->s_subs[kk][icell]) / param->dy / param->dy;
             }
         }
 
@@ -878,6 +830,9 @@ void update_rhovisc(Data **data, Map *gmap, Config *param, int irank)
             (*data)->r_rhon[ii] = (*data)->r_rho[ii];
             (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;
             (*data)->r_visc[ii] = 1.0 / (1.0 + (*data)->s_subs[0][ii] * 0.0022);
+
+            // (*data)->r_rho[ii] = 1.0;
+            // (*data)->r_visc[ii] = 1.0;
             // if (gmap->actv[ii] == 1)
             // {
             //     (*data)->r_rho[ii] = 1.0 + (*data)->s_subs[0][ii] * 0.000744;

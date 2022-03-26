@@ -13,7 +13,7 @@ typedef struct Config
     double dx, dy, dz, botZ, dz_incre;
     // Time Control
     int NT;
-    double dt, dtn, Tend, dt_out, *dt_root;
+    double dt, dtn, dts, dtg, Tend, dt_out, *dt_root;
     int n_monitor, *monitor_locX, *monitor_locY;
     // Bathymetry
     int bath_file;
@@ -33,10 +33,10 @@ typedef struct Config
     int use_subgrid, nlay_sub;
     double r_sub, eta_sub_max, eta_sub_min, deta_sub;
     // Groundwater
-    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d, iter_solve, use_vg;
+    int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d, iter_solve, use_vg, follow_terrain, sync_coupling;
     double init_h, init_wc, init_wt_abs, init_wt_rel, qtop, qbot, htop, hbot, aev, qyp, qym;
     double dt_max, dt_min, Co_max, Ksx, Ksy, Ksz, Ss, wcr, wcs, soil_a, soil_n;
-    int *bctype_GW, h_file, wc_file;
+    int *bctype_GW, h_file, wc_file, n_substep;
     // Scalar
     int n_scalar, *scalar_surf_file, *scalar_tide_datlen, *scalar_tide_file, *scalar_inflow_datlen, *scalar_inflow_file;
     int *scalar_subs_file, baroclinic, superbee;

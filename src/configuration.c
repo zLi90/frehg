@@ -112,6 +112,9 @@ void read_input(Config **param)
     (*param)->sim_groundwater = (int) read_one_input_double("sim_groundwater", "input");
     (*param)->use_full3d = (int) read_one_input_double("use_full3d", "input");
     (*param)->iter_solve = (int) read_one_input_double("iter_solve", "input");
+    (*param)->sync_coupling = (int) read_one_input_double("sync_coupling", "input");
+    (*param)->n_substep = (int) read_one_input_double("n_substep", "input");
+    (*param)->follow_terrain = (int) read_one_input_double("follow_terrain", "input");
     (*param)->dt_adjust = (int) read_one_input_double("dt_adjust", "input");
     (*param)->use_corrector = (int) read_one_input_double("use_corrector", "input");
     (*param)->post_allocate = (int) read_one_input_double("post_allocate", "input");

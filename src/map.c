@@ -43,6 +43,7 @@ void build_surf_map(Map **map, Config *param)
     (*map)->jPou = malloc(param->nx*sizeof(int));
     (*map)->jMin = malloc(param->nx*sizeof(int));
     (*map)->jMou = malloc(param->nx*sizeof(int));
+    (*map)->ibot = malloc(param->n2ci*sizeof(int));
 
     // set map indexes
     for (ii = 0; ii < param->n2ci; ii++)
@@ -226,8 +227,6 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         (*map)->jj = malloc(param->n3ci*sizeof(int));
         (*map)->kk = malloc(param->n3ci*sizeof(int));
         (*map)->actv = malloc(param->n3ct*sizeof(int));
-        (*map)->actvXp = malloc(param->n3ct*sizeof(int));
-        (*map)->actvYp = malloc(param->n3ct*sizeof(int));
         (*map)->bot3d = malloc(param->n3ci*sizeof(double));
         (*map)->dz3d = malloc(param->n3ct*sizeof(double));
         (*map)->istop = malloc(param->n3ci*sizeof(int));
@@ -240,8 +239,6 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
         for (ii = 0; ii < param->n3ct; ii++)
         {
             (*map)->actv[ii] = 0;
-            (*map)->actvXp[ii] = 0;
-            (*map)->actvYp[ii] = 0;
             (*map)->sinx[ii] = 0.0;
             (*map)->siny[ii] = 0.0;
             (*map)->cosx[ii] = 1.0;
@@ -255,6 +252,14 @@ void build_subsurf_map(Map **map, Map *smap, double *bath, double *offset, Confi
             (*map)->jj[ii] = smap->jj[(*map)->top2d[ii]];
             (*map)->kk[ii] = ii - (*map)->top2d[ii] * param->nz;
             (*map)->istop[ii] = 0;
+        }
+        for (ii = 0; ii < param->n3ci; ii++)
+        {
+            if (param->sim_shallowwater == 1)   {
+                if ((*map)->kk[ii] == 0)    {
+                    smap->ibot[(*map)->top2d[ii]] = ii;
+                }
+            }
         }
 
         // build terrain-following mesh

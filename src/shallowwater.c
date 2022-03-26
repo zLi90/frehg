@@ -547,21 +547,10 @@ void cfl_limiter(Data **data, Map *smap, Config *param)
         }
     }
     // remove small depth
-    for (ii = 0; ii < param->n2ci; ii++)
-    {
+    for (ii = 0; ii < param->n2ci; ii++)    {
         diff = (*data)->eta[ii] - (*data)->bottom[ii];
         if (diff > 0 & diff < param->min_dept)
         {(*data)->eta[ii] = (*data)->bottom[ii];}
-
-        // if (diff > 0)
-        // {
-        //     if (diff < param->min_dept)
-        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
-        //     else if ((*data)->eta[ii]-(*data)->offset[0] < 0.05)
-        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
-        //     else if ((*data)->eta[ii]-(*data)->offset[0] > 0.85)
-        //     {(*data)->eta[ii] = (*data)->bottom[ii];}
-        // }
     }
 }
 
@@ -576,23 +565,32 @@ void evaprain(Data **data, Map *smap, Config *param)
     {
         for (ii = 0; ii < param->n2ci; ii++)
         {
-            if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
-            {
-                if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
-                {
-                    // if ((*data)->rain_sum[0] > param->min_dept & (*data)->dept[ii] > param->min_dept)
-                    // {(*data)->eta[ii] += (*data)->rain_sum[0];}
-
-                    // Only apply rainfall on wet regions
-                    if ((*data)->dept[ii] > param->min_dept)    {(*data)->eta[ii] += (*data)->rain[0] * param->dt;}
-                }
+            // if (smap->ii[ii] != 0 & smap->ii[ii] != param->nx-1)
+            // {
+            //     if (smap->jj[ii] != 0 & smap->jj[ii] != param->ny-1)
+            //     {
+            //         if ((*data)->rain_sum[0] > param->min_dept & (*data)->dept[ii] > param->min_dept)
+            //         // {(*data)->eta[ii] += (*data)->rain_sum[0];}
+            //         (*data)->eta[ii] += (*data)->rain[0] * param->dt;
+            //     }
+            // }
+            if (smap->jj[ii] != param->ny-1)    {
+                (*data)->eta[ii] += (*data)->rain[0] * param->dt;
             }
+            // if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0]; }
         }
     }
     else
     {
         for (ii = 0; ii < param->n2ci; ii++)
-        {if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0];}}
+        {
+            if ((*data)->dept[ii] >= param->min_dept)   {
+                if (smap->jj[ii] != param->ny-1)    {
+                    (*data)->eta[ii] += (*data)->rain[0] * param->dt;
+                }
+            }
+            // if ((*data)->rain_sum[0] > param->min_dept) {(*data)->eta[ii] += (*data)->rain_sum[0]; }
+        }
     }
     // evaporation
 

@@ -14,6 +14,7 @@
 #include"shallowwater.h"
 #include"scalar.h"
 #include"solve.h"
+#include"subroutines.h"
 #include"utility.h"
 
 
@@ -85,6 +86,8 @@ void init_domain(Config **param)
     int ii;
     // total number of grid cells
     (*param)->dtn = (*param)->dt;
+    (*param)->dts = (*param)->dt;
+    (*param)->dtg = (*param)->dt;
     (*param)->nx = (*param)->NX / (*param)->mpi_nx;
     (*param)->ny = (*param)->NY / (*param)->mpi_ny;
     (*param)->n2ci = (*param)->nx * (*param)->ny;
@@ -221,6 +224,7 @@ void init_Data(Data **data, Config *param)
     (*data)->Asy = malloc(param->n2ct*sizeof(double));
     (*data)->wtfx = malloc(param->n2ct*sizeof(double));
     (*data)->wtfy = malloc(param->n2ct*sizeof(double));
+
 
     // subgrid variables
     if (param->use_subgrid == 1)
@@ -1026,7 +1030,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         for (ii = 0; ii < param->n3ct; ii++)
         {
             (*data)->h[ii] = param->init_h;
-            (*data)->wc[ii] = compute_wch(*data, ii, param);
+            (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
         }
     }
     // else, initialize with prescribed water table
@@ -1046,7 +1050,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 else
                 {
                     (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
                     // (*data)->wc[ii] = param->wcr +
                         // (param->wcs-param->wcr)*((*data)->bottom[gmap->top2d[ii]]-gmap->bot3d[ii])/zwt + 0.01;
                     // (*data)->wc[ii] = param->wcr + 0.05;
@@ -1068,7 +1072,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
                 else
                 {
                     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    (*data)->wc[ii] = compute_wch(*data, ii, param);
+                    (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
                 }
             }
         }
@@ -1100,10 +1104,10 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         (*data)->hnm[ii] = (*data)->h[ii];
         (*data)->hwc[ii] = compute_hwc(*data, ii, param);
         (*data)->wcn[ii] = (*data)->wc[ii];
-        (*data)->wch[ii] = compute_wch(*data, ii, param);
-        (*data)->Kx[ii] = compute_K(*data, (*data)->Ksx, ii, param);
-        (*data)->Ky[ii] = compute_K(*data, (*data)->Ksy, ii, param);
-        (*data)->Kz[ii] = compute_K(*data, (*data)->Ksz, ii, param);
+        (*data)->wch[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
+        (*data)->Kx[ii] = compute_K(*data, (*data)->h[ii], (*data)->Ksx[ii], ii, param);
+        (*data)->Ky[ii] = compute_K(*data, (*data)->h[ii], (*data)->Ksy[ii], ii, param);
+        (*data)->Kz[ii] = compute_K(*data, (*data)->h[ii], (*data)->Ksz[ii], ii, param);
         (*data)->qx[ii] = 0.0;
         (*data)->qy[ii] = 0.0;
         (*data)->qz[ii] = 0.0;

@@ -12,6 +12,7 @@
 #include "mpifunctions.h"
 #include "shallowwater.h"
 #include "scalar.h"
+#include "subroutines.h"
 #include "utility.h"
 
 
@@ -23,7 +24,7 @@ void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank)
 
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
-    int t_save, tday, ii, kk, tt = 1;
+    int t_save, tday, ii, kk, i_substep, tt = 1;
     float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0;
     double max_CFLx, max_CFLy, max_CFL, *max_CFL_root, tot_mass;
     // save initial condition
@@ -32,6 +33,11 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
     write_output(data, gmap, param, 0, 0, irank);
     // begin time stepping
     mpi_print(" >>> Beginning Time loop !", irank);
+    if (param->sim_groundwater == 1 & param->sync_coupling == 0)  {
+        if (param->dt_adjust == 1)  {mpi_print(" >>> WARNING : Asynchronous coupled conflicts with adaptive dt !", irank);}
+        param->dtg = param->dt * param->n_substep;
+    }
+    i_substep = 0;
     while (t_current < param->Tend)
     {
         if (irank == 0) {t0 = clock();}
@@ -40,33 +46,19 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         // get boundary condition
         get_current_bc(data, param, t_current);
         get_evaprain(data, gmap, param, t_current);
-        // if (t_current > 200.0*60.0) {(*data)->rain[0] = 0.0;}
-        // if (t_current > 90.0*60.0) {(*data)->rain[0] = 0.0;}
-
-        // Warrick problem 1971
-        // if (t_current < 168.0*60.0) {(*data)->s_subs[0][0] = 209.0;}
-        // else {(*data)->s_subs[0][0] = 0.0;}
-        // (*data)->wc[gmap->icjckM[0]] = param->wcs;
 
         // execute solvers
         if (param->sim_shallowwater == 1)
-        {solve_shallowwater(data, smap, gmap, param, irank, nrank);}
+        {solve_shallowwater(data, smap, gmap, param, irank, nrank); i_substep += 1;}
 
         if (param->sim_groundwater == 1)
         {
-            solve_groundwater(data, smap, gmap, param, irank, nrank);
-            // if ((*data)->repeat[0] == 1)
-            // {
-            //     if (param->dt_adjust == 1 & param->dt > param->dt_min)
-            //     {
-            //         printf("   >>> Repeat the previous step with dt from %f --> %f!\n",param->dt,param->dt*0.5);
-            //         // param->dt = 0.5 * param->dt;
-            //         // t_current -= 0.5 * param->dt;
-            //         // solve_groundwater(data, smap, gmap, param, irank, nrank);
-            //     }
-            //     else
-            //     {mpi_print("  >>> CFL limiter violated for groundwater solver! Should reduce dt!\n",irank);}
-            // }
+            if (param->sync_coupling == 1 | i_substep == param->n_substep)
+            {
+                solve_groundwater(data, smap, gmap, param, irank, nrank);
+                printf("     >>> i_substep = %d : Subsurface executed with dtg = %f, n_substep = %d\n",i_substep,param->dtg,param->n_substep);
+                i_substep = 0;
+            }
         }
 
         if (param->sim_shallowwater == 1)
@@ -122,24 +114,26 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
                 }
             }
         }
-        if (max_CFL > 1.0)
-        {
-            param->dt = param->dt / 2.0;
-            // t_save = round(t_current);
-            // printf("Save output at large CFL number!, tsave=%d\n",t_save);
-            // write_output(data, gmap, param, t_save, 0, irank);
-        }
+        if (max_CFL > 1.0)  {param->dt = param->dt / 2.0;}
         // report time
         if (irank == 0)
         {
           append_to_file("timestep", t_current, param);
           t1 = clock();
           tstep = (t1 - t0)/(float)CLOCKS_PER_SEC;
+          // if (param->sync_coupling == 0)    {
+          //     if (i_substep == param->n_substep)    {
+          //         printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
+          //         i_substep == 0;
+          //     }
+          // }
+          // else {
+          //     printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
+          // }
           printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
         }
         tt += 1;
     }
-    // printf("  >> Qin = %f, Qout = %f\n",(*data)->qbc[0],(*data)->qbc[1]);
     print_end_info(data, smap, gmap, param, irank);
 }
 
@@ -153,8 +147,6 @@ void get_current_bc(Data **data, Config *param, double t_current)
         if (param->wind_file == 1)
         {
             (*data)->current_windspd[0] = interp_bc((*data)->t_wind,(*data)->wind_spd,t_current,param->wind_dat_len);
-            // (*data)->current_winddir[0] = interp_bc((*data)->t_wind,(*data)->wind_dir,t_current,param->wind_dat_len);
-
             (*data)->current_winddir[0] = (*data)->wind_dir[0];
             if (t_current > 0.0)
             {
@@ -166,8 +158,6 @@ void get_current_bc(Data **data, Config *param, double t_current)
                 }
                 (*data)->current_winddir[0] = (*data)->wind_dir[ind-1];
             }
-            // a temporary limiter, ZhiLi20210502
-            // if ((*data)->current_windspd[0] > 5.0)  {(*data)->current_windspd[0] = 5.0;}
         }
         else
         {
@@ -318,7 +308,11 @@ void get_evaprain(Data **data, Map *gmap, Config *param, double t_current)
         {
             // A temporary limiter on max rainfall rate, ZhiLi20211209
             // if ((*data)->rain[0] > 1e-5)    {(*data)->rain[0] = 1e-5;}
-            for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qtop[ii] -= (*data)->rain[0];}
+            for (ii = 0; ii < param->n2ci; ii++)    {
+                if (gmap->jj[ii] < param->ny-1) {
+                    (*data)->qtop[ii] -= (*data)->rain[0];
+                }
+            }
         }
     }
     else
