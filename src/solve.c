@@ -24,46 +24,78 @@ void print_end_info(Data **data, Map *smap, Map *gmap, Config *param, int irank)
 
 void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
-    int t_save, tday, ii, kk, i_substep, tt = 1;
-    float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0;
+    int t_save, tday, ii, jj, kk, tt = 1, sub_advance = 0;
+    float t0, t1, tstep, dt_max, last_save = 0.0, t_current = 0.0, t_subsurface = 0.0;
     double max_CFLx, max_CFLy, max_CFL, *max_CFL_root, tot_mass;
+    double dt_pseudo;
     // save initial condition
     dt_max = param->dt;
     mpi_print(" >>> Writing initial conditions into output files !", irank);
     write_output(data, gmap, param, 0, 0, irank);
     // begin time stepping
     mpi_print(" >>> Beginning Time loop !", irank);
-    if (param->sim_groundwater == 1 & param->sync_coupling == 0)  {
-        if (param->dt_adjust == 1)  {mpi_print(" >>> WARNING : Asynchronous coupled conflicts with adaptive dt !", irank);}
-        param->dtg = param->dt * param->n_substep;
-    }
-    i_substep = 0;
+    if (param->sim_groundwater == 0 | param->sync_coupling == 1)    {param->dtg = param->dt;}
+    else {param->dtg = param->dt_min;}
+
     while (t_current < param->Tend)
     {
         if (irank == 0) {t0 = clock();}
-        (*data)->repeat[0] = 0;
         t_current += param->dt;
+        if (param->sim_groundwater == 0 | param->sync_coupling == 1)    {t_subsurface = t_current;}
+        else {if (sub_advance == 1) {t_subsurface += param->dtg;}}
+        // else {if (t_current == param->dt | sub_advance == 1) {t_subsurface += param->dtg;}}
         // get boundary condition
         get_current_bc(data, param, t_current);
         get_evaprain(data, gmap, param, t_current);
-
         // execute solvers
         if (param->sim_shallowwater == 1)
-        {solve_shallowwater(data, smap, gmap, param, irank, nrank); i_substep += 1;}
+        {solve_shallowwater(data, smap, gmap, param, irank, nrank);}
 
         if (param->sim_groundwater == 1)
         {
-            if (param->sync_coupling == 1 | i_substep == param->n_substep)
-            {
-                solve_groundwater(data, smap, gmap, param, irank, nrank);
-                printf("     >>> i_substep = %d : Subsurface executed with dtg = %f, n_substep = %d\n",i_substep,param->dtg,param->n_substep);
-                i_substep = 0;
+            for (ii = 0; ii < param->n3ci; ii++)    {
+                if (gmap->istop[ii] == 1)   {
+                    jj = gmap->icjckM[ii];
+                    (*data)->rss[gmap->top2d[ii]] = 0.0;
+                    if ((*data)->eta[gmap->top2d[ii]] - (*data)->bottom[gmap->top2d[ii]] > 0.0)   {
+                        (*data)->rss[gmap->top2d[ii]] = fabs((param->dtg*(*data)->Kz[jj]*
+                            ((*data)->eta[gmap->top2d[ii]] - (*data)->etan[gmap->top2d[ii]])/(param->dt*gmap->dz3d[ii])));
+                    }
+                }
             }
-        }
 
+
+            if (param->sync_coupling == 1)
+            {solve_groundwater(data, smap, gmap, param, irank, nrank);}
+            else {
+                sub_advance = 0;
+                while (t_subsurface + param->dtg <= t_current)   {
+                    t_subsurface += param->dtg;
+                    solve_groundwater(data, smap, gmap, param, irank, nrank);
+                    if (irank == 0) {printf("   >>> Subsurface executed with dt = %f \n",param->dtg);}
+                }
+                // if (t_subsurface <= t_current - param->dtg) {
+                //     // solve_groundwater(data, smap, gmap, param, irank, nrank);
+                //     // if (irank == 0) {printf("   >>> Subsurface executed with dt = %f \n",param->dtg);}
+                //     while (t_subsurface + param->dtg <= t_current)   {
+                //         t_subsurface += param->dtg;
+                //         solve_groundwater(data, smap, gmap, param, irank, nrank);
+                //         if (irank == 0) {printf("   >>> Subsurface executed with dt = %f \n",param->dtg);}
+                //     }
+                //     sub_advance = 1;
+                // }
+                // else {
+                //     if (param->sim_shallowwater == 1)   {
+                //         dt_pseudo = (t_current - t_subsurface + param->dtg) / param->dtg;
+                //         // dt_pseudo = t_current - t_subsurface + param->dtg;
+                //         // pseudo_seepage(data, gmap, param, dt_pseudo);
+                //     }
+                // }
+            }
+            // param->dtg = param->dt_max;
+        }
         if (param->sim_shallowwater == 1)
         {shallowwater_velocity(data, smap, gmap, param, irank, nrank);}
-
         // check CFL number
         max_CFLx = getMax((*data)->cflx, param->n2ci);
         max_CFLy = getMax((*data)->cfly, param->n2ci);
@@ -82,7 +114,6 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         {for (kk = 0; kk < param->n_scalar; kk++)    {scalar_shallowwater(data, smap, param, irank, nrank, kk);}}
         if (param->n_scalar > 0 & param->sim_groundwater == 1)
         {for (kk = 0; kk < param->n_scalar; kk++)    {scalar_groundwater(data, gmap, param, irank, nrank, kk);}}
-
         // reset rainfall
         if ((*data)->rain_sum[0] > param->min_dept)     {(*data)->rain_sum[0] = 0.0;}
 
@@ -97,39 +128,36 @@ void solve(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nran
         tot_mass = get_mass(data, gmap, param);
         write_monitor_out(tot_mass, "mass", 0, param);
         // output monitored variables
-        if (param->n_monitor > 0 & param->sim_shallowwater == 1)
+        if (param->n_monitor > 0)
         {
             for (ii = 0; ii < param->n_monitor; ii++)
             {
                 if (irank == (*data)->monitor_rank[ii])
                 {
-                    write_monitor_out((*data)->eta[(*data)->monitor[ii]] - (*data)->offset[0], "surf", ii, param);
-                    write_monitor_out((*data)->dept[(*data)->monitor[ii]], "depth", ii, param);
-                    write_monitor_out((*data)->vv[(*data)->monitor[ii]], "vv", ii, param);
-                    if (param->n_scalar > 0)
-                    {
-                        for (kk = 0; kk < param->n_scalar; kk++)
-                        {if (kk == 0) {write_monitor_out((*data)->s_surf[kk][(*data)->monitor[ii]], "scalar1", ii, param);}}
+                    if (param->sim_shallowwater == 1)   {
+                        write_monitor_out((*data)->eta[(*data)->monitor[ii]] - (*data)->offset[0], "surf", ii, param);
+                        write_monitor_out((*data)->dept[(*data)->monitor[ii]], "depth", ii, param);
+                        write_monitor_out((*data)->vv[(*data)->monitor[ii]], "vv", ii, param);
+                        if (param->n_scalar > 0)
+                        {
+                            for (kk = 0; kk < param->n_scalar; kk++)
+                            {if (kk == 0) {write_monitor_out((*data)->s_surf[kk][(*data)->monitor[ii]], "scalar1", ii, param);}}
+                        }
+                    }
+                    if (param->sim_groundwater == 1)    {
+                        write_monitor_out(1e7*(*data)->qss[(*data)->monitor[ii]], "seepage", ii, param);
+                        write_monitor_out(1e7*(*data)->rss[(*data)->monitor[ii]], "r_async", ii, param);
                     }
                 }
             }
         }
-        if (max_CFL > 1.0)  {param->dt = param->dt / 2.0;}
+        // if (max_CFL > 1.0)  {param->dt = param->dt / 2.0;}
         // report time
         if (irank == 0)
         {
           append_to_file("timestep", t_current, param);
           t1 = clock();
           tstep = (t1 - t0)/(float)CLOCKS_PER_SEC;
-          // if (param->sync_coupling == 0)    {
-          //     if (i_substep == param->n_substep)    {
-          //         printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
-          //         i_substep == 0;
-          //     }
-          // }
-          // else {
-          //     printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
-          // }
           printf(" >>>>> Step %d (%f of %.1f sec) completed, new dt = %f, cost = %.4f sec... \n",tt,t_current,param->Tend,param->dt,tstep);
         }
         tt += 1;

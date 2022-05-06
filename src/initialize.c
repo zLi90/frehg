@@ -39,12 +39,19 @@ void init(Data **data, Map **smap, Map **gmap, Config **param, int irank, int nr
     init_domain(param);
     // generate bathymetry
     read_bathymetry(data, *param, irank, irank);
+    mpi_print(" >>> Bathymetry read from file !", irank);
     // build maps
     build_surf_map(smap, *param);
-    build_subsurf_map(gmap, *smap, (*data)->bottom, (*data)->offset, *param, irank);
+    build_surf_mat_map((*data)->actv, smap, *param);
+    if ((*param)->sim_groundwater == 1) {
+        build_subsurf_map(gmap, *smap, (*data)->bottom, (*data)->offset, *param, irank);
+        build_subs_mat_map((*data)->actv, gmap, *param);
+        for (ii = 0; ii < (*param)->n3ci; ii++)    {if ((*gmap)->istop[ii] == 1) {(*smap)->dz[(*gmap)->top2d[ii]] = (*gmap)->dz3d[ii];}}
+    }
     mpi_print(" >>> Connection maps built !", irank);
     // boundary bathymetry
     boundary_bath(data, *smap, *param, irank, nrank);
+    mpi_print(" >>> Bath edges read from file !", irank);
     // initialize data array
     init_Data(data, *param);
     mpi_print(" >>> Data array initialized !", irank);
@@ -93,19 +100,22 @@ void init_domain(Config **param)
     (*param)->n2ci = (*param)->nx * (*param)->ny;
     (*param)->n2ct = ((*param)->nx + 2) * ((*param)->ny + 2);
     (*param)->N2CI = (*param)->NX * (*param)->NY;
+    (*param)->converge = 1;
 }
 
 // >>>>> Read bathymetry <<<<<
 void read_bathymetry(Data **data, Config *param, int irank, int nrank)
 {
-    int ii, jj, col, row, xrank, yrank;
-    char fullname[100];
+    int ii, jj, col, row, xrank, yrank, nactv = param->n2ci;
+    char fullname[100], actvname[100];
     double z_min;
     *data = malloc(sizeof(Data));
     (*data)->bottom = malloc(param->n2ct*sizeof(double));
     (*data)->bottomXP = malloc(param->n2ct*sizeof(double));
     (*data)->bottomYP = malloc(param->n2ct*sizeof(double));
     (*data)->bottom_root = malloc(param->N2CI*sizeof(double));
+    (*data)->actv = malloc(param->n2ct*sizeof(double));
+    (*data)->actv_root = malloc(param->N2CI*sizeof(double));
     (*data)->offset = malloc(1*sizeof(double));
     for (ii = 0; ii < param->n2ct; ii++)    {(*data)->bottom[ii] = 0.0;}
     // assign internal bathymetry
@@ -115,6 +125,20 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
         if (param->use_subgrid == 0)    {strcat(fullname, "bath");}
         else    {strcat(fullname, "bath_sub");}
         load_data((*data)->bottom_root, fullname, param->N2CI);
+        // load actv map
+        if (param->actv_file == 1)  {
+            strcpy(actvname, param->finput);
+            strcat(actvname, "actv");
+            load_data((*data)->actv_root, actvname, param->N2CI);
+            root_to_rank((*data)->actv_root, (*data)->actv, param, irank, nrank, 0, 0.0);
+            for (ii = 0; ii < param->n2ci; ii++)    {if ((*data)->actv[ii] <= 0.0)   {nactv -= 1;}}
+            param->nactv = nactv;
+        }
+        else {
+            for (ii = 0; ii < param->n2ci; ii++)    {(*data)->actv[ii] = 1.0;}
+            param->nactv = param->n2ci;
+        }
+
         // calculate bathymetry offset
         z_min = getMin((*data)->bottom_root, param->N2CI);
         if (z_min >= 0) {(*data)->offset[0] = 0;}
@@ -124,8 +148,9 @@ void read_bathymetry(Data **data, Config *param, int irank, int nrank)
     }
     else
     {
+        param->nactv = param->n2ci;
         (*data)->offset[0] = 0.0;
-        for (ii = 0; ii < param->n2ci; ii++)    {(*data)->bottom[ii] = 0.0;}
+        for (ii = 0; ii < param->n2ci; ii++)    {(*data)->bottom[ii] = 0.0; (*data)->actv[ii] = 1;}
     }
 }
 
@@ -135,6 +160,9 @@ void boundary_bath(Data **data, Map *smap, Config *param, int irank, int nrank)
     int ii;
     int jj, col, row, xrank, yrank;
     char fullname[100];
+    for (ii = 0; ii < param->n2ct; ii++)    {
+        if (ii >= param->n2ci)  {(*data)->actv[ii] = 0;}
+    }
     for (ii = 0; ii < param->nx; ii++)
     {
         (*data)->bottom[smap->jMou[ii]] = (*data)->bottom[smap->jMin[ii]];
@@ -296,6 +324,9 @@ void init_Data(Data **data, Config *param)
 
     (*data)->reset_seepage = malloc(param->n2ci*sizeof(int));
     (*data)->qseepage = malloc(param->n2ci*sizeof(double));
+    (*data)->qseepage_old = malloc(param->n2ci*sizeof(double));
+    (*data)->qss = malloc(param->n2ci*sizeof(double));
+    (*data)->rss = malloc(param->n2ci*sizeof(double));
     (*data)->cflx = malloc(param->n2ci*sizeof(double));
     (*data)->cfly = malloc(param->n2ci*sizeof(double));
     (*data)->cfl_active = malloc(param->n2ci*sizeof(double));
@@ -346,6 +377,7 @@ void init_Data(Data **data, Config *param)
         (*data)->Vgflux = malloc(param->n3ci*sizeof(double));
         (*data)->room = malloc(param->n3ct*sizeof(double));
         (*data)->vloss = malloc(param->n3ci*sizeof(double));
+        (*data)->resi = malloc(param->n3ci*sizeof(double));
         (*data)->h_root = malloc(n3_root*sizeof(double));
         (*data)->wc_root = malloc(n3_root*sizeof(double));
         (*data)->vloss_root = malloc(n3_root*sizeof(double));
@@ -604,6 +636,9 @@ void ic_surface(Data **data, Map *smap, Map *gmap, Config *param, int irank, int
     for (ii = 0; ii < param->n2ci; ii++)
     {
         (*data)->qseepage[ii] = 0.0;
+        (*data)->qseepage_old[ii] = 0.0;
+        (*data)->qss[ii] = 0.0;
+        (*data)->rss[ii] = 0.0;
         (*data)->reset_seepage[ii] = 1;
     }
     for (ii = 0; ii < param->n2ct; ii++)
@@ -971,7 +1006,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
     (*data)->hbot = param->hbot;
 
     for (ii = 0; ii < param->n2ci; ii++) {(*data)->qtop[ii] = ((*data)->evap[ii] - (*data)->rain[0]) / param->wcs;}
-
     // initialize soil properties
     for (ii = 0; ii < param->n3ci; ii++)
     {
@@ -1039,13 +1073,14 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         // if init_wt_rel > 0, wt is relative to surface
         if (param->init_wt_rel > 0)
         {
-            for (ii = 0; ii < param->n3ct; ii++)
+            for (ii = 0; ii < param->n3ci; ii++)
             {
                 zwt = (*data)->bottom[gmap->top2d[ii]] - param->init_wt_rel;
                 if (gmap->bot3d[ii] < zwt)
                 {
-                    (*data)->wc[ii] = param->wcs;
+                    // (*data)->wc[ii] = param->wcs;
                     (*data)->h[ii] = zwt - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                    (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
                 }
                 else
                 {
@@ -1062,22 +1097,23 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         // else, wt is at fixed elevation
         else
         {
-            for (ii = 0; ii < param->n3ct; ii++)
+            for (ii = 0; ii < param->n3ci; ii++)
             {
-                if (gmap->bot3d[ii] < param->init_wt_abs)
-                {
-                    (*data)->wc[ii] = param->wcs;
-                    (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                }
-                else
-                {
-                    (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
-                    (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
-                }
+                (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
+                // if (gmap->bot3d[ii] < param->init_wt_abs)
+                // {
+                //     (*data)->wc[ii] = param->wcs;
+                //     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                // }
+                // else
+                // {
+                //     (*data)->h[ii] = param->init_wt_abs - gmap->bot3d[ii] - 0.5*gmap->dz3d[ii];
+                //     (*data)->wc[ii] = compute_wch(*data, (*data)->h[ii], ii, param);
+                // }
             }
         }
     }
-
     // read initial condidtions from file
     if (param->h_file == 1)
     {restart_subsurface((*data)->h, "head_ic", param, irank);}
@@ -1095,6 +1131,7 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         if (gmap->kk[ii] == param->nz-1 & param->bctype_GW[4] == 1)
         {(*data)->h[gmap->icjckP[ii]] = (*data)->hbot;}
         (*data)->vloss[ii] = 0.0;
+        (*data)->resi[ii] = 0.0;
     }
     // initialize other relavant fields
     for (ii = 0; ii < param->n3ct; ii++)
@@ -1123,7 +1160,6 @@ void ic_subsurface(Data **data, Map *gmap, Config *param, int irank, int nrank)
         (*data)->Vg[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
         (*data)->Vgn[ii] = param->dx*param->dy*gmap->dz3d[ii]*(*data)->wc[ii];
     }
-
     // initial scalar
     if (param->n_scalar > 0 & param->sim_groundwater == 1)
     {

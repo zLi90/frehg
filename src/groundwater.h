@@ -28,6 +28,7 @@ void build_groundwater_system(Data *data, Map *gmap, Config *param, QMatrix A, V
 void solve_groundwater_system(Data **data, Map *gmap, QMatrix A, Vector b, Vector x, Config *param);
 void enforce_head_bc(Data **data, Map *gmap, Config *param);
 void groundwater_flux(Data **data, Map *gmap, Config *param, int irank);
+void pseudo_seepage(Data **data, Map *gmap, Config *param, double dt);
 void check_room(Data **data, Map *gmap, Config *param);
 void update_water_content(Data **data, Map *gmap, Config *param);
 void enforce_moisture_bc(Data **data, Map *gmap, Config *param);

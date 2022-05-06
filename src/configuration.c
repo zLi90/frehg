@@ -48,6 +48,7 @@ void read_input(Config **param)
 
     // Bathymetry
     (*param)->bath_file = (int) read_one_input_double("bath_file", "input");
+    (*param)->actv_file = (int) read_one_input_double("actv_file", "input");
 
     // Parameters
     (*param)->min_dept = read_one_input_double("min_dept", "input");

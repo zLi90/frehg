@@ -9,14 +9,14 @@ typedef struct Config
     char finput[200], foutput[200], sim_id[6];
     // Domain Geometry
     int NX, NY, NZ, nx, ny, nz, use_mpi, mpi_nx, mpi_ny, nthreads;
-    int n2ci, n2ct, N2CI, n3ci, n3ct, N3CI;
+    int n2ci, n2ct, N2CI, n3ci, n3ct, N3CI, nactv;
     double dx, dy, dz, botZ, dz_incre;
     // Time Control
     int NT;
     double dt, dtn, dts, dtg, Tend, dt_out, *dt_root;
     int n_monitor, *monitor_locX, *monitor_locY;
     // Bathymetry
-    int bath_file;
+    int bath_file, actv_file;
     // parameters
     double grav, viscx, viscy, rhoa, rhow;
     double min_dept, wtfh, hD, manning;
@@ -36,7 +36,7 @@ typedef struct Config
     int sim_groundwater, dt_adjust, use_corrector, post_allocate, use_mvg, use_full3d, iter_solve, use_vg, follow_terrain, sync_coupling;
     double init_h, init_wc, init_wt_abs, init_wt_rel, qtop, qbot, htop, hbot, aev, qyp, qym;
     double dt_max, dt_min, Co_max, Ksx, Ksy, Ksz, Ss, wcr, wcs, soil_a, soil_n;
-    int *bctype_GW, h_file, wc_file, n_substep;
+    int *bctype_GW, h_file, wc_file, n_substep, converge, n_iter;
     // Scalar
     int n_scalar, *scalar_surf_file, *scalar_tide_datlen, *scalar_tide_file, *scalar_inflow_datlen, *scalar_inflow_file;
     int *scalar_subs_file, baroclinic, superbee;

@@ -55,13 +55,14 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
     int ii;
     // allocate linear system
     QMatrix A;
-    Q_Constr(&A, "A", param->n2ci, False, Rowws, Normal, True);
+    Q_Constr(&A, "A", param->nactv, False, Rowws, Normal, True);
     Vector b;
-    V_Constr(&b, "b", param->n2ci, Normal, True);
+    V_Constr(&b, "b", param->nactv, Normal, True);
     Vector x;
-    V_Constr(&x, "x", param->n2ci, Normal, True);
+    V_Constr(&x, "x", param->nactv, Normal, True);
     for (ii = 0; ii < param->n2ci; ii++)    {(*data)->etan[ii] = (*data)->eta[ii];}
     enforce_surf_bc(data, smap, param, irank, nrank);
+
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->etan, smap, 2, param, irank, nrank);
@@ -93,9 +94,9 @@ void solve_shallowwater(Data **data, Map *smap, Map *gmap, Config *param, int ir
 // >>>>> Velocity update for shallowwater solver
 void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int irank, int nrank)
 {
+    int ii;
     if (param->sim_groundwater == 1)
     {subsurface_source(data, smap, param);}
-    // printf("-----\n");
     if (param->use_mpi == 1)
     {mpi_exchange_surf((*data)->eta, smap, 2, param, irank, nrank);}
     update_depth(data, smap, param, irank);
@@ -126,7 +127,6 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
     update_velocity(data, smap, param, irank);
     // waterfall_velocity(data, smap, param);
     enforce_velo_bc(data, smap, param, irank, nrank);
-    // printf("Velocity NEW : velo = %f, %f\n",(*data)->uu[30],(*data)->vv[30]);
     if (param->use_mpi == 1)
     {
         mpi_exchange_surf((*data)->uu, smap, 2, param, irank, nrank);
@@ -143,10 +143,8 @@ void shallowwater_velocity(Data **data, Map *smap, Map *gmap, Config *param, int
         mpi_exchange_surf((*data)->uy, smap, 2, param, irank, nrank);
         mpi_exchange_surf((*data)->vx, smap, 2, param, irank, nrank);
     }
-
-
     // if (param->sim_groundwater == 1)
-    // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qseepage[ii] = 0.0;}}
+    // {for (ii = 0; ii < param->n2ci; ii++)    {(*data)->qss[ii] = 0.0;}}
 }
 
 // >>>>> Momentum source term
@@ -211,9 +209,6 @@ void momentum_source(Data **data, Map *smap, Config *param)
             (*data)->Ex[ii] = (*data)->Ex[ii] * (*data)->Dx[ii];
             (*data)->Ey[ii] = (*data)->Ey[ii] * (*data)->Dy[ii];
 
-            //
-            // (*data)->Ex[ii] = (*data)->uu[ii];
-            // (*data)->Ey[ii] = (*data)->vv[ii];
         }
         else
         {
@@ -421,62 +416,86 @@ void shallowwater_mat_coeff(Data **data, Map *smap, Config *param, int irank, in
 void build_shallowwater_system(Data *data, Map *smap, Config *param, QMatrix A, Vector b)
 {
     size_t ii, jj, kk, n;
-    int im, dist;
-    for (ii = 1; ii <= param->n2ci; ii++)
-    {
-        im = ii - 1;
+    int im, dist, irow;
+    for (irow = 1; irow <= param->nactv; irow++)   {
+        ii = smap->mat2dom[irow-1];
         kk = 0;
         n = 5;
-        if (smap->ii[im] == 0)  {n -= 1;}
-        if (smap->ii[im] == param->nx-1)    {n -= 1;}
-        if (smap->jj[im] == 0)  {n -= 1;}
-        if (smap->jj[im] == param->ny-1)    {n -= 1;}
-        Q_SetLen(&A, ii, n);
+        if (data->actv[smap->iPjc[ii]] <= 0 | smap->ii[ii] == param->nx-1)  {n -= 1;}
+        if (data->actv[smap->iMjc[ii]] <= 0 | smap->ii[ii] == 0)  {n -= 1;}
+        if (data->actv[smap->icjP[ii]] <= 0 | smap->jj[ii] == param->ny-1)  {n -= 1;}
+        if (data->actv[smap->icjM[ii]] <= 0 | smap->jj[ii] == 0)  {n -= 1;}
+        Q_SetLen(&A, irow, n);
         // ym
-        dist = im - smap->icjM[im];
-        if (ii-dist > 0 & ii-dist <= param->n2ci)
-        {Q_SetEntry(&A, ii, kk, ii-dist, -data->Sym[im]);    kk++;}
+        dist = smap->distym[irow-1];
+        if (irow-dist > 0 & irow-dist <= param->nactv & dist > 0)   {Q_SetEntry(&A, irow, kk, irow-dist, -data->Sym[ii]);    kk++;}
         // xm
-        dist = im - smap->iMjc[im];
-        if (ii-dist > 0 & ii-dist <= param->n2ci)
-        {Q_SetEntry(&A, ii, kk, ii-dist, -data->Sxm[im]);    kk++;}
+        dist = smap->distxm[irow-1];
+        if (irow-dist > 0 & irow-dist <= param->nactv & dist > 0)   {Q_SetEntry(&A, irow, kk, irow-dist, -data->Sxm[ii]);    kk++;}
         // ct
-        Q_SetEntry(&A, ii, kk, ii, data->Sct[im]);
-        kk++;
+        Q_SetEntry(&A, irow, kk, irow, data->Sct[ii]);  kk++;
         // xp
-        dist = smap->iPjc[im] - im;
-        if (ii+dist > 0 & ii+dist <= param->n2ci)
-        {Q_SetEntry(&A, ii, kk, ii+dist, -data->Sxp[im]);    kk++;}
+        dist = smap->distxp[irow-1];
+        if (irow+dist > 0 & irow+dist <= param->nactv & dist > 0)   {Q_SetEntry(&A, irow, kk, irow+dist, -data->Sxp[ii]);    kk++;}
         // yp
-        dist = smap->icjP[im] - im;
-        if (ii+dist > 0 & ii+dist <= param->n2ci)
-        {Q_SetEntry(&A, ii, kk, ii+dist, -data->Syp[im]);    kk++;}
+        dist = smap->distyp[irow-1];
+        if (irow+dist > 0 & irow+dist <= param->nactv & dist > 0)   {Q_SetEntry(&A, irow, kk, irow+dist, -data->Syp[ii]);    kk++;}
         // rhs
-        V_SetCmp(&b, ii, data->Srhs[im]);
+        V_SetCmp(&b, irow, data->Srhs[ii]);
+
+
     }
+
+    // for (ii = 1; ii <= param->n2ci; ii++)
+    // {
+    //     im = ii - 1;
+    //     kk = 0;
+    //     n = 5;
+    //     if (smap->ii[im] == 0)  {n -= 1;}
+    //     if (smap->ii[im] == param->nx-1)    {n -= 1;}
+    //     if (smap->jj[im] == 0)  {n -= 1;}
+    //     if (smap->jj[im] == param->ny-1)    {n -= 1;}
+    //     Q_SetLen(&A, ii, n);
+    //     // ym
+    //     dist = im - smap->icjM[im];
+    //     if (ii-dist > 0 & ii-dist <= param->n2ci)
+    //     {Q_SetEntry(&A, ii, kk, ii-dist, -data->Sym[im]);    kk++;}
+    //     // xm
+    //     dist = im - smap->iMjc[im];
+    //     if (ii-dist > 0 & ii-dist <= param->n2ci)
+    //     {Q_SetEntry(&A, ii, kk, ii-dist, -data->Sxm[im]);    kk++;}
+    //     // ct
+    //     Q_SetEntry(&A, ii, kk, ii, data->Sct[im]);
+    //     kk++;
+    //     // xp
+    //     dist = smap->iPjc[im] - im;
+    //     if (ii+dist > 0 & ii+dist <= param->n2ci)
+    //     {Q_SetEntry(&A, ii, kk, ii+dist, -data->Sxp[im]);    kk++;}
+    //     // yp
+    //     dist = smap->icjP[im] - im;
+    //     if (ii+dist > 0 & ii+dist <= param->n2ci)
+    //     {Q_SetEntry(&A, ii, kk, ii+dist, -data->Syp[im]);    kk++;}
+    //     // rhs
+    //     V_SetCmp(&b, ii, data->Srhs[im]);
+    // }
 
 }
 
 // >>>>> Solve the shallow water system
 void solve_shallowwater_system(Data **data, Map *smap, QMatrix A, Vector b, Vector x, Config *param)
 {
-    size_t ii;
-    // for (ii = 0; ii < param->n2ci; ii++)
-    // {
-    //     // if (smap->ii[ii] == 80 & smap->jj[ii] == 200)
-    //     if ((*data)->dept[ii] > 0.0)
-    //     {
-    //         printf("(ii,jj) - (ym, xm, ct, xp, yp, rhs) = (%d,%d) - (%f,%f,%f,%f,%f,%f) -> %f\n",smap->ii[ii],smap->jj[ii], \
-    //             -(*data)->Sym[ii]*1e5,-(*data)->Sxm[ii]*1e5,(*data)->Sct[ii]*1e5,-(*data)->Sxp[ii]*1e5,-(*data)->Syp[ii]*1e5,(*data)->Srhs[ii]*1e5,(*data)->eta[ii]-(*data)->offset[0]);
-    //         printf("------\n");
-    //     }
-    // }
-
+    size_t ii, irow;
     V_SetAllCmp(&x, 0.0);
     SetRTCAccuracy(0.00000001);
     CGIter(&A, &x, &b, 10000000, SSORPrecond, 1);
-    for (ii = 0; ii < param->n2ci; ii++)    {(*data)->eta[ii] = V_GetCmp(&x, ii+1);}
 
+    for (irow = 0; irow < param->nactv; irow++) {
+        ii = smap->mat2dom[irow];
+        (*data)->eta[ii] = V_GetCmp(&x, irow+1);
+    }
+    // for (ii = 0; ii < param->n2ci; ii++)    {
+    //     (*data)->eta[ii] = V_GetCmp(&x, ii+1);
+    // }
 }
 
 // >>>>> Enforce boundary condition for free surface
@@ -627,30 +646,39 @@ void subsurface_source(Data **data, Map *smap, Config *param)
     // NOTE: Which one is wrong remains undecided!!!
     for (ii = 0; ii < param->n2ci; ii++)
     {
+
         diff = (*data)->eta[ii] - (*data)->bottom[ii];
         // infiltration
-        if ((*data)->qseepage[ii] < 0)
+        if ((*data)->qss[ii] < 0)
         {
-            // (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
+            (*data)->eta[ii] += (*data)->qss[ii] * param->dt;
             // Kuan2019
-            (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
+            // (*data)->eta[ii] += (*data)->qss[ii] * param->dt * param->wcs;
             (*data)->reset_seepage[ii] = 1;
+            if ((*data)->eta[ii] < (*data)->bottom[ii]) {(*data)->eta[ii] = (*data)->bottom[ii];}
         }
         // seepage
         else
         {
-            if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
-            {
-                (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt * param->wcs;
-                (*data)->reset_seepage[ii] = 1;
-            }
-            // if ((*data)->qseepage[ii]*param->dt > param->min_dept)
+            // if ((*data)->qss[ii]*param->dt*param->wcs > param->min_dept)
             // {
-            //     (*data)->eta[ii] += (*data)->qseepage[ii] * param->dt;
+            //     (*data)->eta[ii] += (*data)->qss[ii] * param->dt * param->wcs;
             //     (*data)->reset_seepage[ii] = 1;
             // }
-            else
-            {(*data)->reset_seepage[ii] = 0;}
+            if ((*data)->dept[ii] <= param->min_dept)   {
+                if ((*data)->qss[ii]*param->dt > param->min_dept)
+                {
+                    (*data)->eta[ii] += (*data)->qss[ii] * param->dt;
+                    (*data)->reset_seepage[ii] = 1;
+                }
+                else
+                {(*data)->reset_seepage[ii] = 0;}
+            }
+            else {
+                (*data)->eta[ii] += (*data)->qss[ii] * param->dt;
+                (*data)->reset_seepage[ii] = 1;
+            }
+
         }
     }
 }
@@ -800,7 +828,7 @@ void update_velocity(Data **data, Map *smap, Config *param, int irank)
         // if (smap->ii[ii] == 1 & smap->jj[ii] == 1)
         // {
         //     printf("  SURFACE AF: jj=%d, vv=%f, dept=%f, seepage=%f\n\n",smap->jj[ii],(*data)->vv[ii],(*data)->dept[ii],
-        //         (*data)->qseepage[ii]*param->dt*param->wcs);
+        //         (*data)->qss[ii]*param->dt*param->wcs);
         // }
     }
 
@@ -977,14 +1005,14 @@ void volume_by_flux(Data **data, Map *smap, Config *param)
         // subsurface source
         if (param->sim_groundwater == 1)
         {
-            if ((*data)->qseepage[ii] < 0 & (*data)->Vflux[ii] > -(*data)->qseepage[ii]*param->dt*param->wcs*(*data)->Asz[ii])
-            {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
-            else if ((*data)->qseepage[ii] > 0)
+            if ((*data)->qss[ii] < 0 & (*data)->Vflux[ii] > -(*data)->qss[ii]*param->dt*param->wcs*(*data)->Asz[ii])
+            {(*data)->Vflux[ii] += (*data)->qss[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+            else if ((*data)->qss[ii] > 0)
             {
                 if ((*data)->dept[ii] > 0)
-                {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
-                else if ((*data)->qseepage[ii]*param->dt*param->wcs > param->min_dept)
-                {(*data)->Vflux[ii] += (*data)->qseepage[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+                {(*data)->Vflux[ii] += (*data)->qss[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
+                else if ((*data)->qss[ii]*param->dt*param->wcs > param->min_dept)
+                {(*data)->Vflux[ii] += (*data)->qss[ii] * param->dt * param->wcs * (*data)->Asz[ii];}
             }
         }
 
@@ -1097,6 +1125,7 @@ void subgrid_index(Data **data, Map *smap, Config *param)
                 (*data)->eta_ind[ii] = 0;
             }
         }
+
     }
 }
 
@@ -1132,6 +1161,8 @@ void subgrid_interp_and_combine(Data **data, Map *smap, Config *param, int irank
             (*data)->Ayp[ii] = interp_sub((*data)->layers_sub, (*data)->Ayp_sub, (*data)->eta[ii], ii, kk);
             (*data)->Aym[ii] = interp_sub((*data)->layers_sub, (*data)->Aym_sub, (*data)->eta[ii], ii, kk);
             (*data)->Asz[ii] = interp_sub((*data)->layers_sub, (*data)->Asz_sub, (*data)->eta[ii], ii, kk);
+
+
             // check for inundation of each face
             if ((*data)->bottomXP[ii] > (*data)->layers_sub[kk] & (*data)->bottomXP[ii] <= (*data)->layers_sub[kk+1])
             {
@@ -1220,84 +1251,73 @@ void subgrid_interp_and_combine(Data **data, Map *smap, Config *param, int irank
         (*data)->Vs[ii] = (*data)->Vxp[ii] + (*data)->Vxm[ii];
         (*data)->Vsx[ii] = (*data)->Vxp[ii] + (*data)->Vxm[smap->iPjc[ii]];
         (*data)->Vsy[ii] = (*data)->Vyp[ii] + (*data)->Vym[smap->icjP[ii]];
+
         // // areas
-        if ((*data)->Axp[ii] <= 0.0)
-        {
-            if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
-            {(*data)->Asx[ii] = 0.0;}
-            else
-            {
-                (*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];
-            }
-        }
-        else
-        {
-            if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
-            {
-                // (*data)->Asx[ii] = (*data)->Axp[ii];
-                if (smap->ii[ii] > param->nx-3 | smap->ii[ii] < 10)
-                {
-                    (*data)->Asx[ii] = 0.0;
-                }
-                else
-                {
-                    (*data)->Asx[ii] = (*data)->Axp[ii];
-                }
-            }
-            else
-            {
-                if ((*data)->Axp[ii] > (*data)->Axm[smap->iPjc[ii]])
-                {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
-                else
-                {(*data)->Asx[ii] = (*data)->Axp[ii];}
-            }
-        }
 
-        // (*data)->Asx[ii] = (*data)->Axp[ii];
-        // if ((*data)->Axm[smap->iPjc[ii]] < (*data)->Axp[ii])
-        // {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
-        // if ((*data)->Axp[ii] <= 0.0 | (*data)->Axm[smap->iPjc[ii]] <= 0.0)
-        // if (smap->ii[ii] > param->nx-3 | smap->ii[ii] < 10)
-        // {(*data)->Asx[ii] = 0.0;}
+        if ((*data)->Axp[ii] <= 0.0 | (*data)->Axm[smap->iPjc[ii]] <= 0.0)  {(*data)->Asx[ii] = 0.0;}
+        else {(*data)->Asx[ii] = 0.5*((*data)->Axp[ii] + (*data)->Axm[smap->iPjc[ii]]);}
+        if ((*data)->Ayp[ii] <= 0.0 | (*data)->Aym[smap->icjP[ii]] <= 0.0)  {(*data)->Asy[ii] = 0.0;}
+        else {(*data)->Asy[ii] = 0.5*((*data)->Ayp[ii] + (*data)->Aym[smap->icjP[ii]]);}
 
-        if ((*data)->Ayp[ii] <= 0.0)
-        {
-            if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
-            {(*data)->Asy[ii] = 0.0;}
-            else
-            {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
-        }
-        else
-        {
-            if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
-            {(*data)->Asy[ii] = (*data)->Ayp[ii];}
-            else
-            {
-                if ((*data)->Ayp[ii] > (*data)->Aym[smap->icjP[ii]])
-                {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
-                else
-                {(*data)->Asy[ii] = (*data)->Ayp[ii];}
-            }
-        }
+        // if ((*data)->Axp[ii] <= 0.0)
+        // {
+        //     if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
+        //     {(*data)->Asx[ii] = 0.0;}
+        //     else
+        //     {
+        //         (*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];
+        //     }
+        // }
+        // else
+        // {
+        //     if ((*data)->Axm[smap->iPjc[ii]] <= 0.0)
+        //     {
+        //         // (*data)->Asx[ii] = (*data)->Axp[ii];
+        //         if (smap->ii[ii] > param->nx-3 | smap->ii[ii] < 10)
+        //         {
+        //             (*data)->Asx[ii] = 0.0;
+        //         }
+        //         else
+        //         {
+        //             (*data)->Asx[ii] = (*data)->Axp[ii];
+        //         }
+        //     }
+        //     else
+        //     {
+        //         if ((*data)->Axp[ii] > (*data)->Axm[smap->iPjc[ii]])
+        //         {(*data)->Asx[ii] = (*data)->Axm[smap->iPjc[ii]];}
+        //         else
+        //         {(*data)->Asx[ii] = (*data)->Axp[ii];}
+        //     }
+        // }
+        //
+        // if ((*data)->Ayp[ii] <= 0.0)
+        // {
+        //     if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
+        //     {(*data)->Asy[ii] = 0.0;}
+        //     else
+        //     {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+        // }
+        // else
+        // {
+        //     if ((*data)->Aym[smap->icjP[ii]] <= 0.0)
+        //     {(*data)->Asy[ii] = (*data)->Ayp[ii];}
+        //     else
+        //     {
+        //         if ((*data)->Ayp[ii] > (*data)->Aym[smap->icjP[ii]])
+        //         {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
+        //         else
+        //         {(*data)->Asy[ii] = (*data)->Ayp[ii];}
+        //     }
+        // }
 
         // (*data)->Asy[ii] = (*data)->Ayp[ii];
         // if ((*data)->Aym[smap->icjP[ii]] < (*data)->Ayp[ii])
         // {(*data)->Asy[ii] = (*data)->Aym[smap->icjP[ii]];}
         // if ((*data)->Ayp[ii] <= 0.0 | (*data)->Aym[smap->icjP[ii]] <= 0.0)
         // {(*data)->Asy[ii] = 0.0;}
+        //
 
-        if (smap->ii[ii] < 3)
-        {
-            (*data)->Asy[ii] = 0.0;
-            (*data)->Asx[ii] = 0.0;
-        }
-
-        // if (smap->ii[ii] == 18 & smap->jj[ii] == 64)
-        // {
-        //     printf("  eta, ind = (%f,%d)  (%f,%d)    Ayp, Aym = %f, %f   Asy = %f --> vv=%f\n",(*data)->eta[ii]-(*data)->offset[0],(*data)->eta_ind[ii],
-        //     (*data)->eta[smap->icjP[ii]]-(*data)->offset[0],
-        //         (*data)->eta_ind[smap->icjP[ii]],(*data)->Ayp[ii],(*data)->Aym[smap->icjP[ii]],(*data)->Asy[ii],(*data)->vv[ii]);
-        // }
     }
 
     // other subgrid variables
@@ -1321,5 +1341,9 @@ void subgrid_interp_and_combine(Data **data, Map *smap, Config *param, int irank
         if ((*data)->Asx[ii] <= 0.0)  {(*data)->Asx[ii] = 0.0;}
         if ((*data)->Asy[ii] <= 0.0)  {(*data)->Asy[ii] = 0.0;}
         if ((*data)->Asz[ii] <= 0.0)  {(*data)->Asz[ii] = 0.0;}
+        if (ii < param->n2ci & (*data)->actv[ii] <= 0) {
+            (*data)->Asx[ii] = 0.0; (*data)->Asx[smap->iMjc[ii]] = 0.0;
+            (*data)->Asy[ii] = 0.0; (*data)->Asy[smap->icjM[ii]] = 0.0;
+        }
     }
 }

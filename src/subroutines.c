@@ -27,8 +27,8 @@ double tvd_superbee(double sp, double sc, double sm, double u, double delta, dou
 double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *axis, char *dir, Config *param, int irank)
 {
     int is, sign;
-    double q, hc, hs, k, kc, ks, kface, visc, rho, delta, cos, sin, vseep;
-    double Ks;
+    double q, hc, hs, k, kc, ks, kface, visc, rho, delta, cos, sin, vseep, qlatx, qlaty;
+    double Ks, faceA;
     if (strcmp(axis, "x") == 0)    {
         if (strcmp(dir, "back") == 0 & gmap->ii[ic] == 0)  {
             is = ic;    ic = gmap->iMjckc[is];  delta = 0.5*param->dx;
@@ -42,6 +42,7 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
         visc = data->r_viscxp[ic];   rho = 0.0;
         sin = gmap->sinx[ic];   cos = gmap->cosx[ic];
         Ks = data->Ksx[ic];
+        faceA = gmap->Ax[ic];
     }
     else if (strcmp(axis, "y") == 0)    {
         if (strcmp(dir, "back") == 0 & gmap->jj[ic] == 0)  {
@@ -64,6 +65,7 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
         visc = data->r_viscyp[ic];   rho = 0.0;
         sin = gmap->siny[ic];   cos = gmap->cosy[ic];
         Ks = data->Ksy[ic];
+        faceA = gmap->Ay[ic];
     }
     else if (strcmp(axis, "z") == 0)    {
         if (strcmp(dir, "back") == 0 & gmap->kk[ic] == 0)  {
@@ -80,6 +82,7 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
         }
         visc = data->r_visczp[ic];   rho = data->r_rhozp[ic];
         sin = 0.0;   cos = 1.0; sign = 0;
+        faceA = gmap->Az[ic];
     }
     hc = data->h[ic]+dhc;   hs = data->h[is]+dhs;
 
@@ -93,21 +96,63 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
         ks = kc;
     }
     kface = 0.5 * (kc + ks);
-    // saturated top
-    if (strcmp(axis, "z") == 0 & strcmp(dir, "back") == 0)  {kface = data->Ksz[is];}
+    if (gmap->actv[ic] == 0 | gmap->actv[is] == 0) {if (ic < param->n3ci & is < param->n3ci)    {kface = 0.0;}}
 
-    q = kface * visc * cos * ((hs - hc)/delta - rho) + sign * kface * sin;
+    // saturated top
+    if (strcmp(axis, "z") == 0 & strcmp(dir, "back") == 0)  {
+        if (param->sim_shallowwater == 1 & data->dept[gmap->top2d[is]] > 0.0)   {kface = data->Ksz[is];}
+        else if (param->sim_shallowwater == 0 & param->bctype_GW[5] == 1)   {kface = data->Ksz[is];}
+    }
+
+    // flux from Darcy's Law
+    q = faceA * (kface * visc * cos * ((hs - hc)/delta - rho) + sign * kface * sin);
+
+    // lateral exchange
+    // if (strcmp(axis, "z") == 0 & strcmp(dir, "back") == 0) {
+    //     qlatx = 0.0;    qlaty = 0.0;
+    //     // lateral x
+    //     cos = gmap->costx[gmap->top2d[is]]; sin = gmap->sintx[gmap->top2d[is]]; hc = data->h[ic]+dhc;
+    //     if (gmap->bot3d[is] < gmap->bot3d[gmap->iMjckc[is]])    {
+    //         hs = data->h[gmap->iMjckc[is]]+dhs; sign = 1;
+    //         if (data->bottom[gmap->top2d[is]] > gmap->bot3d[gmap->iMjckc[is]] + 0.5*gmap->dz3d[gmap->iMjckc[is]])   {sign = -1;}
+    //     }
+    //     else if (gmap->bot3d[is] < gmap->bot3d[gmap->iPjckc[is]])   {
+    //         hs = data->h[gmap->iPjckc[is]]+dhs; sign = 1;
+    //         if (data->bottom[gmap->top2d[is]] > gmap->bot3d[gmap->iPjckc[is]] + 0.5*gmap->dz3d[gmap->iMjckc[is]])   {sign = -1;}
+    //     }
+    //     if (data->Ksx[is] > 0.0)    {
+    //         qlatx = kface * visc * cos * (hs - hc) / param->dx + sign * kface * sin;
+    //     }
+    //     // lateral y
+    //     cos = gmap->costy[gmap->top2d[is]]; sin = gmap->sinty[gmap->top2d[is]]; hc = data->h[ic]+dhc;
+    //     if (gmap->bot3d[is] < gmap->bot3d[gmap->icjMkc[is]])    {
+    //         hs = data->h[gmap->icjMkc[is]]+dhs; sign = 1;
+    //         if (data->bottom[gmap->top2d[is]] > gmap->bot3d[gmap->icjMkc[is]] + 0.5*gmap->dz3d[gmap->icjMkc[is]])   {sign = -1;}
+    //     }
+    //     else if (gmap->bot3d[is] < gmap->bot3d[gmap->icjPkc[is]])   {
+    //         hs = data->h[gmap->icjPkc[is]]+dhs; sign = 1;
+    //         if (data->bottom[gmap->top2d[is]] > gmap->bot3d[gmap->icjPkc[is]] + 0.5*gmap->dz3d[gmap->icjPkc[is]])   {sign = -1;}
+    //     }
+    //     if (data->Ksy[is] > 0.0)    {
+    //         qlaty = kface * visc * cos * (hs - hc) / param->dy + sign * kface * sin;
+    //     }
+    //
+    //     q += qlatx * gmap->Az[is] * gmap->sinx[is] / gmap->cosx[is];
+    //     q += qlaty * gmap->Az[is] * gmap->siny[is] / gmap->cosy[is];
+    // }
+
+
     // enforce boundary condition
     if (strcmp(axis, "y") == 0) {
         if (strcmp(dir, "back") == 0)   {
             if (gmap->jj[ic] == 0 & irank < param->mpi_nx) {
-                if (param->bctype_GW[3] == 2)   {q = param->qym;}
+                if (param->bctype_GW[3] == 2)   {q = param->qym * faceA;}//    if (gmap->kk[ic] == 0)   {q = 0.0;}}
                 else if (param->bctype_GW[3] == 0)  {q = 0.0;}
             }
         }
         else  {
             if (gmap->jj[ic] == param->ny-1 & irank >= param->mpi_nx*(param->mpi_ny-1)) {
-                if (param->bctype_GW[2] == 2)   {q = param->qyp;}
+                if (param->bctype_GW[2] == 2)   {q = param->qyp * faceA;}
                 else if (param->bctype_GW[2] == 0)  {q = 0.0;}
             }
         }
@@ -120,7 +165,7 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
                     // flux cannot exceed surface water available
                     vseep = fabs(q)*param->dtg*data->wcs[is];
                     if (q < 0.0 & vseep > data->dept[gmap->top2d[is]])    {
-                        q = -data->dept[gmap->top2d[is]]/(param->dtg*data->wcs[is]);
+                        q = -data->dept[gmap->top2d[is]] * faceA/(param->dtg*data->wcs[is]);
                     }
                 }
                 else if (param->bctype_GW[5] == 2)   {
@@ -128,23 +173,24 @@ double darcy_flux(Data *data, Map *gmap, int ic, double dhc, double dhs, char *a
                     if (q <= 0.0)  {q = 0.0;}
                     // evaporation and rainfall
                     if (data->qtop[gmap->top2d[is]] > 0.0 & data->wc[is] > data->wcr[is])
-                    {q += data->qtop[gmap->top2d[is]];}
+                    {q += data->qtop[gmap->top2d[is]] * faceA;}
                     else if (data->qtop[gmap->top2d[is]] < 0.0)
-                    {q += data->qtop[gmap->top2d[is]];}
+                    {q += data->qtop[gmap->top2d[is]] * faceA;}
                 }
                 else if (param->bctype_GW[5] == 0)   {q = 0.0;}
             }
             else {
-                if (param->bctype_GW[5] == 2)   {q = data->qtop[gmap->top2d[is]];}
+                if (param->bctype_GW[5] == 2)   {q = data->qtop[gmap->top2d[is]] * faceA;}
                 else if (param->bctype_GW[5] == 0)  {q = 0.0;}
             }
         }
         else if (gmap->kk[ic] == param->nz-1)   {
             if (param->bctype_GW[4] == 0)   {q = 0.0;}
-            else if (param->bctype_GW[4] == 2)  {q = data->qbot;}
-            else if (param->bctype_GW[5] == 3)  {q = -kface * visc * rho;}
+            else if (param->bctype_GW[4] == 2)  {q = data->qbot * faceA;}
+            else if (param->bctype_GW[5] == 3)  {q = -kface * visc * rho * faceA;}
         }
     }
+
     return q;
 }
 
@@ -163,30 +209,34 @@ double compute_residual(Data **data, Map *gmap, int ii, char *jaco, Config *para
     wcp = compute_wch(*data, (*data)->h[ii]+dhc, ii, param);
     resi = param->Ss*wcp*((*data)->h[ii]+dhc-(*data)->hn[ii])/(*data)->wcs[ii]/param->dtg;
     resi += (wcp-(*data)->wcn[ii])/param->dtg;
+    resi = resi * gmap->V[ii];
+    // if (gmap->ii[ii] == 0 & gmap->kk[ii] == 10 & dhc==0.0)  {printf(" RESI 1 : h=%f, hn=%f, wcp=%f, wcn=%f, resi=%f\n",
+    //     (*data)->h[ii],(*data)->hn[ii],wcp,(*data)->wcn[ii],resi);}
     // >>> flux in x
     dhp = 0.0;  dhm = 0.0; dhc = 0.0;
     if (strcmp(jaco, "ct") == 0)    {dhc = dh;}
     else if (strcmp(jaco, "xp") == 0)   {dhp = dh;}
     else if (strcmp(jaco, "xm") == 0)   {dhm = dh;}
-    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "x", "none", param, irank)/param->dx;
-    if (gmap->ii[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "x", "back", param, irank)/param->dx;}
-    else {resi += darcy_flux(*data, gmap, gmap->iMjckc[ii], dhm, dhc, "x", "none", param, irank)/param->dx;}
+    // resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "x", "none", param, irank)/param->dx;
+    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "x", "none", param, irank);
+    if (gmap->ii[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "x", "back", param, irank);}
+    else {resi += darcy_flux(*data, gmap, gmap->iMjckc[ii], dhm, dhc, "x", "none", param, irank);}
     // >>> flux in y
     dhp = 0.0;  dhm = 0.0; dhc = 0.0;
     if (strcmp(jaco, "ct") == 0)    {dhc = dh;}
     else if (strcmp(jaco, "yp") == 0)   {dhp = dh;}
     else if (strcmp(jaco, "ym") == 0)   {dhm = dh;}
-    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "y", "none", param, irank)/param->dy;
-    if (gmap->jj[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "y", "back", param, irank)/param->dy;}
-    else {resi += darcy_flux(*data, gmap, gmap->icjMkc[ii], dhm, dhc, "y", "none", param, irank)/param->dy;}
+    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "y", "none", param, irank);
+    if (gmap->jj[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "y", "back", param, irank);}
+    else {resi += darcy_flux(*data, gmap, gmap->icjMkc[ii], dhm, dhc, "y", "none", param, irank);}
     // >>> flux in z
     dhp = 0.0;  dhm = 0.0; dhc = 0.0;
     if (strcmp(jaco, "ct") == 0)    {dhc = dh;}
     else if (strcmp(jaco, "zp") == 0)   {dhp = dh;}
     else if (strcmp(jaco, "zm") == 0)   {dhm = dh;}
-    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "z", "none", param, irank) / gmap->dz3d[ii];
-    if (gmap->kk[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "z", "back", param, irank)/ gmap->dz3d[ii];}
-    else {resi += darcy_flux(*data, gmap, gmap->icjckM[ii], dhm, dhc, "z", "none", param, irank)/ gmap->dz3d[ii];}
+    resi -= darcy_flux(*data, gmap, ii, dhc, dhp, "z", "none", param, irank);
+    if (gmap->kk[ii] == 0)  {resi += darcy_flux(*data, gmap, ii, dhm, dhc, "z", "back", param, irank);}
+    else {resi += darcy_flux(*data, gmap, gmap->icjckM[ii], dhm, dhc, "z", "none", param, irank);}
 
     return resi;
 }
@@ -201,25 +251,25 @@ double compute_jacobian_fd(Data **data, Map *gmap, int ii, char* axis, Config *p
     }
     else {dh = (*data)->h[ii] * dh_min;}
     if (strcmp(axis, "ct") == 0)    {
-        jaco = (compute_residual(data, gmap, ii, "ct", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "ct", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "xp") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "xp", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "xp", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "xm") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "xm", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "xm", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "yp") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "yp", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "yp", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "ym") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "ym", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "ym", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "zp") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "zp", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "zp", param, irank) - (*data)->resi[ii]) / dh;
     }
     else if (strcmp(axis, "zm") == 0)  {
-        jaco = (compute_residual(data, gmap, ii, "zm", param, irank) - compute_residual(data, gmap, ii, "none", param, irank)) / dh;
+        jaco = (compute_residual(data, gmap, ii, "zm", param, irank) - (*data)->resi[ii]) / dh;
     }
     return jaco;
 }

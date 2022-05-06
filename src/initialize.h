@@ -10,10 +10,10 @@
 typedef struct Data
 {
     // bathymetry related fields
-    double *bottom, *bottom_root, *offset, *bottomXP, *bottomYP;
+    double *bottom, *bottom_root, *offset, *bottomXP, *bottomYP, *actv, *actv_root;
     // surface domain
     int *reset_seepage;
-    double *uu, *un, *uy, *vv, *vn, *vx, *eta, *etan, *dept, *deptx, *depty, *qseepage;
+    double *uu, *un, *uy, *vv, *vn, *vx, *eta, *etan, *dept, *deptx, *depty, *qseepage, *qseepage_old, *qss, *rss;
     double *uu_root, *vv_root, *un_root, *vn_root, *eta_root, *dept_root, *seep_root;
     double *uu_out, *vv_out, *un_out, *vn_out, *eta_out, *dept_out, *seep_out;
     double *Fu, *Fv, *Ex, *Ey, *Dx, *Dy, *CDx, *CDy, *wtfx, *wtfy, *cflx, *cfly, *cfl_active;
@@ -28,7 +28,7 @@ typedef struct Data
     double **Axp_sub, **Axm_sub, **Ayp_sub, **Aym_sub, **Asz_sub;
     double *Vxp, *Vxm, *Vyp, *Vym, *Axp, *Axm, *Ayp, *Aym;
     // subsurface domain
-    double *h, *hn, *hp, *hnm, *hwc, *h_incr, *wc, *wcn, *wch, *h_root, *wc_root, *dh6, *rsplit;
+    double *h, *hn, *hp, *hnm, *hwc, *h_incr, *wc, *wcn, *wch, *h_root, *wc_root, *dh6, *rsplit, *resi;
     double *vloss, *vloss_root, *room, *qtop, qbot, hbot, htop;
     double *Kx, *Ky, *Kz, *qx, *qy, *qz, *qx_root, *qy_root, *qz_root, *Vg, *Vgn, *Vgflux, *ch;
     double *h_out, *wc_out, *qx_out, *qy_out, *qz_out;
