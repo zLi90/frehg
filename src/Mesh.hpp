@@ -1,254 +1,235 @@
-#ifndef MESH_HPP
-#define MESH_HPP
+#ifndef FREHG_MESH_HPP
+#define FREHG_MESH_HPP
 
-#include "Types.hpp"
+#include "define.hpp"
 #include <vector>
-#include <cmath>
-#include <string>
 #include <iostream>
-#include <algorithm> // for std::max
 
-// -----------------------------------------------------------------------------
-// Direction Enums for Readability
-// -----------------------------------------------------------------------------
-enum { EAST=0, WEST=1, NORTH=2, SOUTH=3, TOP=4, BOTTOM=5, NUM_DIRS=6 };
+// ============================================================================
+//                                MESH SYSTEM
+// ============================================================================
 
-class UnstructuredMesh {
+class MeshSystem {
 public:
-    std::string name;
-    int spatial_dim;      // 2 for Surface, 3 for Subsurface
-    int num_active_cells; // The "Packed" size (N)
+    // --- Dimensions ---
+    Ordinal nx, ny, nz;           // Grid dimensions
+    Ordinal num_cells_2d;         // Total surface cells (nx * ny)
+    Ordinal num_cells_3d;         // Total subsurface cells (nx * ny * nz)
 
-    // Original Structured Dimensions (for reference/IO)
-    int nx_global, ny_global, nz_global;
+    // --- Geometry ---
+    Scalar dx, dy;                // Horizontal grid spacing (constant)
+    
+    // Vertical grid spacing can vary by layer, stored on Device
+    View1D<Scalar> dz;            // Size: num_cells_3d (allows fully variable dz)
+    View1D<Scalar> z_coords;      // Elevation of cell centers
 
-    // -------------------------------------------------------------------------
-    // 1. Connectivity & Geometry (Device Views)
-    // -------------------------------------------------------------------------
-    // Neighbors: Stores the ID of the neighbor. -1 if boundary/inactive.
-    // Dimensions: [num_active_cells][6] (Even for 2D, we keep 6 for consistency, Top/Bot are -1)
-    View2D<int> neighbors;
+    // --- Active/Inactive Masks (1 = Active, 0 = Inactive) ---
+    View1D<int> sw_active;        // Surface Water active mask
+    View1D<int> gw_active;        // Groundwater active mask
 
-    // Geometry: Structure of Arrays
-    View1D<Real> center_x;
-    View1D<Real> center_y;
-    View1D<Real> center_z;
-    View1D<Real> dz;      // Vertical thickness
-    View1D<Real> volume;  // Volume (3D) or Area (2D)
+    // --- Coordinates / Indices mapping ---
+    // Mapping from flattened index 'id' to (i, j, k)
+    // Useful for reconstructing position inside a flattened kernel
+    View1D<Ordinal> sw_ix, sw_iy;           // Surface Water (i, j)
+    View1D<Ordinal> gw_ix, gw_iy, gw_iz;    // Groundwater (i, j, k)
 
-    // -------------------------------------------------------------------------
-    // 2. Coupling & Boundaries
-    // -------------------------------------------------------------------------
-    // For Surface Mesh: Stores the ID of the top-most active Subsurface cell below it.
-    // For Subsurface Mesh: Stores the ID of the Surface cell above it (if it is a top cell).
-    // Value is -1 if no connection exists.
-    View1D<int> coupling_index;
+    // --- Connectivity / Topology ---
+    // Stores the flattened index of the neighbor.
+    // IMPT: Boundary Handling Strategy
+    // To avoid "if" statements in GPU kernels, boundary neighbors point to:
+    // 1. The cell itself (Clamped/Neumann-0 style default)
+    // 2. OR a specific logic handled by the solver.
+    // Here we map to the neighbor index if valid, or the current index if boundary.
+    
+    // Surface Water Connectivity (2D)
+    View1D<Ordinal> sw_left;   // i-1
+    View1D<Ordinal> sw_right;  // i+1
+    View1D<Ordinal> sw_back;   // j-1
+    View1D<Ordinal> sw_front;  // j+1
 
-    // Boundary Flags (useful for quick logic in solvers)
-    View1D<int> is_boundary; 
+    // Groundwater Connectivity (3D)
+    View1D<Ordinal> gw_left;   // i-1
+    View1D<Ordinal> gw_right;  // i+1
+    View1D<Ordinal> gw_back;   // j-1
+    View1D<Ordinal> gw_front;  // j+1
+    View1D<Ordinal> gw_bot;    // k-1 (deeper)
+    View1D<Ordinal> gw_top;    // k+1 (shallower)
 
-    // -------------------------------------------------------------------------
-    // 3. Constructor
-    // -------------------------------------------------------------------------
-    UnstructuredMesh(std::string _name, int n_cells, int dim) 
-        : name(_name), num_active_cells(n_cells), spatial_dim(dim) 
-    {
-        // Allocate Device Views
-        neighbors      = View2D<int>(name + "_neighbors", n_cells, NUM_DIRS);
-        center_x       = View1D<Real>(name + "_x", n_cells);
-        center_y       = View1D<Real>(name + "_y", n_cells);
-        center_z       = View1D<Real>(name + "_z", n_cells);
-        dz             = View1D<Real>(name + "_dz", n_cells);
-        volume         = View1D<Real>(name + "_vol", n_cells);
-        coupling_index = View1D<int>(name + "_couple", n_cells);
-        is_boundary    = View1D<int>(name + "_is_bnd", n_cells);
+    // --- Coupling Maps ---
+    // Links surface 2D cell to the top-most active 3D cell in that column
+    View1D<Ordinal> sw_to_gw_idx; 
+    // Links 3D cell to surface 2D cell (usually just i + j*nx)
+    View1D<Ordinal> gw_to_sw_idx; 
+
+    // Constructor
+    MeshSystem(Ordinal _nx, Ordinal _ny, Ordinal _nz, Scalar _dx, Scalar _dy) 
+        : nx(_nx), ny(_ny), nz(_nz), dx(_dx), dy(_dy) {
+        
+        num_cells_2d = nx * ny;
+        num_cells_3d = nx * ny * nz;
+
+        // Allocation
+        dz = View1D<Scalar>("dz", num_cells_3d);
+        z_coords = View1D<Scalar>("z_coords", num_cells_3d);
+
+        sw_active = View1D<int>("sw_active", num_cells_2d);
+        gw_active = View1D<int>("gw_active", num_cells_3d);
+
+        sw_ix = View1D<Ordinal>("sw_ix", num_cells_2d);
+        sw_iy = View1D<Ordinal>("sw_iy", num_cells_2d);
+        
+        gw_ix = View1D<Ordinal>("gw_ix", num_cells_3d);
+        gw_iy = View1D<Ordinal>("gw_iy", num_cells_3d);
+        gw_iz = View1D<Ordinal>("gw_iz", num_cells_3d);
+
+        sw_left = View1D<Ordinal>("sw_left", num_cells_2d);
+        sw_right = View1D<Ordinal>("sw_right", num_cells_2d);
+        sw_back = View1D<Ordinal>("sw_back", num_cells_2d);
+        sw_front = View1D<Ordinal>("sw_front", num_cells_2d);
+
+        gw_left = View1D<Ordinal>("gw_left", num_cells_3d);
+        gw_right = View1D<Ordinal>("gw_right", num_cells_3d);
+        gw_back = View1D<Ordinal>("gw_back", num_cells_3d);
+        gw_front = View1D<Ordinal>("gw_front", num_cells_3d);
+        gw_bot = View1D<Ordinal>("gw_bot", num_cells_3d);
+        gw_top = View1D<Ordinal>("gw_top", num_cells_3d);
+
+        sw_to_gw_idx = View1D<Ordinal>("sw_to_gw", num_cells_2d);
+        gw_to_sw_idx = View1D<Ordinal>("gw_to_sw", num_cells_3d);
     }
 
-    // -------------------------------------------------------------------------
-    // 4. Builder: Surface Domain (2D)
-    // -------------------------------------------------------------------------
-    // Logic adapted from 'build_surf_map'
-    void init_surface(int nx, int ny, double dx, double dy, 
-                      const std::vector<int>& active_mask) 
-    {
-        nx_global = nx; ny_global = ny; nz_global = 1;
-
-        // A. Host Mirrors for Initialization
-        auto h_neighbors = Kokkos::create_mirror_view(neighbors);
-        auto h_x         = Kokkos::create_mirror_view(center_x);
-        auto h_y         = Kokkos::create_mirror_view(center_y);
-        auto h_z         = Kokkos::create_mirror_view(center_z); // Typically 0 or surface elevation
-        auto h_vol       = Kokkos::create_mirror_view(volume);
-        auto h_couple    = Kokkos::create_mirror_view(coupling_index);
-
-        // B. Mapping: Global (i,j) -> Local (cell_id)
-        std::vector<int> g2l(nx * ny, -1);
-        std::vector<int> l2g(num_active_cells);
+    // Initialization Function
+    // This runs on the HOST to build the topology, then copies to DEVICE.
+    // 'active_mask_input' is a 1D array of size nx*ny (0 or 1).
+    // 'dz_layers' is a vector of size nz (thickness of each layer).
+    void initialize(const std::vector<int>& active_mask_2d, const std::vector<Scalar>& dz_layers) {
         
-        int count = 0;
-        for (int i = 0; i < nx * ny; i++) {
-            if (active_mask[i] > 0) {
-                if (count >= num_active_cells) break; // Safety
-                g2l[i] = count;
-                l2g[count] = i;
-                count++;
+        // 1. Create Host Mirrors to populate data locally
+        auto h_sw_active = Kokkos::create_mirror_view(sw_active);
+        auto h_gw_active = Kokkos::create_mirror_view(gw_active);
+        
+        auto h_sw_ix = Kokkos::create_mirror_view(sw_ix);
+        auto h_sw_iy = Kokkos::create_mirror_view(sw_iy);
+        
+        auto h_gw_ix = Kokkos::create_mirror_view(gw_ix);
+        auto h_gw_iy = Kokkos::create_mirror_view(gw_iy);
+        auto h_gw_iz = Kokkos::create_mirror_view(gw_iz);
+
+        auto h_sw_left  = Kokkos::create_mirror_view(sw_left);
+        auto h_sw_right = Kokkos::create_mirror_view(sw_right);
+        auto h_sw_back  = Kokkos::create_mirror_view(sw_back);
+        auto h_sw_front = Kokkos::create_mirror_view(sw_front);
+
+        auto h_gw_left  = Kokkos::create_mirror_view(gw_left);
+        auto h_gw_right = Kokkos::create_mirror_view(gw_right);
+        auto h_gw_back  = Kokkos::create_mirror_view(gw_back);
+        auto h_gw_front = Kokkos::create_mirror_view(gw_front);
+        auto h_gw_bot   = Kokkos::create_mirror_view(gw_bot);
+        auto h_gw_top   = Kokkos::create_mirror_view(gw_top);
+
+        auto h_dz = Kokkos::create_mirror_view(dz);
+        auto h_z_coords = Kokkos::create_mirror_view(z_coords);
+        auto h_sw_to_gw = Kokkos::create_mirror_view(sw_to_gw_idx);
+        auto h_gw_to_sw = Kokkos::create_mirror_view(gw_to_sw_idx);
+
+        // 2. Build Surface Mesh (2D)
+        for (Ordinal j = 0; j < ny; ++j) {
+            for (Ordinal i = 0; i < nx; ++i) {
+                Ordinal id = i + j * nx; // Flattened index
+
+                // Coordinates
+                h_sw_ix(id) = i;
+                h_sw_iy(id) = j;
+
+                // Active Flag
+                h_sw_active(id) = active_mask_2d[id];
+
+                // Connectivity (Clamped)
+                // If at boundary, point to self. Solver handles physics BC.
+                h_sw_left(id)  = (i > 0)      ? (id - 1)  : id;
+                h_sw_right(id) = (i < nx - 1) ? (id + 1)  : id;
+                h_sw_back(id)  = (j > 0)      ? (id - nx) : id;
+                h_sw_front(id) = (j < ny - 1) ? (id + nx) : id;
+                
+                // Initialize coupling map default
+                h_sw_to_gw(id) = -1; 
             }
         }
 
-        // C. Build Connectivity
-        for (int id = 0; id < num_active_cells; id++) {
-            int global = l2g[id];
-            int j = global / nx;
-            int i = global % nx;
-
-            // Geometry
-            h_x(id) = (i + 0.5) * dx;
-            h_y(id) = (j + 0.5) * dy;
-            h_z(id) = 0.0;     // Placeholder, update if you have elevation data
-            h_vol(id) = dx * dy;
-            h_couple(id) = -1; // Will be filled by coupling step later
-
-            // Neighbors (Standard 5-point stencil logic)
-            h_neighbors(id, EAST)  = (i < nx - 1) ? g2l[global + 1] : -1;
-            h_neighbors(id, WEST)  = (i > 0)      ? g2l[global - 1] : -1;
-            h_neighbors(id, NORTH) = (j < ny - 1) ? g2l[global + nx] : -1;
-            h_neighbors(id, SOUTH) = (j > 0)      ? g2l[global - nx] : -1;
-            h_neighbors(id, TOP)    = -1; // No vertical neighbors in 2D
-            h_neighbors(id, BOTTOM) = -1;
-        }
-
-        // D. deep_copy to Device
-        Kokkos::deep_copy(neighbors, h_neighbors);
-        Kokkos::deep_copy(center_x, h_x);
-        Kokkos::deep_copy(center_y, h_y);
-        Kokkos::deep_copy(center_z, h_z);
-        Kokkos::deep_copy(volume, h_vol);
-        Kokkos::deep_copy(coupling_index, h_couple);
+        // 3. Build Subsurface Mesh (3D)
+        // k=0 is the bottom layer, k=nz-1 is the top layer
+        Scalar current_z_bottom = 0.0; // Assume flat bottom for now
         
-        std::cout << ">> Surface Mesh Initialized: " << num_active_cells << " active cells." << std::endl;
-    }
+        for (Ordinal k = 0; k < nz; ++k) {
+            Scalar layer_thickness = dz_layers[k];
+            
+            for (Ordinal j = 0; j < ny; ++j) {
+                for (Ordinal i = 0; i < nx; ++i) {
+                    Ordinal sw_id = i + j * nx;             // 2D index
+                    Ordinal gw_id = i + j * nx + k * num_cells_2d; // 3D index
 
-    // -------------------------------------------------------------------------
-    // 5. Builder: Subsurface Domain (3D)
-    // -------------------------------------------------------------------------
-    // Logic adapted from 'build_subsurf_map' including terrain following
-    void init_subsurface(int nx, int ny, int nz, 
-                         double dx, double dy, double botZ, 
-                         const std::vector<double>& bathymetry,
-                         const std::vector<int>& surf_mask) 
-    {
-        nx_global = nx; ny_global = ny; nz_global = nz;
+                    // Coordinates
+                    h_gw_ix(gw_id) = i;
+                    h_gw_iy(gw_id) = j;
+                    h_gw_iz(gw_id) = k;
 
-        // A. Host Mirrors
-        auto h_neighbors = Kokkos::create_mirror_view(neighbors);
-        auto h_x         = Kokkos::create_mirror_view(center_x);
-        auto h_y         = Kokkos::create_mirror_view(center_y);
-        auto h_z         = Kokkos::create_mirror_view(center_z);
-        auto h_dz        = Kokkos::create_mirror_view(dz);
-        auto h_vol       = Kokkos::create_mirror_view(volume);
-        auto h_couple    = Kokkos::create_mirror_view(coupling_index);
-        auto h_bnd       = Kokkos::create_mirror_view(is_boundary);
+                    // Active Flag (Columnar based on surface)
+                    h_gw_active(gw_id) = h_sw_active(sw_id);
 
-        // B. Geometry & Mapping Pre-Calculation
-        // We must replicate the 'map.c' logic where inactive cells (above bathymetry) are skipped.
-        int total_cells = nx * ny * nz;
-        std::vector<int> g2l(total_cells, -1);
-        std::vector<int> l2g(num_active_cells);
-        
-        // Temporary storage for calculated geometry before packing
-        std::vector<double> tmp_z(total_cells, 0.0);
-        std::vector<double> tmp_dz(total_cells, 0.0);
-        
-        int count = 0;
+                    // Vertical Geometry
+                    h_dz(gw_id) = layer_thickness;
+                    // Simple Z calculation (needs refinement for complex bathymetry)
+                    h_z_coords(gw_id) = current_z_bottom + 0.5 * layer_thickness;
 
-        // Loop over columns
-        for (int j = 0; j < ny; j++) {
-            for (int i = 0; i < nx; i++) {
-                int surf_idx = j * nx + i;
-                
-                // If surface is inactive, subsurface column is likely inactive too (check map.c logic)
-                if (surf_mask[surf_idx] <= 0) continue;
+                    // Connectivity (Horizontal - Clamped)
+                    h_gw_left(gw_id)  = (i > 0)      ? (gw_id - 1)  : gw_id;
+                    h_gw_right(gw_id) = (i < nx - 1) ? (gw_id + 1)  : gw_id;
+                    h_gw_back(gw_id)  = (j > 0)      ? (gw_id - nx) : gw_id;
+                    h_gw_front(gw_id) = (j < ny - 1) ? (gw_id + nx) : gw_id;
 
-                double surf_elev = bathymetry[surf_idx];
-                double total_depth = surf_elev - botZ;
-                
-                // Simple Sigma Stretch (Uniform dz distribution) - Matches map.c 'follow_terrain'
-                double col_dz = total_depth / nz;
+                    // Connectivity (Vertical - Clamped)
+                    h_gw_bot(gw_id) = (k > 0)      ? (gw_id - num_cells_2d) : gw_id;
+                    h_gw_top(gw_id) = (k < nz - 1) ? (gw_id + num_cells_2d) : gw_id;
 
-                // Loop layers (k=0 is bottom in map.c usually, check config. Here assuming k=0 is bottom)
-                for (int k = 0; k < nz; k++) {
-                    int global_idx = k * (nx * ny) + j * nx + i;
-
-                    // Calculate Geometry
-                    double cell_bot = botZ + k * col_dz;
-                    tmp_dz[global_idx] = col_dz;
-                    tmp_z[global_idx]  = cell_bot + 0.5 * col_dz;
-
-                    // Register Active Cell
-                    if (col_dz > 1e-6) {
-                        if (count < num_active_cells) {
-                            g2l[global_idx] = count;
-                            l2g[count] = global_idx;
-                            count++;
-                        }
+                    // Coupling Maps
+                    h_gw_to_sw(gw_id) = sw_id;
+                    if (k == nz - 1) {
+                        // This is the top layer
+                        h_sw_to_gw(sw_id) = gw_id;
                     }
                 }
             }
+            current_z_bottom += layer_thickness;
         }
 
-        // C. Build Connectivity (Packed)
-        for (int id = 0; id < num_active_cells; id++) {
-            int global = l2g[id];
-            
-            // Decode i, j, k
-            int k = global / (nx * ny);
-            int rem = global % (nx * ny);
-            int j = rem / nx;
-            int i = rem % nx;
+        // 4. Transfer to Device
+        Kokkos::deep_copy(sw_active, h_sw_active);
+        Kokkos::deep_copy(gw_active, h_gw_active);
+        
+        Kokkos::deep_copy(sw_ix, h_sw_ix);
+        Kokkos::deep_copy(sw_iy, h_sw_iy);
+        
+        Kokkos::deep_copy(gw_ix, h_gw_ix);
+        Kokkos::deep_copy(gw_iy, h_gw_iy);
+        Kokkos::deep_copy(gw_iz, h_gw_iz);
 
-            h_x(id)  = (i + 0.5) * dx;
-            h_y(id)  = (j + 0.5) * dy;
-            h_z(id)  = tmp_z[global];
-            h_dz(id) = tmp_dz[global];
-            h_vol(id)= dx * dy * h_dz(id);
-            h_couple(id) = -1; // Default
-            h_bnd(id) = 0;
+        Kokkos::deep_copy(sw_left, h_sw_left);
+        Kokkos::deep_copy(sw_right, h_sw_right);
+        Kokkos::deep_copy(sw_back, h_sw_back);
+        Kokkos::deep_copy(sw_front, h_sw_front);
 
-            // --- Horizontal Neighbors ---
-            h_neighbors(id, EAST)  = (i < nx - 1) ? g2l[global + 1] : -1;
-            h_neighbors(id, WEST)  = (i > 0)      ? g2l[global - 1] : -1;
-            h_neighbors(id, NORTH) = (j < ny - 1) ? g2l[global + nx] : -1;
-            h_neighbors(id, SOUTH) = (j > 0)      ? g2l[global - nx] : -1;
+        Kokkos::deep_copy(gw_left, h_gw_left);
+        Kokkos::deep_copy(gw_right, h_gw_right);
+        Kokkos::deep_copy(gw_back, h_gw_back);
+        Kokkos::deep_copy(gw_front, h_gw_front);
+        Kokkos::deep_copy(gw_bot, h_gw_bot);
+        Kokkos::deep_copy(gw_top, h_gw_top);
 
-            // --- Vertical Neighbors ---
-            // TOP (k+1)
-            if (k < nz - 1) {
-                h_neighbors(id, TOP) = g2l[global + (nx * ny)];
-            } else {
-                h_neighbors(id, TOP) = -1; 
-                h_bnd(id) = 1; // Mark as Top Boundary Cell (Coupling Interface)
-            }
-
-            // BOTTOM (k-1)
-            if (k > 0) {
-                h_neighbors(id, BOTTOM) = g2l[global - (nx * ny)];
-            } else {
-                h_neighbors(id, BOTTOM) = -1;
-            }
-        }
-
-        // D. Upload
-        Kokkos::deep_copy(neighbors, h_neighbors);
-        Kokkos::deep_copy(center_x, h_x);
-        Kokkos::deep_copy(center_y, h_y);
-        Kokkos::deep_copy(center_z, h_z);
         Kokkos::deep_copy(dz, h_dz);
-        Kokkos::deep_copy(volume, h_vol);
-        Kokkos::deep_copy(coupling_index, h_couple);
-        Kokkos::deep_copy(is_boundary, h_bnd);
-
-        std::cout << ">> Subsurface Mesh Initialized: " << num_active_cells << " active cells." << std::endl;
+        Kokkos::deep_copy(z_coords, h_z_coords);
+        Kokkos::deep_copy(sw_to_gw_idx, h_sw_to_gw);
+        Kokkos::deep_copy(gw_to_sw_idx, h_gw_to_sw);
     }
 };
 
-#endif // MESH_HPP
+#endif // FREHG_MESH_HPP
