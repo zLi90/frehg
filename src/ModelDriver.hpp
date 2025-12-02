@@ -158,7 +158,7 @@ public:
             // 3. Solve Shallow Water (if enabled)
             if (sim_shallowwater_ && initializer_) {
                 auto* solver = initializer_->get_sw_solver();
-                if (solver) solver->solve();
+                if (solver) solver->solve(current_time);
             }
             
             // 4. Solve Groundwater (if enabled)
@@ -170,12 +170,12 @@ public:
                 if (solver) {
                     if (sync_coupling_) {
                         // Synchronous coupling: same time step
-                        solver->solve();
+                        solver->solve(current_time);
                     } else {
                         // Asynchronous coupling: multiple groundwater steps per surface step
                         while (t_subsurface + dtg_ <= current_time) {
                             t_subsurface += dtg_;
-                            solver->solve();
+                            solver->solve(t_subsurface);
                             if (rank_ == 0) {
                                 std::cout << "   >>> Subsurface executed with dt = " << dtg_ << "\n";
                             }
@@ -200,7 +200,7 @@ public:
                     const auto& solvers = initializer_->get_sw_scalar_solvers();
                     for (size_t kk = 0; kk < solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
                         if (solvers[kk]) {
-                            solvers[kk]->solve();
+                            solvers[kk]->solve(current_time);
                         }
                     }
                 }
@@ -210,7 +210,7 @@ public:
                     const auto& solvers = initializer_->get_gw_scalar_solvers();
                     for (size_t kk = 0; kk < solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
                         if (solvers[kk]) {
-                            solvers[kk]->solve();
+                            solvers[kk]->solve(current_time);
                         }
                     }
                 }

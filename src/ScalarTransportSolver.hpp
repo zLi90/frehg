@@ -5,6 +5,8 @@
 #include "Domain.hpp"
 #include "StateVariables.hpp"
 #include "ActiveCellMesh.hpp"
+#include "BoundaryConditions.hpp"
+#include "SourceSinkTerms.hpp"
 #include <memory>
 #include <cmath>
 
@@ -116,19 +118,31 @@ public:
     Scalar diff_x;                            // Diffusion coefficient in x-direction
     Scalar diff_y;                            // Diffusion coefficient in y-direction
     
+    // --- Boundary Conditions ---
+    SwScalarBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
+    Ordinal scalar_index_;                          // Index of this scalar species
+    
+    // --- Source/Sink Terms ---
+    SwSourceSinkManager* source_sink_manager_;  // Pointer to source/sink manager
+    
     // Constructor
     SwScalarTransportSolver(SwDomain& _domain,
                            ActiveCellMesh& _active_mesh,
                            SwStateVariables& _state,
                            Scalar _dt,
+                           Ordinal _scalar_index = 0,
                            Scalar _diff_x = 0.0,
                            Scalar _diff_y = 0.0,
                            Scalar _s_lim_hi = 200.0,
                            Scalar _s_lim_lo = 0.0,
-                           bool _use_tvd = true)
+                           bool _use_tvd = true,
+                           SwScalarBoundaryConditionManager* _bc_manager = nullptr,
+                           SwSourceSinkManager* _source_sink_manager = nullptr)
         : BaseScalarTransportSolver(_dt, _s_lim_hi, _s_lim_lo, _use_tvd),
           domain(_domain), active_mesh(_active_mesh), state(_state),
-          diff_x(_diff_x), diff_y(_diff_y) {
+          diff_x(_diff_x), diff_y(_diff_y),
+          bc_manager_(_bc_manager), scalar_index_(_scalar_index),
+          source_sink_manager_(_source_sink_manager) {
         
         // Allocate scalar arrays
         scalar_concentration = View1D<Scalar>("scalar_concentration", domain.num_cells_total);
@@ -136,8 +150,18 @@ public:
         scalar_old = View1D<Scalar>("scalar_old", domain.num_cells_total);
     }
     
+    // Set boundary condition manager
+    void set_boundary_condition_manager(SwScalarBoundaryConditionManager* bc_manager) {
+        bc_manager_ = bc_manager;
+    }
+    
+    // Set source/sink manager
+    void set_source_sink_manager(SwSourceSinkManager* source_sink_manager) {
+        source_sink_manager_ = source_sink_manager;
+    }
+    
     // Main solver function
-    void solve() {
+    void solve(Scalar current_time = 0.0) {
         // Save old values
         Kokkos::deep_copy(scalar_old, scalar_concentration);
         
@@ -153,8 +177,120 @@ public:
         // Update concentration from mass
         update_concentration();
         
+        // Apply source/sink terms (dilution/concentration effects)
+        apply_source_sink_terms(current_time);
+        
+        // Apply source/sink terms (dilution/concentration effects)
+        apply_source_sink_terms(current_time);
+        
         // Apply limiters
         apply_scalar_limiters();
+        
+        // Enforce boundary conditions
+        enforce_boundary_conditions(current_time);
+    }
+    
+    // ========================================================================
+    // APPLY SOURCE/SINK TERMS (DILUTION/CONCENTRATION EFFECTS)
+    // ========================================================================
+    void apply_source_sink_terms(Scalar current_time) {
+        if (!source_sink_manager_) return;
+        
+        auto _scalar_concentration = scalar_concentration;
+        auto _scalar_mass = scalar_mass;
+        auto _volume = state.volume;
+        auto _volume_old = state.volume_old;
+        auto _area_top = state.area_top;
+        auto _depth = state.depth;
+        
+        const auto& ss_terms = source_sink_manager_->get_source_sink_terms();
+        
+        // Create host mirrors
+        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
+        auto h_scalar_mass = Kokkos::create_mirror_view(_scalar_mass);
+        auto h_volume = Kokkos::create_mirror_view(_volume);
+        auto h_volume_old = Kokkos::create_mirror_view(_volume_old);
+        auto h_area_top = Kokkos::create_mirror_view(_area_top);
+        auto h_depth = Kokkos::create_mirror_view(_depth);
+        
+        Kokkos::deep_copy(h_scalar, _scalar_concentration);
+        Kokkos::deep_copy(h_scalar_mass, _scalar_mass);
+        Kokkos::deep_copy(h_volume, _volume);
+        Kokkos::deep_copy(h_volume_old, _volume_old);
+        Kokkos::deep_copy(h_area_top, _area_top);
+        Kokkos::deep_copy(h_depth, _depth);
+        
+        // Apply each source/sink term
+        for (const auto& ss : ss_terms) {
+            Scalar ss_value = ss.get_value(current_time);
+            
+            for (Ordinal cell_idx : ss.cell_indices) {
+                if (h_depth(cell_idx) <= 0.0) continue;  // Skip dry cells
+                
+                Scalar cell_area = h_area_top(cell_idx);
+                if (cell_area <= 0.0) cell_area = domain.dx * domain.dy;
+                
+                Scalar V_old = h_volume_old(cell_idx);
+                Scalar V_new = h_volume(cell_idx);
+                
+                if (ss.type == SourceSinkType::VOLUME_FLUX) {
+                    // Volume flux: adds/removes water, affects concentration through dilution/concentration
+                    Scalar volume_change = ss_value * dt;
+                    Scalar V_after_ss = V_new + volume_change;
+                    
+                    if (V_after_ss > 0.0) {
+                        if (ss.has_scalar_concentration && volume_change > 0.0) {
+                            // Source with concentration: add scalar mass
+                            Scalar mass_added = ss.scalar_concentration * volume_change;
+                            h_scalar_mass(cell_idx) += mass_added;
+                            // Update concentration from new mass and volume
+                            h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_after_ss;
+                        } else {
+                            // Sink or source without concentration: dilution/concentration effect
+                            // s_new = s_old * V_old / V_after_ss
+                            // This conserves mass if no scalar is added
+                            if (V_old > 0.0) {
+                                h_scalar(cell_idx) = h_scalar(cell_idx) * V_old / V_after_ss;
+                            }
+                        }
+                    }
+                    
+                } else if (ss.type == SourceSinkType::DEPTH_RATE) {
+                    // Depth rate: convert to volume change
+                    Scalar depth_change = ss_value * dt;
+                    Scalar volume_change = depth_change * cell_area;
+                    Scalar V_after_ss = V_new + volume_change;
+                    
+                    if (V_after_ss > 0.0) {
+                        if (ss.has_scalar_concentration && volume_change > 0.0) {
+                            // Source with concentration
+                            Scalar mass_added = ss.scalar_concentration * volume_change;
+                            h_scalar_mass(cell_idx) += mass_added;
+                            h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_after_ss;
+                        } else {
+                            // Dilution/concentration
+                            if (V_old > 0.0) {
+                                h_scalar(cell_idx) = h_scalar(cell_idx) * V_old / V_after_ss;
+                            }
+                        }
+                    }
+                    
+                } else if (ss.type == SourceSinkType::MASS_FLUX) {
+                    // Mass flux: directly add scalar mass
+                    Scalar mass_added = ss_value * dt;
+                    h_scalar_mass(cell_idx) += mass_added;
+                    
+                    // Update concentration from new mass
+                    if (V_new > 0.0) {
+                        h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_new;
+                    }
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_scalar_concentration, h_scalar);
+        Kokkos::deep_copy(_scalar_mass, h_scalar_mass);
     }
     
 private:
@@ -560,11 +696,16 @@ public:
     Scalar disp_longitudinal;      // Longitudinal dispersivity
     Scalar disp_transverse;         // Transverse dispersivity
     
+    // --- Boundary Conditions ---
+    GwScalarBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
+    Ordinal scalar_index_;                          // Index of this scalar species
+    
     // Constructor
     GwScalarTransportSolver(GwDomain& _domain,
                            ActiveCellMesh& _active_mesh,
                            GwStateVariables& _state,
                            Scalar _dt,
+                           Ordinal _scalar_index = 0,
                            Scalar _diff_x = 0.0,
                            Scalar _diff_y = 0.0,
                            Scalar _diff_z = 0.0,
@@ -572,14 +713,16 @@ public:
                            Scalar _disp_transverse = 0.0,
                            Scalar _s_lim_hi = 200.0,
                            Scalar _s_lim_lo = 0.0,
-                           bool _use_tvd = true)
+                           bool _use_tvd = true,
+                           GwScalarBoundaryConditionManager* _bc_manager = nullptr)
         : BaseScalarTransportSolver(_dt, _s_lim_hi, _s_lim_lo, _use_tvd),
           domain(_domain), active_mesh(_active_mesh), state(_state),
           diff_x(_diff_x), diff_y(_diff_y), diff_z(_diff_z),
-          disp_longitudinal(_disp_longitudinal), disp_transverse(_disp_transverse) {
+          disp_longitudinal(_disp_longitudinal), disp_transverse(_disp_transverse),
+          bc_manager_(_bc_manager), scalar_index_(_scalar_index) {
         
         // Allocate scalar arrays
-        Ordinal num_cells_3d = domain.num_cells_total * domain.nz;
+        Ordinal num_cells_3d = domain.num_cells_3d_total;
         scalar_concentration = View1D<Scalar>("scalar_concentration", num_cells_3d);
         scalar_mass = View1D<Scalar>("scalar_mass", num_cells_3d);
         scalar_old = View1D<Scalar>("scalar_old", num_cells_3d);
@@ -596,8 +739,13 @@ public:
         Dzz = View1D<Scalar>("Dzz", num_cells_3d);
     }
     
+    // Set boundary condition manager
+    void set_boundary_condition_manager(GwScalarBoundaryConditionManager* bc_manager) {
+        bc_manager_ = bc_manager;
+    }
+    
     // Main solver function
-    void solve() {
+    void solve(Scalar current_time = 0.0) {
         // Save old values
         Kokkos::deep_copy(scalar_old, scalar_concentration);
         
@@ -618,6 +766,44 @@ public:
         
         // Apply limiters (to be implemented later)
         // apply_scalar_limiters();
+        
+        // Enforce boundary conditions
+        enforce_boundary_conditions(current_time);
+    }
+    
+    // ========================================================================
+    // ENFORCE BOUNDARY CONDITIONS
+    // ========================================================================
+    void enforce_boundary_conditions(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _scalar_concentration = scalar_concentration;
+        const auto& bcs = bc_manager_->get_boundary_conditions(scalar_index_);
+        
+        // Create host mirrors
+        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
+        Kokkos::deep_copy(h_scalar, _scalar_concentration);
+        
+        // Apply each boundary condition
+        for (const auto& bc : bcs) {
+            Scalar bc_value = bc.get_value(current_time);
+            
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.type == ScalarBcType::PRESCRIBED_CONCENTRATION) {
+                    // Dirichlet BC: prescribed concentration
+                    h_scalar(cell_idx) = bc_value;
+                    
+                } else if (bc.type == ScalarBcType::CAUCHY) {
+                    // Cauchy BC: mixed boundary condition for interface exchange
+                    // For now, treat as prescribed concentration
+                    // Full implementation would modify flux terms based on exchange coefficient
+                    h_scalar(cell_idx) = bc_value;
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_scalar_concentration, h_scalar);
     }
     
 private:

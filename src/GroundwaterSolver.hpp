@@ -6,6 +6,7 @@
 #include "StateVariables.hpp"
 #include "ActiveCellMesh.hpp"
 #include "PCGSolver.hpp"
+#include "BoundaryConditions.hpp"
 #include <memory>
 #include <cmath>
 
@@ -42,6 +43,9 @@ public:
     // --- Solution Vector (active cells only) ---
     View1D<Scalar> solution;    // Solution vector for PCG (h_new in active space)
     
+    // --- Boundary Conditions ---
+    GwBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
+    
     // Constructor
     GroundwaterSolver(GwDomain& _domain,
                       ActiveCellMesh& _active_mesh,
@@ -54,13 +58,15 @@ public:
                       bool _baroclinic = false,
                       PreconditionerType _precond_type = PreconditionerType::JACOBI,
                       Scalar _solver_tolerance = 1e-8,
-                      Ordinal _max_solver_iterations = 10000)
+                      Ordinal _max_solver_iterations = 10000,
+                      GwBoundaryConditionManager* _bc_manager = nullptr)
         : domain(_domain), active_mesh(_active_mesh), state(_state),
           dt(_dt), Ss(_Ss), min_depth(_min_depth),
           use_corrector(_use_corrector), follow_terrain(_follow_terrain),
           baroclinic(_baroclinic),
           precond_type(_precond_type), solver_tolerance(_solver_tolerance),
-          max_solver_iterations(_max_solver_iterations) {
+          max_solver_iterations(_max_solver_iterations),
+          bc_manager_(_bc_manager) {
         
         // Initialize PCG solver
         pcg_solver = std::make_unique<PCGSolver3D>(
@@ -69,11 +75,16 @@ public:
         // Allocate solution vector for active cells
         solution = View1D<Scalar>("solution", active_mesh.num_active);
     }
+    
+    // Set boundary condition manager
+    void set_boundary_condition_manager(GwBoundaryConditionManager* bc_manager) {
+        bc_manager_ = bc_manager;
+    }
 
     // Main solver function (predictor-corrector scheme)
-    void solve() {
+    void solve(Scalar current_time = 0.0) {
         // Save old values
-        state.update_old_values(domain.num_cells_total * domain.nz);
+        state.update_old_values(domain.num_cells_3d_total);
         
         // Compute water content from head and specific moisture capacity
         compute_water_content_from_head();
@@ -91,11 +102,14 @@ public:
         // 3. Assemble linear system
         assemble_linear_system();
         
-        // 4. Solve for new head using PCG
+        // 4. Apply boundary conditions to matrix
+        apply_boundary_conditions_to_matrix(current_time);
+        
+        // 5. Solve for new head using PCG
         solve_linear_system();
         
-        // 5. Enforce boundary conditions
-        enforce_boundary_conditions();
+        // 6. Enforce boundary conditions on solution
+        enforce_boundary_conditions_on_solution(current_time);
         
         // >>> CORRECTOR STEP <<<
         if (use_corrector) {
@@ -635,11 +649,99 @@ private:
     }
     
     // ========================================================================
-    // ENFORCE BOUNDARY CONDITIONS
+    // APPLY BOUNDARY CONDITIONS TO MATRIX
     // ========================================================================
-    void enforce_boundary_conditions() {
-        // Boundary conditions will be implemented later
-        // For now, this is a placeholder
+    void apply_boundary_conditions_to_matrix(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _matrix_diag = state.matrix_diag;
+        auto _matrix_xp = state.matrix_xp;
+        auto _matrix_xm = state.matrix_xm;
+        auto _matrix_yp = state.matrix_yp;
+        auto _matrix_ym = state.matrix_ym;
+        auto _matrix_zp = state.matrix_zp;
+        auto _matrix_zm = state.matrix_zm;
+        auto _matrix_rhs = state.matrix_rhs;
+        
+        const auto& bcs = bc_manager_->get_boundary_conditions();
+        
+        // Create host mirrors for boundary condition application
+        auto h_matrix_diag = Kokkos::create_mirror_view(_matrix_diag);
+        auto h_matrix_xp = Kokkos::create_mirror_view(_matrix_xp);
+        auto h_matrix_xm = Kokkos::create_mirror_view(_matrix_xm);
+        auto h_matrix_yp = Kokkos::create_mirror_view(_matrix_yp);
+        auto h_matrix_ym = Kokkos::create_mirror_view(_matrix_ym);
+        auto h_matrix_zp = Kokkos::create_mirror_view(_matrix_zp);
+        auto h_matrix_zm = Kokkos::create_mirror_view(_matrix_zm);
+        auto h_matrix_rhs = Kokkos::create_mirror_view(_matrix_rhs);
+        
+        Kokkos::deep_copy(h_matrix_diag, _matrix_diag);
+        Kokkos::deep_copy(h_matrix_xp, _matrix_xp);
+        Kokkos::deep_copy(h_matrix_xm, _matrix_xm);
+        Kokkos::deep_copy(h_matrix_yp, _matrix_yp);
+        Kokkos::deep_copy(h_matrix_ym, _matrix_ym);
+        Kokkos::deep_copy(h_matrix_zp, _matrix_zp);
+        Kokkos::deep_copy(h_matrix_zm, _matrix_zm);
+        Kokkos::deep_copy(h_matrix_rhs, _matrix_rhs);
+        
+        // Apply each boundary condition
+        for (const auto& bc : bcs) {
+            Scalar bc_value = bc.get_value(current_time);
+            
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.type == GwBcType::FIXED_HEAD) {
+                    // Dirichlet BC: prescribed hydraulic head
+                    h_matrix_diag(cell_idx) = 1.0;
+                    h_matrix_xp(cell_idx) = 0.0;
+                    h_matrix_xm(cell_idx) = 0.0;
+                    h_matrix_yp(cell_idx) = 0.0;
+                    h_matrix_ym(cell_idx) = 0.0;
+                    h_matrix_zp(cell_idx) = 0.0;
+                    h_matrix_zm(cell_idx) = 0.0;
+                    h_matrix_rhs(cell_idx) = bc_value;
+                    
+                } else if (bc.type == GwBcType::FIXED_FLUX) {
+                    // Neumann BC: prescribed flux (add to RHS)
+                    Scalar flux_volume = bc_value * dt;
+                    h_matrix_rhs(cell_idx) += flux_volume;
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_matrix_diag, h_matrix_diag);
+        Kokkos::deep_copy(_matrix_xp, h_matrix_xp);
+        Kokkos::deep_copy(_matrix_xm, h_matrix_xm);
+        Kokkos::deep_copy(_matrix_yp, h_matrix_yp);
+        Kokkos::deep_copy(_matrix_ym, h_matrix_ym);
+        Kokkos::deep_copy(_matrix_zp, h_matrix_zp);
+        Kokkos::deep_copy(_matrix_zm, h_matrix_zm);
+        Kokkos::deep_copy(_matrix_rhs, h_matrix_rhs);
+    }
+    
+    // ========================================================================
+    // ENFORCE BOUNDARY CONDITIONS ON SOLUTION
+    // ========================================================================
+    void enforce_boundary_conditions_on_solution(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _pressure = state.pressure;
+        const auto& bcs = bc_manager_->get_boundary_conditions();
+        
+        auto h_pressure = Kokkos::create_mirror_view(_pressure);
+        Kokkos::deep_copy(h_pressure, _pressure);
+        
+        for (const auto& bc : bcs) {
+            Scalar bc_value = bc.get_value(current_time);
+            
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.type == GwBcType::FIXED_HEAD) {
+                    h_pressure(cell_idx) = bc_value;
+                }
+            }
+        }
+        
+        Kokkos::deep_copy(_pressure, h_pressure);
     }
     
     // ========================================================================

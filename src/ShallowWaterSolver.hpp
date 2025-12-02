@@ -6,6 +6,8 @@
 #include "StateVariables.hpp"
 #include "ActiveCellMesh.hpp"
 #include "PCGSolver.hpp"
+#include "BoundaryConditions.hpp"
+#include "SourceSinkTerms.hpp"
 #include <memory>
 #include <cmath>
 
@@ -42,6 +44,12 @@ public:
     // --- Solution Vector (active cells only) ---
     View1D<Scalar> solution;    // Solution vector for PCG (eta_new in active space)
     
+    // --- Boundary Conditions ---
+    SwBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
+    
+    // --- Source/Sink Terms ---
+    SwSourceSinkManager* source_sink_manager_;  // Pointer to source/sink manager
+    
     // Constructor
     ShallowWaterSolver(SwDomain& _domain,
                       ActiveCellMesh& _active_mesh,
@@ -55,7 +63,9 @@ public:
                       Scalar _water_threshold = 0.01,
                       PreconditionerType _precond = PreconditionerType::JACOBI,
                       Scalar _solver_tol = 1.0e-8,
-                      Ordinal _max_iter = 10000)
+                      Ordinal _max_iter = 10000,
+                      SwBoundaryConditionManager* _bc_manager = nullptr,
+                      SwSourceSinkManager* _source_sink_manager = nullptr)
         : domain(_domain),
           active_mesh(_active_mesh),
           state(_state),
@@ -68,7 +78,9 @@ public:
           water_threshold(_water_threshold),
           precond_type(_precond),
           solver_tolerance(_solver_tol),
-          max_solver_iterations(_max_iter) {
+          max_solver_iterations(_max_iter),
+          bc_manager_(_bc_manager),
+          source_sink_manager_(_source_sink_manager) {
         
         // Create PCG solver
         pcg_solver = std::make_unique<PCGSolver2D>(
@@ -78,24 +90,34 @@ public:
         solution = View1D<Scalar>("solution", active_mesh.num_active);
     }
     
+    // Set boundary condition manager
+    void set_boundary_condition_manager(SwBoundaryConditionManager* bc_manager) {
+        bc_manager_ = bc_manager;
+    }
+    
+    // Set source/sink manager
+    void set_source_sink_manager(SwSourceSinkManager* source_sink_manager) {
+        source_sink_manager_ = source_sink_manager;
+    }
+    
     // ========================================================================
     // MAIN SOLVER: Solve for surface elevation (eta)
     // ========================================================================
-    void solve() {
+    void solve(Scalar current_time = 0.0) {
         // Step 1: Save old values
         state.update_old_values();
         
-        // Step 2: Enforce boundary conditions (assumed available)
-        // enforce_boundary_conditions();
-        
-        // Step 3: Compute momentum source terms (Ex, Ey, Dx, Dy)
+        // Step 2: Compute momentum source terms (Ex, Ey, Dx, Dy)
         compute_momentum_source();
         
-        // Step 4: Compute matrix RHS
+        // Step 3: Compute matrix RHS
         compute_rhs();
         
-        // Step 5: Compute matrix coefficients
+        // Step 4: Compute matrix coefficients
         compute_matrix_coefficients();
+        
+        // Step 5: Apply boundary conditions to matrix
+        apply_boundary_conditions_to_matrix(current_time);
         
         // Step 6: Solve linear system
         solve_linear_system();
@@ -103,14 +125,14 @@ public:
         // Step 7: Map solution back to domain
         map_solution_to_domain();
         
-        // Step 8: Enforce boundary conditions again
-        // enforce_boundary_conditions();
+        // Step 8: Enforce boundary conditions on solution
+        enforce_boundary_conditions_on_solution(current_time);
         
         // Step 9: CFL limiter
         apply_cfl_limiter();
         
-        // Step 10: Evaporation/Rainfall (assumed available)
-        // apply_evaporation_rainfall();
+        // Step 10: Apply source/sink terms
+        apply_source_sink_terms(current_time);
         
         // Step 11: Update depth
         update_depth();
@@ -442,9 +464,200 @@ private:
                     _matrix_rhs(domain_idx) = _pressure(domain_idx) * domain.dx * domain.dy;
                 }
                 
-                // Boundary conditions would modify coefficients here
-                // (assumed handled by boundary condition functions)
             });
+    }
+    
+    // ========================================================================
+    // APPLY BOUNDARY CONDITIONS TO MATRIX
+    // ========================================================================
+    void apply_boundary_conditions_to_matrix(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _matrix_diag = state.matrix_diag;
+        auto _matrix_xp = state.matrix_xp;
+        auto _matrix_xm = state.matrix_xm;
+        auto _matrix_yp = state.matrix_yp;
+        auto _matrix_ym = state.matrix_ym;
+        auto _matrix_rhs = state.matrix_rhs;
+        auto _bottom = state.bottom;
+        
+        const auto& bcs = bc_manager_->get_boundary_conditions();
+        
+        // Create host mirrors for boundary condition application
+        auto h_matrix_diag = Kokkos::create_mirror_view(_matrix_diag);
+        auto h_matrix_xp = Kokkos::create_mirror_view(_matrix_xp);
+        auto h_matrix_xm = Kokkos::create_mirror_view(_matrix_xm);
+        auto h_matrix_yp = Kokkos::create_mirror_view(_matrix_yp);
+        auto h_matrix_ym = Kokkos::create_mirror_view(_matrix_ym);
+        auto h_matrix_rhs = Kokkos::create_mirror_view(_matrix_rhs);
+        auto h_bottom = Kokkos::create_mirror_view(_bottom);
+        
+        Kokkos::deep_copy(h_matrix_diag, _matrix_diag);
+        Kokkos::deep_copy(h_matrix_xp, _matrix_xp);
+        Kokkos::deep_copy(h_matrix_xm, _matrix_xm);
+        Kokkos::deep_copy(h_matrix_yp, _matrix_yp);
+        Kokkos::deep_copy(h_matrix_ym, _matrix_ym);
+        Kokkos::deep_copy(h_matrix_rhs, _matrix_rhs);
+        Kokkos::deep_copy(h_bottom, _bottom);
+        
+        // Apply each boundary condition
+        for (const auto& bc : bcs) {
+            Scalar bc_value = bc.get_value(current_time);
+            
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
+                    // Dirichlet BC: prescribed surface elevation
+                    // Set diagonal = 1.0, off-diagonals = 0.0, RHS = BC value
+                    h_matrix_diag(cell_idx) = 1.0;
+                    h_matrix_xp(cell_idx) = 0.0;
+                    h_matrix_xm(cell_idx) = 0.0;
+                    h_matrix_yp(cell_idx) = 0.0;
+                    h_matrix_ym(cell_idx) = 0.0;
+                    h_matrix_rhs(cell_idx) = bc_value;
+                    
+                } else if (bc.type == SwBcType::WATER_DEPTH) {
+                    // Dirichlet BC: prescribed water depth
+                    // Convert depth to surface elevation: eta = bottom + depth
+                    Scalar eta_value = h_bottom(cell_idx) + bc_value;
+                    h_matrix_diag(cell_idx) = 1.0;
+                    h_matrix_xp(cell_idx) = 0.0;
+                    h_matrix_xm(cell_idx) = 0.0;
+                    h_matrix_yp(cell_idx) = 0.0;
+                    h_matrix_ym(cell_idx) = 0.0;
+                    h_matrix_rhs(cell_idx) = eta_value;
+                    
+                } else if (bc.type == SwBcType::FLOW_RATE) {
+                    // Flow rate BC: add to RHS as source term
+                    // Flow rate is discharge per unit width, convert to volume flux
+                    // For now, treat as a source term in the RHS
+                    // This is a simplified treatment - full implementation would
+                    // modify flux terms at boundaries
+                    Scalar source_flux = bc_value * dt;  // Volume added per time step
+                    h_matrix_rhs(cell_idx) += source_flux;
+                    
+                } else if (bc.type == SwBcType::FREE_OUTFLOW) {
+                    // Free outflow: zero gradient (Neumann BC)
+                    // Remove boundary connection by zeroing off-diagonal coefficients
+                    // This allows free flow out of the domain
+                    // The diagonal remains unchanged, allowing natural outflow
+                    // For cells at domain edge, we zero the appropriate off-diagonal
+                    // For now, we'll keep the matrix as-is and let natural outflow occur
+                    // This could be refined to explicitly set gradient = 0
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_matrix_diag, h_matrix_diag);
+        Kokkos::deep_copy(_matrix_xp, h_matrix_xp);
+        Kokkos::deep_copy(_matrix_xm, h_matrix_xm);
+        Kokkos::deep_copy(_matrix_yp, h_matrix_yp);
+        Kokkos::deep_copy(_matrix_ym, h_matrix_ym);
+        Kokkos::deep_copy(_matrix_rhs, h_matrix_rhs);
+    }
+    
+    // ========================================================================
+    // ENFORCE BOUNDARY CONDITIONS ON SOLUTION
+    // ========================================================================
+    void enforce_boundary_conditions_on_solution(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _pressure = state.pressure;
+        auto _bottom = state.bottom;
+        
+        const auto& bcs = bc_manager_->get_boundary_conditions();
+        
+        // Create host mirrors
+        auto h_pressure = Kokkos::create_mirror_view(_pressure);
+        auto h_bottom = Kokkos::create_mirror_view(_bottom);
+        
+        Kokkos::deep_copy(h_pressure, _pressure);
+        Kokkos::deep_copy(h_bottom, _bottom);
+        
+        // Apply each boundary condition
+        for (const auto& bc : bcs) {
+            Scalar bc_value = bc.get_value(current_time);
+            
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
+                    // Enforce prescribed surface elevation
+                    h_pressure(cell_idx) = bc_value;
+                    
+                } else if (bc.type == SwBcType::WATER_DEPTH) {
+                    // Enforce prescribed water depth
+                    h_pressure(cell_idx) = h_bottom(cell_idx) + bc_value;
+                    
+                } else if (bc.type == SwBcType::FLOW_RATE) {
+                    // Flow rate BC is handled in matrix, but ensure solution is valid
+                    // (no additional enforcement needed here)
+                    
+                } else if (bc.type == SwBcType::FREE_OUTFLOW) {
+                    // Free outflow: ensure solution is valid (no negative depth)
+                    if (h_pressure(cell_idx) < h_bottom(cell_idx)) {
+                        h_pressure(cell_idx) = h_bottom(cell_idx);
+                    }
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_pressure, h_pressure);
+    }
+    
+    // ========================================================================
+    // APPLY SOURCE/SINK TERMS
+    // ========================================================================
+    void apply_source_sink_terms(Scalar current_time) {
+        if (!source_sink_manager_) return;
+        
+        auto _pressure = state.pressure;
+        auto _bottom = state.bottom;
+        auto _area_top = state.area_top;
+        
+        const auto& ss_terms = source_sink_manager_->get_source_sink_terms();
+        
+        // Create host mirrors
+        auto h_pressure = Kokkos::create_mirror_view(_pressure);
+        auto h_bottom = Kokkos::create_mirror_view(_bottom);
+        auto h_area_top = Kokkos::create_mirror_view(_area_top);
+        
+        Kokkos::deep_copy(h_pressure, _pressure);
+        Kokkos::deep_copy(h_bottom, _bottom);
+        Kokkos::deep_copy(h_area_top, _area_top);
+        
+        // Apply each source/sink term
+        for (const auto& ss : ss_terms) {
+            Scalar ss_value = ss.get_value(current_time);
+            
+            for (Ordinal cell_idx : ss.cell_indices) {
+                Scalar cell_area = h_area_top(cell_idx);
+                if (cell_area <= 0.0) cell_area = domain.dx * domain.dy;
+                
+                if (ss.type == SourceSinkType::VOLUME_FLUX) {
+                    // Volume flux (m³/s): add/remove volume, convert to depth change
+                    Scalar volume_change = ss_value * dt;
+                    Scalar depth_change = volume_change / cell_area;
+                    h_pressure(cell_idx) += depth_change;
+                    
+                } else if (ss.type == SourceSinkType::DEPTH_RATE) {
+                    // Depth rate (m/s): directly add/remove depth
+                    Scalar depth_change = ss_value * dt;
+                    h_pressure(cell_idx) += depth_change;
+                    
+                } else if (ss.type == SourceSinkType::MASS_FLUX) {
+                    // Mass flux: for scalar transport only, not applied here
+                    // This will be handled in scalar transport solver
+                }
+                
+                // Ensure eta >= bottom
+                if (h_pressure(cell_idx) < h_bottom(cell_idx)) {
+                    h_pressure(cell_idx) = h_bottom(cell_idx);
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_pressure, h_pressure);
     }
     
     // ========================================================================

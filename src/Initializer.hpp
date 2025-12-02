@@ -9,6 +9,8 @@
 #include "ShallowWaterSolver.hpp"
 #include "GroundwaterSolver.hpp"
 #include "ScalarTransportSolver.hpp"
+#include "BoundaryConditions.hpp"
+#include "SourceSinkTerms.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -90,6 +92,11 @@ private:
     std::unique_ptr<GroundwaterSolver> gw_solver_;
     std::vector<std::unique_ptr<SwScalarTransportSolver>> sw_scalar_solvers_;
     std::vector<std::unique_ptr<GwScalarTransportSolver>> gw_scalar_solvers_;
+    std::unique_ptr<SwBoundaryConditionManager> sw_bc_manager_;
+    std::unique_ptr<GwBoundaryConditionManager> gw_bc_manager_;
+    std::unique_ptr<SwScalarBoundaryConditionManager> sw_scalar_bc_manager_;
+    std::unique_ptr<GwScalarBoundaryConditionManager> gw_scalar_bc_manager_;
+    std::unique_ptr<SwSourceSinkManager> sw_source_sink_manager_;
 
 public:
     // ========================================================================
@@ -273,21 +280,358 @@ public:
             sw_state_ = std::make_unique<SwStateVariables>(
                 sw_domain_->num_cells_total);
             
-            // TODO: Set initial conditions from input file
-            // - Initial surface elevation (eta)
-            // - Initial velocities (u, v)
+            // Copy bathymetry to state
+            auto h_bottom = Kokkos::create_mirror_view(sw_state_->bottom);
+            auto h_bath = Kokkos::create_mirror_view(sw_domain_->bathymetry);
+            Kokkos::deep_copy(h_bath, sw_domain_->bathymetry);
+            Kokkos::deep_copy(h_bottom, h_bath);
+            Kokkos::deep_copy(sw_state_->bottom, h_bottom);
+            
+            // Initialize surface water state variables
+            initialize_sw_state();
         }
         
         if (config_.sim_groundwater && gw_domain_) {
             gw_state_ = std::make_unique<GwStateVariables>(
                 gw_domain_->num_cells_3d_total);
             
-            // TODO: Set initial conditions from input file
-            // - Initial head (h)
-            // - Initial water content (wc)
-            // - Hydraulic conductivity (Ksx, Ksy, Ksz)
-            // - Soil properties (wcs, wcr, Ss, etc.)
+            // Initialize groundwater state variables
+            initialize_gw_state();
         }
+    }
+    
+private:
+    // ========================================================================
+    // INITIALIZE SURFACE WATER STATE VARIABLES
+    // ========================================================================
+    void initialize_sw_state() {
+        // Create host mirrors for initialization
+        auto h_pressure = Kokkos::create_mirror_view(sw_state_->pressure);
+        auto h_velocity_x = Kokkos::create_mirror_view(sw_state_->velocity_x);
+        auto h_velocity_y = Kokkos::create_mirror_view(sw_state_->velocity_y);
+        auto h_bottom = Kokkos::create_mirror_view(sw_state_->bottom);
+        auto h_active = Kokkos::create_mirror_view(sw_domain_->active_mask);
+        
+        Kokkos::deep_copy(h_bottom, sw_state_->bottom);
+        Kokkos::deep_copy(h_active, sw_domain_->active_mask);
+        
+        // Read initial condition type for surface elevation
+        std::string ic_eta_type = input_reader_->read_string("ic_eta_type", "constant");
+        std::vector<Scalar> eta_data;
+        
+        if (ic_eta_type == "constant") {
+            // Constant initial surface elevation
+            Scalar init_eta = input_reader_->read_double("init_eta", 0.0);
+            eta_data.resize(sw_domain_->num_cells_total, init_eta);
+        } else if (ic_eta_type == "file") {
+            // Read from file
+            std::string eta_filename = input_reader_->read_string("ic_eta_file", "");
+            if (eta_filename.empty()) {
+                eta_filename = config_.finput + "/surf_ic.asc";
+            }
+            StructuredGrid eta_grid = read_structured_data(eta_filename);
+            
+            // Validate dimensions
+            if (eta_grid.ncols != sw_domain_->nx || eta_grid.nrows != sw_domain_->ny) {
+                throw std::runtime_error("Initial surface elevation file dimensions (" +
+                                       std::to_string(eta_grid.ncols) + "x" + 
+                                       std::to_string(eta_grid.nrows) + 
+                                       ") do not match domain dimensions (" +
+                                       std::to_string(sw_domain_->nx) + "x" +
+                                       std::to_string(sw_domain_->ny) + ")");
+            }
+            eta_data = eta_grid.data;
+        } else {
+            throw std::runtime_error("Unknown ic_eta_type: " + ic_eta_type + 
+                                   " (must be 'constant' or 'file')");
+        }
+        
+        // Read initial condition type for water depth (alternative to eta)
+        std::string ic_depth_type = input_reader_->read_string("ic_depth_type", "none");
+        if (ic_depth_type != "none") {
+            std::vector<Scalar> depth_data;
+            
+            if (ic_depth_type == "constant") {
+                Scalar init_depth = input_reader_->read_double("init_depth", 0.0);
+                depth_data.resize(sw_domain_->num_cells_total, init_depth);
+            } else if (ic_depth_type == "file") {
+                std::string depth_filename = input_reader_->read_string("ic_depth_file", "");
+                if (depth_filename.empty()) {
+                    depth_filename = config_.finput + "/depth_ic.asc";
+                }
+                StructuredGrid depth_grid = read_structured_data(depth_filename);
+                
+                if (depth_grid.ncols != sw_domain_->nx || 
+                    depth_grid.nrows != sw_domain_->ny) {
+                    throw std::runtime_error("Initial depth file dimensions do not match domain");
+                }
+                depth_data = depth_grid.data;
+            }
+            
+            // Convert depth to surface elevation (eta = bottom + depth)
+            for (Ordinal i = 0; i < sw_domain_->num_cells_total; ++i) {
+                if (h_active(i) > 0) {
+                    eta_data[i] = h_bottom(i) + depth_data[i];
+                }
+            }
+        }
+        
+        // Read initial velocities
+        std::string ic_uv_type = input_reader_->read_string("ic_uv_type", "constant");
+        std::vector<Scalar> u_data, v_data;
+        
+        if (ic_uv_type == "constant") {
+            Scalar init_u = input_reader_->read_double("init_u", 0.0);
+            Scalar init_v = input_reader_->read_double("init_v", 0.0);
+            u_data.resize(sw_domain_->num_cells_total, init_u);
+            v_data.resize(sw_domain_->num_cells_total, init_v);
+        } else if (ic_uv_type == "file") {
+            std::string u_filename = input_reader_->read_string("ic_u_file", "");
+            std::string v_filename = input_reader_->read_string("ic_v_file", "");
+            if (u_filename.empty()) u_filename = config_.finput + "/uu_ic.asc";
+            if (v_filename.empty()) v_filename = config_.finput + "/vv_ic.asc";
+            
+            StructuredGrid u_grid = read_structured_data(u_filename);
+            StructuredGrid v_grid = read_structured_data(v_filename);
+            
+            if (u_grid.ncols != sw_domain_->nx || u_grid.nrows != sw_domain_->ny ||
+                v_grid.ncols != sw_domain_->nx || v_grid.nrows != sw_domain_->ny) {
+                throw std::runtime_error("Initial velocity file dimensions do not match domain");
+            }
+            u_data = u_grid.data;
+            v_data = v_grid.data;
+        } else {
+            throw std::runtime_error("Unknown ic_uv_type: " + ic_uv_type);
+        }
+        
+        // Assign values to state variables
+        for (Ordinal i = 0; i < sw_domain_->num_cells_total; ++i) {
+            if (h_active(i) > 0) {
+                // Ensure eta >= bottom
+                h_pressure(i) = std::max(eta_data[i], h_bottom(i));
+                h_velocity_x(i) = u_data[i];
+                h_velocity_y(i) = v_data[i];
+            } else {
+                h_pressure(i) = h_bottom(i);
+                h_velocity_x(i) = 0.0;
+                h_velocity_y(i) = 0.0;
+            }
+        }
+        
+        // Copy to device
+        Kokkos::deep_copy(sw_state_->pressure, h_pressure);
+        Kokkos::deep_copy(sw_state_->velocity_x, h_velocity_x);
+        Kokkos::deep_copy(sw_state_->velocity_y, h_velocity_y);
+        Kokkos::deep_copy(sw_state_->pressure_old, h_pressure);
+        Kokkos::deep_copy(sw_state_->velocity_x_old, h_velocity_x);
+        Kokkos::deep_copy(sw_state_->velocity_y_old, h_velocity_y);
+    }
+    
+    // ========================================================================
+    // INITIALIZE GROUNDWATER STATE VARIABLES
+    // ========================================================================
+    void initialize_gw_state() {
+        // Create host mirrors
+        auto h_pressure = Kokkos::create_mirror_view(gw_state_->pressure);
+        auto h_water_content = Kokkos::create_mirror_view(gw_state_->water_content);
+        auto h_active_3d = Kokkos::create_mirror_view(gw_domain_->active_mask_3d);
+        auto h_layer_bottoms = Kokkos::create_mirror_view(gw_domain_->layer_bottoms);
+        auto h_layer_thickness = Kokkos::create_mirror_view(gw_domain_->layer_thickness);
+        
+        Kokkos::deep_copy(h_active_3d, gw_domain_->active_mask_3d);
+        Kokkos::deep_copy(h_layer_bottoms, gw_domain_->layer_bottoms);
+        Kokkos::deep_copy(h_layer_thickness, gw_domain_->layer_thickness);
+        
+        // Create bathymetry mirror only if surface domain exists
+        View1D<Scalar> h_bath;
+        if (sw_domain_) {
+            h_bath = Kokkos::create_mirror_view(sw_domain_->bathymetry);
+            Kokkos::deep_copy(h_bath, sw_domain_->bathymetry);
+        }
+        
+        // Initialize all cells to zero first
+        for (Ordinal i = 0; i < gw_domain_->num_cells_3d_total; ++i) {
+            h_pressure(i) = 0.0;
+            h_water_content(i) = 0.0;
+        }
+        
+        // Read initial condition type for groundwater head
+        std::string ic_h_type = input_reader_->read_string("ic_h_type", "constant");
+        std::vector<Scalar> h_data;
+        bool h_from_file = false;
+        
+        if (ic_h_type == "constant") {
+            Scalar init_h = input_reader_->read_double("init_h", 0.0);
+            h_data.resize(gw_domain_->num_cells_3d_total, init_h);
+        } else if (ic_h_type == "file") {
+            std::string h_filename = input_reader_->read_string("ic_h_file", "");
+            if (h_filename.empty()) {
+                h_filename = config_.finput + "/head_ic.asc";
+            }
+            // Note: For 3D, we might need a different format or multiple files
+            // For now, assume a 2D file that applies to all layers
+            StructuredGrid h_grid = read_structured_data(h_filename);
+            if (h_grid.ncols != gw_domain_->nx || h_grid.nrows != gw_domain_->ny) {
+                throw std::runtime_error("Initial head file dimensions do not match domain");
+            }
+            // Expand 2D to 3D (same value for all layers at each (i,j))
+            h_data.resize(gw_domain_->num_cells_3d_total);
+            for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                    for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                        Ordinal idx_2d = i + j * gw_domain_->nx;
+                        Ordinal idx_3d = i + j * gw_domain_->nx + k * gw_domain_->nx * gw_domain_->ny;
+                        h_data[idx_3d] = h_grid.data[idx_2d];
+                    }
+                }
+            }
+            h_from_file = true;
+        } else if (ic_h_type == "water_table") {
+            // Initialize from water table elevation
+            std::string ic_wt_type = input_reader_->read_string("ic_wt_type", "constant");
+            h_data.resize(gw_domain_->num_cells_3d_total);
+            
+            if (ic_wt_type == "constant") {
+                Scalar init_wt = input_reader_->read_double("init_wt", 0.0);
+                bool wt_relative = input_reader_->read_bool("init_wt_relative", false);
+                
+                if (wt_relative && sw_domain_) {
+                    // Water table relative to surface (bathymetry)
+                    for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                        for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                            Ordinal sw_idx = i + j * gw_domain_->nx;
+                            Scalar surface_elev = h_bath(sw_idx);
+                            Scalar wt_elev = surface_elev - init_wt;
+                            
+                            // Assign to all layers
+                            for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                                Ordinal gw_idx = i + j * gw_domain_->nx + 
+                                               k * gw_domain_->nx * gw_domain_->ny;
+                                Scalar cell_bottom = h_layer_bottoms(k);
+                                Scalar cell_thickness = h_layer_thickness(k);
+                                Scalar cell_center = cell_bottom + 0.5 * cell_thickness;
+                                
+                                // Compute head assuming hydrostatic: h = wt_elev - cell_center
+                                h_data[gw_idx] = wt_elev - cell_center;
+                            }
+                        }
+                    }
+                } else {
+                    // Fixed water table elevation
+                    for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                        for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                            for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                                Ordinal gw_idx = i + j * gw_domain_->nx + 
+                                               k * gw_domain_->nx * gw_domain_->ny;
+                                Scalar cell_bottom = h_layer_bottoms(k);
+                                Scalar cell_thickness = h_layer_thickness(k);
+                                Scalar cell_center = cell_bottom + 0.5 * cell_thickness;
+                                h_data[gw_idx] = init_wt - cell_center;
+                            }
+                        }
+                    }
+                }
+            } else if (ic_wt_type == "file") {
+                std::string wt_filename = input_reader_->read_string("ic_wt_file", "");
+                if (wt_filename.empty()) {
+                    wt_filename = config_.finput + "/wt_ic.asc";
+                }
+                StructuredGrid wt_grid = read_structured_data(wt_filename);
+                if (wt_grid.ncols != gw_domain_->nx || wt_grid.nrows != gw_domain_->ny) {
+                    throw std::runtime_error("Initial water table file dimensions do not match domain");
+                }
+                
+                // Convert water table elevation to head for each cell
+                for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                    for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                        for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                            Ordinal idx_2d = i + j * gw_domain_->nx;
+                            Ordinal idx_3d = i + j * gw_domain_->nx + 
+                                          k * gw_domain_->nx * gw_domain_->ny;
+                            Scalar wt_elev = wt_grid.data[idx_2d];
+                            Scalar cell_bottom = h_layer_bottoms(k);
+                            Scalar cell_thickness = h_layer_thickness(k);
+                            Scalar cell_center = cell_bottom + 0.5 * cell_thickness;
+                            h_data[idx_3d] = wt_elev - cell_center;
+                        }
+                    }
+                }
+            } else {
+                throw std::runtime_error("Unknown ic_wt_type: " + ic_wt_type);
+            }
+        } else {
+            throw std::runtime_error("Unknown ic_h_type: " + ic_h_type);
+        }
+        
+        // Read initial condition type for water content
+        std::string ic_wc_type = input_reader_->read_string("ic_wc_type", "from_head");
+        std::vector<Scalar> wc_data;
+        bool wc_from_file = false;
+        
+        if (ic_wc_type == "constant") {
+            Scalar init_wc = input_reader_->read_double("init_wc", 0.0);
+            wc_data.resize(gw_domain_->num_cells_3d_total, init_wc);
+            wc_from_file = true;
+        } else if (ic_wc_type == "file") {
+            std::string wc_filename = input_reader_->read_string("ic_wc_file", "");
+            if (wc_filename.empty()) {
+                wc_filename = config_.finput + "/moisture_ic.asc";
+            }
+            StructuredGrid wc_grid = read_structured_data(wc_filename);
+            if (wc_grid.ncols != gw_domain_->nx || wc_grid.nrows != gw_domain_->ny) {
+                throw std::runtime_error("Initial water content file dimensions do not match domain");
+            }
+            // Expand 2D to 3D
+            wc_data.resize(gw_domain_->num_cells_3d_total);
+            for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                    for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                        Ordinal idx_2d = i + j * gw_domain_->nx;
+                        Ordinal idx_3d = i + j * gw_domain_->nx + 
+                                       k * gw_domain_->nx * gw_domain_->ny;
+                        wc_data[idx_3d] = wc_grid.data[idx_2d];
+                    }
+                }
+            }
+            wc_from_file = true;
+        } else if (ic_wc_type == "from_head") {
+            // Will compute from head after head is set
+            wc_from_file = false;
+        } else {
+            throw std::runtime_error("Unknown ic_wc_type: " + ic_wc_type);
+        }
+        
+        // Assign head values to active cells
+        for (Ordinal i = 0; i < gw_domain_->num_cells_3d_total; ++i) {
+            if (h_active_3d(i) > 0) {
+                h_pressure(i) = h_data[i];
+            }
+        }
+        
+        // Assign water content values
+        if (wc_from_file) {
+            for (Ordinal i = 0; i < gw_domain_->num_cells_3d_total; ++i) {
+                if (h_active_3d(i) > 0) {
+                    h_water_content(i) = wc_data[i];
+                }
+            }
+        } else {
+            // TODO: Compute water content from head using soil properties
+            // For now, set to a default value
+            // This will be implemented when soil property functions are available
+            Scalar default_wc = input_reader_->read_double("init_wc_default", 0.1);
+            for (Ordinal i = 0; i < gw_domain_->num_cells_3d_total; ++i) {
+                if (h_active_3d(i) > 0) {
+                    h_water_content(i) = default_wc;
+                }
+            }
+        }
+        
+        // Copy to device
+        Kokkos::deep_copy(gw_state_->pressure, h_pressure);
+        Kokkos::deep_copy(gw_state_->water_content, h_water_content);
+        Kokkos::deep_copy(gw_state_->pressure_old, h_pressure);
+        Kokkos::deep_copy(gw_state_->water_content_old, h_water_content);
     }
     
     // ========================================================================
@@ -321,7 +665,9 @@ public:
             
             sw_solver_ = std::make_unique<ShallowWaterSolver>(
                 *sw_domain_, *sw_active_mesh_, *sw_state_,
-                config_.dt, grav, manning_n, visc_x, visc_y);
+                config_.dt, grav, manning_n, visc_x, visc_y,
+                PreconditionerType::JACOBI, 1.0e-8, 10000,
+                sw_bc_manager_.get(), sw_source_sink_manager_.get());
         }
         
         // Create groundwater solver
@@ -334,7 +680,9 @@ public:
             
             gw_solver_ = std::make_unique<GroundwaterSolver>(
                 *gw_domain_, *gw_active_mesh_, *gw_state_,
-                config_.dt, Ss, 1.0e-6, use_corrector, follow_terrain, baroclinic);
+                config_.dt, Ss, 1.0e-6, use_corrector, follow_terrain, baroclinic,
+                PreconditionerType::JACOBI, 1.0e-8, 10000,
+                gw_bc_manager_.get());
         }
         
         // Create scalar transport solvers
@@ -349,7 +697,8 @@ public:
                     sw_scalar_solvers_.push_back(
                         std::make_unique<SwScalarTransportSolver>(
                             *sw_domain_, *sw_active_mesh_, *sw_state_,
-                            config_.dt, diff_x, diff_y, 200.0, 0.0, config_.superbee));
+                            config_.dt, kk, diff_x, diff_y, 200.0, 0.0, config_.superbee,
+                            sw_scalar_bc_manager_.get(), sw_source_sink_manager_.get()));
                 }
             }
             
@@ -366,9 +715,44 @@ public:
                     gw_scalar_solvers_.push_back(
                         std::make_unique<GwScalarTransportSolver>(
                             *gw_domain_, *gw_active_mesh_, *gw_state_,
-                            config_.dt, diff_x, diff_y, diff_z,
-                            disp_long, disp_trans, 200.0, 0.0, config_.superbee));
+                            config_.dt, kk, diff_x, diff_y, diff_z,
+                            disp_long, disp_trans, 200.0, 0.0, config_.superbee,
+                            gw_scalar_bc_manager_.get()));
                 }
+            }
+        }
+    }
+    
+    // ========================================================================
+    // INITIALIZE BOUNDARY CONDITIONS
+    // ========================================================================
+    void initialize_boundary_conditions() {
+        if (config_.sim_shallowwater && sw_domain_) {
+            sw_bc_manager_ = std::make_unique<SwBoundaryConditionManager>(sw_domain_.get());
+            sw_bc_manager_->read_from_input(input_reader_.get(), config_.finput);
+            
+            // Initialize source/sink terms
+            sw_source_sink_manager_ = std::make_unique<SwSourceSinkManager>(sw_domain_.get());
+            sw_source_sink_manager_->read_from_input(input_reader_.get(), config_.finput);
+        }
+        
+        if (config_.sim_groundwater && gw_domain_) {
+            gw_bc_manager_ = std::make_unique<GwBoundaryConditionManager>(gw_domain_.get());
+            gw_bc_manager_->read_from_input(input_reader_.get(), config_.finput);
+        }
+        
+        // Initialize scalar transport boundary conditions
+        if (config_.n_scalar > 0) {
+            if (config_.sim_shallowwater && sw_domain_) {
+                sw_scalar_bc_manager_ = std::make_unique<SwScalarBoundaryConditionManager>(
+                    sw_domain_.get(), config_.n_scalar);
+                sw_scalar_bc_manager_->read_from_input(input_reader_.get(), config_.finput);
+            }
+            
+            if (config_.sim_groundwater && gw_domain_) {
+                gw_scalar_bc_manager_ = std::make_unique<GwScalarBoundaryConditionManager>(
+                    gw_domain_.get(), config_.n_scalar);
+                gw_scalar_bc_manager_->read_from_input(input_reader_.get(), config_.finput);
             }
         }
     }
@@ -390,7 +774,10 @@ public:
         // Step 4: Build active cell meshes
         build_active_meshes();
         
-        // Step 5: Create solvers
+        // Step 5: Initialize boundary conditions
+        initialize_boundary_conditions();
+        
+        // Step 6: Create solvers
         create_solvers();
     }
     
@@ -418,6 +805,12 @@ public:
     const std::vector<std::unique_ptr<GwScalarTransportSolver>>& get_gw_scalar_solvers() const {
         return gw_scalar_solvers_;
     }
+    
+    SwBoundaryConditionManager* get_sw_bc_manager() { return sw_bc_manager_.get(); }
+    GwBoundaryConditionManager* get_gw_bc_manager() { return gw_bc_manager_.get(); }
+    SwScalarBoundaryConditionManager* get_sw_scalar_bc_manager() { return sw_scalar_bc_manager_.get(); }
+    GwScalarBoundaryConditionManager* get_gw_scalar_bc_manager() { return gw_scalar_bc_manager_.get(); }
+    SwSourceSinkManager* get_sw_source_sink_manager() { return sw_source_sink_manager_.get(); }
 };
 
 } // namespace Frehg
