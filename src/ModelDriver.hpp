@@ -9,6 +9,7 @@
 #include "GroundwaterSolver.hpp"
 #include "ScalarTransportSolver.hpp"
 #include "Initializer.hpp"
+#include "OutputWriter.hpp"
 #include <mpi.h>
 #include <Kokkos_Core.hpp> // Required for Kokkos::Timer
 #include <string>
@@ -48,6 +49,9 @@ private:
     
     // --- Initializer ---
     std::unique_ptr<Initializer> initializer_;
+    
+    // --- Output Writer ---
+    std::unique_ptr<OutputWriter> output_writer_;
 
 public:
     // ========================================================================
@@ -93,7 +97,42 @@ public:
         dt_out_ = config.dt_out;
         output_interval_ = static_cast<int>(config.dt_out / config.dt);
         
-        // Objects are owned by initializer_, accessed via getters
+        // Create OutputWriter
+        output_writer_ = std::make_unique<OutputWriter>(
+            output_dir_,
+            dt_out_,
+            initializer_->get_sw_domain(),
+            initializer_->get_gw_domain(),
+            initializer_->get_sw_state(),
+            initializer_->get_gw_state(),
+            initializer_->get_sw_active_mesh(),
+            initializer_->get_gw_active_mesh()
+        );
+        
+        // Set scalar solvers if available
+        if (n_scalar_ > 0) {
+            std::vector<SwScalarTransportSolver*> sw_scalars;
+            std::vector<GwScalarTransportSolver*> gw_scalars;
+            
+            if (sim_shallowwater_) {
+                const auto& sw_solvers = initializer_->get_sw_scalar_solvers();
+                for (const auto& solver : sw_solvers) {
+                    sw_scalars.push_back(solver.get());
+                }
+            }
+            
+            if (sim_groundwater_) {
+                const auto& gw_solvers = initializer_->get_gw_scalar_solvers();
+                for (const auto& solver : gw_solvers) {
+                    gw_scalars.push_back(solver.get());
+                }
+            }
+            
+            output_writer_->set_scalar_solvers(sw_scalars, gw_scalars);
+        }
+        
+        // Initialize OutputWriter
+        output_writer_->initialize(dt_, n_scalar_);
         
         if (rank_ == 0) {
             std::cout << "[Driver] Initialization complete.\n" << std::endl;
@@ -116,7 +155,6 @@ public:
         // Initialize time stepping variables
         Scalar current_time = 0.0;
         Scalar t_subsurface = 0.0;  // Subsurface time (for async coupling)
-        Scalar last_save = 0.0;
         int step = 0;
         
         // Set groundwater time step
@@ -130,7 +168,10 @@ public:
         if (rank_ == 0) {
             std::cout << "[Driver] Writing initial conditions...\n";
         }
-        // TODO: write_output(0, current_time);
+        if (output_writer_) {
+            output_writer_->write_spatial_fields(current_time, step);
+            output_writer_->write_time_series(current_time, step);
+        }
         
         if (rank_ == 0) {
             std::cout << "[Driver] Beginning time loop...\n";
@@ -149,22 +190,21 @@ public:
                          << "s / " << end_time_ << "s\r" << std::flush;
             }
             
-            // 1. Get boundary conditions at current time
-            // TODO: get_current_bc(current_time);
+            // Note: Boundary conditions and source/sink terms are automatically
+            // handled by the solvers when solve(current_time) is called.
+            // The solvers access their respective BC managers and source/sink managers
+            // which were set up during initialization.
             
-            // 2. Get evaporation/rainfall at current time
-            // TODO: get_evaprain(current_time);
-            
-            // 3. Solve Shallow Water (if enabled)
+            // 1. Solve Shallow Water (if enabled)
             if (sim_shallowwater_ && initializer_) {
                 auto* solver = initializer_->get_sw_solver();
                 if (solver) solver->solve(current_time);
             }
             
-            // 4. Solve Groundwater (if enabled)
+            // 2. Solve Groundwater (if enabled)
             if (sim_groundwater_ && initializer_) {
-                // Compute seepage rate for top boundary (if coupling)
-                // TODO: compute_seepage_rate();
+                // Note: Seepage rate computation is handled within the solvers
+                // during the coupling process
                 
                 auto* solver = initializer_->get_gw_solver();
                 if (solver) {
@@ -184,16 +224,13 @@ public:
                 }
             }
             
-            // 5. Update Shallow Water Velocity (after both solvers)
+            // 3. Update Shallow Water Velocity (after both solvers)
             if (sim_shallowwater_ && initializer_) {
                 auto* solver = initializer_->get_sw_solver();
                 if (solver) solver->update_velocity();
             }
             
-            // 6. Check CFL number (for surface water)
-            // TODO: check_cfl();
-            
-            // 7. Solve Scalar Transport (if enabled)
+            // 4. Solve Scalar Transport (if enabled)
             if (n_scalar_ > 0 && initializer_) {
                 // Surface water scalar transport
                 if (sim_shallowwater_) {
@@ -216,20 +253,18 @@ public:
                 }
             }
             
-            // 8. Reset rainfall (if needed)
-            // TODO: reset_rainfall();
-            
-            // 9. Write output at specified intervals
-            if (std::abs(current_time - last_save - dt_out_) <= dt_) {
-                int t_save = static_cast<int>(std::round(current_time / dt_out_)) * static_cast<int>(dt_out_);
-                last_save = t_save;
-                // TODO: write_output(step, current_time);
+            // 5. Write output at specified intervals
+            if (output_writer_) {
+                // Write spatial fields if it's time
+                if (output_writer_->should_write_spatial(current_time, step)) {
+                    output_writer_->write_spatial_fields(current_time, step);
+                }
+                
+                // Write time-series data every step (continuous monitoring)
+                output_writer_->write_time_series(current_time, step);
             }
             
-            // 10. Write monitored variables
-            // TODO: write_monitor_output(step, current_time);
-            
-            // 11. Report time step completion
+            // 6. Report time step completion
             if (rank_ == 0 && step % 100 == 0) {
                 std::cout << "\n[Driver] Step " << step << " (" << current_time 
                          << "s of " << end_time_ << "s) completed, dt = " << dt_ << "\n";
@@ -249,59 +284,9 @@ public:
     }
     
 private:
-    // ========================================================================
-    // Helper Functions (Placeholders for future implementation)
-    // ========================================================================
-    
-    // Get boundary conditions at current time
-    void get_current_bc(Scalar t_current) {
-        // TODO: Implement boundary condition interpolation
-        // - Wind conditions
-        // - Tidal boundary conditions
-        // - Inflow boundary conditions
-        // - Scalar boundary conditions
-    }
-    
-    // Get evaporation/rainfall at current time
-    void get_evaprain(Scalar t_current) {
-        // TODO: Implement evaporation/rainfall update
-        // - Interpolate from time series
-        // - Compute aerodynamic evaporation if needed
-        // - Update qtop for groundwater
-    }
-    
-    // Compute seepage rate for surface-subsurface coupling
-    void compute_seepage_rate() {
-        // TODO: Compute seepage flux at top boundary
-        // if (sim_shallowwater_ && sim_groundwater_) {
-        //     // Compute rss based on surface elevation change
-        // }
-    }
-    
-    // Check CFL number
-    void check_cfl() {
-        // TODO: Compute and check CFL numbers
-        // - Get max CFL from surface water solver
-        // - Optionally adjust time step if CFL > 1.0
-    }
-    
-    // Write output files
-    void write_output(int step, Scalar time) {
-        // TODO: Write output files
-        // - Surface water fields (eta, depth, velocity, scalar)
-        // - Groundwater fields (head, water content, scalar)
-        // - Use output_dir_ for file paths
-    }
-    
-    // Write monitored variables
-    void write_monitor_output(int step, Scalar time) {
-        // TODO: Write time series for monitored locations
-    }
-    
-    // Reset rainfall
-    void reset_rainfall() {
-        // TODO: Reset rainfall accumulation if needed
-    }
+    // Note: Boundary conditions, source/sink terms, and output writing are now
+    // handled automatically by the solvers and OutputWriter classes.
+    // No additional helper functions are needed here.
 };
 
 } // namespace Frehg
