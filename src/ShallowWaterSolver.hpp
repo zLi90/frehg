@@ -715,6 +715,65 @@ private:
     }
     
     // ========================================================================
+    // APPLY SEEPAGE TO SURFACE ELEVATION
+    // ========================================================================
+    // Applies seepage/infiltration from subsurface to surface water
+    // This should be called after groundwater solver computes seepage_rate
+    void apply_seepage() {
+        auto _pressure = state.pressure;
+        auto _bottom = state.bottom;
+        auto _depth = state.depth;
+        auto _seepage_rate = state.seepage_rate;
+        auto _reset_seepage = state.reset_seepage;
+        
+        Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                Scalar qss = _seepage_rate(i);
+                Scalar diff = _pressure(i) - _bottom(i);
+                
+                // Infiltration (qss < 0): water goes from surface to subsurface
+                if (qss < 0.0) {
+                    _pressure(i) += qss * dt;
+                    _reset_seepage(i) = 1;
+                    // Ensure pressure doesn't go below bottom
+                    if (_pressure(i) < _bottom(i)) {
+                        _pressure(i) = _bottom(i);
+                    }
+                }
+                // Seepage (qss > 0): water comes from subsurface to surface
+                else if (qss > 0.0) {
+                    // If surface is dry (depth <= min_depth)
+                    if (diff <= min_depth) {
+                        // Only apply if seepage is significant enough
+                        if (qss * dt > min_depth) {
+                            _pressure(i) += qss * dt;
+                            _reset_seepage(i) = 1;
+                        } else {
+                            _reset_seepage(i) = 0;
+                        }
+                    } else {
+                        // Surface is wet: always apply seepage
+                        _pressure(i) += qss * dt;
+                        _reset_seepage(i) = 1;
+                    }
+                }
+                // No seepage (qss == 0): do nothing
+                
+                // Update depth
+                Scalar new_depth = _pressure(i) - _bottom(i);
+                if (new_depth < 0.0) {
+                    _pressure(i) = _bottom(i);
+                    _depth(i) = 0.0;
+                } else if (new_depth < min_depth) {
+                    _pressure(i) = _bottom(i);
+                    _depth(i) = 0.0;
+                } else {
+                    _depth(i) = new_depth;
+                }
+            });
+    }
+    
+    // ========================================================================
     // UPDATE DEPTH
     // ========================================================================
     void update_depth() {

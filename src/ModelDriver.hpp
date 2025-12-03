@@ -203,10 +203,11 @@ public:
             
             // 2. Solve Groundwater (if enabled)
             if (sim_groundwater_ && initializer_) {
-                // Note: Seepage rate computation is handled within the solvers
-                // during the coupling process
-                
                 auto* solver = initializer_->get_gw_solver();
+                auto* sw_solver = (sim_shallowwater_) ? initializer_->get_sw_solver() : nullptr;
+                auto* sw_state = (sim_shallowwater_) ? initializer_->get_sw_state() : nullptr;
+                auto* sw_domain = (sim_shallowwater_) ? initializer_->get_sw_domain() : nullptr;
+                
                 if (solver) {
                     if (sync_coupling_) {
                         // Synchronous coupling: same time step
@@ -221,33 +222,70 @@ public:
                             }
                         }
                     }
+                    
+                    // Compute seepage flux from groundwater to surface
+                    if (sw_solver && sw_state && sw_domain) {
+                        solver->compute_seepage_flux(*sw_state, *sw_domain);
+                    }
                 }
             }
             
-            // 3. Update Shallow Water Velocity (after both solvers)
+            // 3. Apply seepage to surface water (if both domains are active)
+            if (sim_shallowwater_ && sim_groundwater_ && initializer_) {
+                auto* solver = initializer_->get_sw_solver();
+                if (solver) {
+                    solver->apply_seepage();
+                }
+            }
+            
+            // 4. Update Shallow Water Velocity (after both solvers)
             if (sim_shallowwater_ && initializer_) {
                 auto* solver = initializer_->get_sw_solver();
                 if (solver) solver->update_velocity();
             }
             
-            // 4. Solve Scalar Transport (if enabled)
+            // 5. Solve Scalar Transport (if enabled)
             if (n_scalar_ > 0 && initializer_) {
                 // Surface water scalar transport
                 if (sim_shallowwater_) {
-                    const auto& solvers = initializer_->get_sw_scalar_solvers();
-                    for (size_t kk = 0; kk < solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
-                        if (solvers[kk]) {
-                            solvers[kk]->solve(current_time);
+                    const auto& sw_solvers = initializer_->get_sw_scalar_solvers();
+                    const auto& gw_solvers = initializer_->get_gw_scalar_solvers();
+                    auto* gw_state = (sim_groundwater_) ? initializer_->get_gw_state() : nullptr;
+                    auto* gw_domain = (sim_groundwater_) ? initializer_->get_gw_domain() : nullptr;
+                    auto* sw_state = initializer_->get_sw_state();
+                    auto* sw_domain = initializer_->get_sw_domain();
+                    
+                    for (size_t kk = 0; kk < sw_solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
+                        if (sw_solvers[kk]) {
+                            sw_solvers[kk]->solve(current_time);
+                            
+                            // Exchange scalar with subsurface
+                            if (sim_groundwater_ && gw_state && gw_domain && 
+                                kk < gw_solvers.size() && gw_solvers[kk]) {
+                                sw_solvers[kk]->exchange_scalar_with_subsurface(
+                                    gw_solvers[kk].get(), *gw_state, *gw_domain);
+                            }
                         }
                     }
                 }
                 
                 // Groundwater scalar transport
                 if (sim_groundwater_) {
-                    const auto& solvers = initializer_->get_gw_scalar_solvers();
-                    for (size_t kk = 0; kk < solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
-                        if (solvers[kk]) {
-                            solvers[kk]->solve(current_time);
+                    const auto& gw_solvers = initializer_->get_gw_scalar_solvers();
+                    const auto& sw_solvers = initializer_->get_sw_scalar_solvers();
+                    auto* sw_state = (sim_shallowwater_) ? initializer_->get_sw_state() : nullptr;
+                    auto* sw_domain = (sim_shallowwater_) ? initializer_->get_sw_domain() : nullptr;
+                    
+                    for (size_t kk = 0; kk < gw_solvers.size() && kk < static_cast<size_t>(n_scalar_); ++kk) {
+                        if (gw_solvers[kk]) {
+                            gw_solvers[kk]->solve(current_time);
+                            
+                            // Exchange scalar with surface
+                            if (sim_shallowwater_ && sw_state && sw_domain &&
+                                kk < sw_solvers.size() && sw_solvers[kk]) {
+                                gw_solvers[kk]->exchange_scalar_with_surface(
+                                    sw_solvers[kk].get(), *sw_state, *sw_domain);
+                            }
                         }
                     }
                 }

@@ -183,11 +183,118 @@ public:
         // Apply source/sink terms (dilution/concentration effects)
         apply_source_sink_terms(current_time);
         
+        // Exchange scalar with subsurface (if coupled)
+        // This will be called from ModelDriver after groundwater solve
+        
         // Apply limiters
         apply_scalar_limiters();
         
         // Enforce boundary conditions
         enforce_boundary_conditions(current_time);
+    }
+    
+    // ========================================================================
+    // EXCHANGE SCALAR WITH SUBSURFACE
+    // ========================================================================
+    // Exchanges scalar mass between surface and subsurface during seepage
+    // gw_scalar_solver: Groundwater scalar transport solver
+    // gw_state: Groundwater state variables (for accessing subsurface scalar)
+    void exchange_scalar_with_subsurface(GwScalarTransportSolver* gw_scalar_solver,
+                                        const GwStateVariables& gw_state,
+                                        const GwDomain& gw_domain) {
+        if (!gw_scalar_solver) return;
+        
+        auto _scalar_concentration = scalar_concentration;
+        auto _scalar_mass = scalar_mass;
+        auto _seepage_rate = state.seepage_rate;
+        auto _depth = state.depth;
+        auto _area_top = state.area_top;
+        
+        // Get subsurface scalar concentration
+        auto _gw_scalar_concentration = gw_scalar_solver->scalar_concentration;
+        auto _gw_scalar_mass = gw_scalar_solver->scalar_mass;
+        
+        // Mesh coupling maps
+        auto _gw_to_sw = gw_domain.mesh->gw_to_sw_idx;
+        auto _sw_to_gw = domain.mesh->sw_to_gw_idx;
+        
+        // Create host mirrors
+        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
+        auto h_scalar_mass = Kokkos::create_mirror_view(_scalar_mass);
+        auto h_seepage_rate = Kokkos::create_mirror_view(_seepage_rate);
+        auto h_depth = Kokkos::create_mirror_view(_depth);
+        auto h_area_top = Kokkos::create_mirror_view(_area_top);
+        auto h_gw_scalar = Kokkos::create_mirror_view(_gw_scalar_concentration);
+        auto h_gw_scalar_mass = Kokkos::create_mirror_view(_gw_scalar_mass);
+        auto h_gw_to_sw = Kokkos::create_mirror_view(_gw_to_sw);
+        auto h_sw_to_gw = Kokkos::create_mirror_view(_sw_to_gw);
+        
+        Kokkos::deep_copy(h_scalar, _scalar_concentration);
+        Kokkos::deep_copy(h_scalar_mass, _scalar_mass);
+        Kokkos::deep_copy(h_seepage_rate, _seepage_rate);
+        Kokkos::deep_copy(h_depth, _depth);
+        Kokkos::deep_copy(h_area_top, _area_top);
+        Kokkos::deep_copy(h_gw_scalar, _gw_scalar_concentration);
+        Kokkos::deep_copy(h_gw_scalar_mass, _gw_scalar_mass);
+        Kokkos::deep_copy(h_gw_to_sw, _gw_to_sw);
+        Kokkos::deep_copy(h_sw_to_gw, _sw_to_gw);
+        
+        // Get diffusion coefficient (Dzz) - need to get from domain or state
+        // For now, use a default value or get from gw_state if available
+        Scalar Dzz = 0.0; // Will need to be passed as parameter or stored in state
+        
+        // Process each surface cell
+        for (Ordinal sw_idx = 0; sw_idx < domain.num_cells_total; ++sw_idx) {
+            if (domain.active_mask(sw_idx) == 0) continue;
+            
+            Scalar qss = h_seepage_rate(sw_idx);
+            Scalar dept = h_depth(sw_idx);
+            Scalar Aini = domain.dx * domain.dy;
+            if (h_area_top(sw_idx) > 0.0) {
+                Aini = h_area_top(sw_idx);
+            }
+            
+            // Get corresponding subsurface top cell
+            Ordinal gw_top_idx = h_sw_to_gw(sw_idx);
+            if (gw_top_idx < 0 || gw_top_idx >= gw_domain.num_cells_3d_total) continue;
+            
+            // Get subsurface scalar concentration at top cell
+            Scalar s_surfkP = h_gw_scalar(gw_top_idx); // Subsurface scalar at top
+            Scalar s_surf = h_scalar(sw_idx); // Surface scalar
+            
+            Scalar sseepage = 0.0;
+            
+            // Seepage (qss > 0): water comes from subsurface to surface
+            if (qss > 0.0) {
+                // Scalar doesn't leave subsurface if surface is dry
+                if (dept > 0.0) {
+                    // Advective + diffusive flux
+                    // sseepage = qss * s_surfkP + (2*Dzz/dz) * (s_surfkP - s_surf)
+                    // For now, simplified: sseepage = qss * s_surfkP
+                    // Full implementation would include diffusive term
+                    sseepage = qss * s_surfkP;
+                    // TODO: Add diffusive term when Dzz is available
+                    // Scalar dz = ...; // Get layer thickness
+                    // sseepage = qss * s_surfkP + (2.0 * Dzz / dz) * (s_surfkP - s_surf);
+                } else {
+                    sseepage = 0.0;
+                }
+            }
+            // Infiltration (qss < 0): water goes from surface to subsurface
+            else if (qss < 0.0) {
+                // Advective + diffusive flux
+                sseepage = qss * s_surf;
+                // TODO: Add diffusive term when Dzz is available
+                // sseepage = qss * s_surf + (2.0 * Dzz / dz) * (s_surfkP - s_surf);
+            }
+            // No exchange (qss == 0)
+            
+            // Update surface scalar mass
+            h_scalar_mass(sw_idx) += sseepage * Aini * dt;
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_scalar_mass, h_scalar_mass);
     }
     
     // ========================================================================
@@ -764,11 +871,128 @@ public:
         // Update concentration from mass
         update_concentration();
         
+        // Exchange scalar with surface (if coupled)
+        // This will be called from ModelDriver after surface solve
+        
         // Apply limiters (to be implemented later)
         // apply_scalar_limiters();
         
         // Enforce boundary conditions
         enforce_boundary_conditions(current_time);
+    }
+    
+    // ========================================================================
+    // EXCHANGE SCALAR WITH SURFACE
+    // ========================================================================
+    // Removes scalar mass from subsurface when it seeps to surface
+    // sw_scalar_solver: Surface water scalar transport solver
+    // sw_state: Surface water state variables (for accessing seepage rate)
+    void exchange_scalar_with_surface(SwScalarTransportSolver* sw_scalar_solver,
+                                     const SwStateVariables& sw_state,
+                                     const SwDomain& sw_domain) {
+        if (!sw_scalar_solver) return;
+        
+        auto _scalar_concentration = scalar_concentration;
+        auto _scalar_mass = scalar_mass;
+        auto _volume = state.volume;
+        
+        // Get surface seepage rate and scalar
+        auto _sw_seepage_rate = sw_state.seepage_rate;
+        auto _sw_scalar_concentration = sw_scalar_solver->scalar_concentration;
+        auto _sw_depth = sw_state.depth;
+        auto _sw_area_top = sw_state.area_top;
+        
+        // Mesh coupling maps
+        auto _gw_to_sw = domain.mesh->gw_to_sw_idx;
+        auto _sw_to_gw = sw_domain.mesh->sw_to_gw_idx;
+        
+        // Create host mirrors
+        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
+        auto h_scalar_mass = Kokkos::create_mirror_view(_scalar_mass);
+        auto h_volume = Kokkos::create_mirror_view(_volume);
+        auto h_sw_seepage_rate = Kokkos::create_mirror_view(_sw_seepage_rate);
+        auto h_sw_scalar = Kokkos::create_mirror_view(_sw_scalar_concentration);
+        auto h_sw_depth = Kokkos::create_mirror_view(_sw_depth);
+        auto h_sw_area_top = Kokkos::create_mirror_view(_sw_area_top);
+        auto h_gw_to_sw = Kokkos::create_mirror_view(_gw_to_sw);
+        
+        Kokkos::deep_copy(h_scalar, _scalar_concentration);
+        Kokkos::deep_copy(h_scalar_mass, _scalar_mass);
+        Kokkos::deep_copy(h_volume, _volume);
+        Kokkos::deep_copy(h_sw_seepage_rate, _sw_seepage_rate);
+        Kokkos::deep_copy(h_sw_scalar, _sw_scalar_concentration);
+        Kokkos::deep_copy(h_sw_depth, _sw_depth);
+        Kokkos::deep_copy(h_sw_area_top, _sw_area_top);
+        Kokkos::deep_copy(h_gw_to_sw, _gw_to_sw);
+        
+        // Get diffusion coefficient (Dzz) - need to get from domain or state
+        Scalar Dzz = 0.0; // Will need to be passed as parameter or stored in state
+        
+        // Get active mesh views
+        auto h_active_to_domain = Kokkos::create_mirror_view(active_mesh.active_to_domain);
+        auto h_coord_k = Kokkos::create_mirror_view(active_mesh.coord_k);
+        auto h_neighbor_top = Kokkos::create_mirror_view(active_mesh.neighbor_top);
+        Kokkos::deep_copy(h_active_to_domain, active_mesh.active_to_domain);
+        Kokkos::deep_copy(h_coord_k, active_mesh.coord_k);
+        Kokkos::deep_copy(h_neighbor_top, active_mesh.neighbor_top);
+        
+        // Process each active groundwater cell
+        for (Ordinal i = 0; i < active_mesh.num_active; ++i) {
+            Ordinal domain_idx = h_active_to_domain(i);
+            if (domain.active_mask_3d(domain_idx) == 0) continue;
+            
+            // Check if this is a top cell
+            Ordinal k = h_coord_k(i);
+            Ordinal active_top = h_neighbor_top(i);
+            bool is_top_cell = (active_top < 0) || (k == domain.nz - 1);
+            
+            if (is_top_cell) {
+                // Get corresponding surface cell
+                Ordinal sw_idx = h_gw_to_sw(domain_idx);
+                if (sw_idx < 0 || sw_idx >= sw_domain.num_cells_total) continue;
+                
+                Scalar qss = h_sw_seepage_rate(sw_idx);
+                Scalar dept = h_sw_depth(sw_idx);
+                Scalar Az = domain.dx * domain.dy;
+                if (h_sw_area_top(sw_idx) > 0.0) {
+                    Az = h_sw_area_top(sw_idx);
+                }
+                
+                // Get scalar concentrations
+                Scalar s_subs = h_scalar(domain_idx); // Subsurface scalar
+                Scalar s_surf = h_sw_scalar(sw_idx); // Surface scalar
+                
+                Scalar sseepage = 0.0;
+                
+                // Seepage (qss > 0): scalar leaves subsurface
+                if (qss > 0.0) {
+                    // Scalar doesn't leave subsurface if surface is dry
+                    if (dept > 0.0) {
+                        // Advective + diffusive flux
+                        sseepage = qss * s_subs;
+                        // TODO: Add diffusive term when Dzz is available
+                        // Scalar dz = ...; // Get layer thickness
+                        // sseepage = qss * s_subs + (2.0 * Dzz / dz) * (s_subs - s_surf);
+                    } else {
+                        sseepage = 0.0;
+                    }
+                }
+                // Infiltration (qss < 0): scalar enters subsurface
+                else if (qss < 0.0) {
+                    // Advective + diffusive flux
+                    sseepage = qss * s_surf;
+                    // TODO: Add diffusive term when Dzz is available
+                    // sseepage = qss * s_surf + (2.0 * Dzz / dz) * (s_surf - s_subs);
+                }
+                // No exchange (qss == 0)
+                
+                // Remove scalar mass from subsurface
+                h_scalar_mass(domain_idx) -= dt * Az * sseepage;
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_scalar_mass, h_scalar_mass);
     }
     
     // ========================================================================

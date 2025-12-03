@@ -9,6 +9,11 @@
 #include "BoundaryConditions.hpp"
 #include <memory>
 #include <cmath>
+#include <Kokkos_Core.hpp>
+
+// Forward declarations
+class SwStateVariables;
+class SwDomain;
 
 // ============================================================================
 //                      GROUNDWATER EQUATION SOLVER
@@ -857,6 +862,139 @@ private:
                 Scalar V = domain.dx * domain.dy * dz;
                 _room(domain_idx) = (_water_content_sat(domain_idx) - _water_content(domain_idx)) * V;
             });
+    }
+    
+    // ========================================================================
+    // COMPUTE SEEPAGE FLUX FROM TOP BOUNDARY
+    // ========================================================================
+    // Computes seepage rate (qss) from top boundary flux for surface-subsurface coupling
+    // This should be called after compute_groundwater_flux()
+    // sw_state: Surface water state variables (to store seepage_rate)
+    // sw_domain: Surface water domain (for mapping)
+    void compute_seepage_flux(SwStateVariables& sw_state, const SwDomain& sw_domain) {
+        auto _flux_z = state.flux_z;
+        auto _water_content = state.water_content;
+        auto _water_content_sat = state.water_content_sat;
+        auto _water_content_res = state.water_content_res;
+        auto _seepage_top = state.seepage_top;
+        auto _active_mask_3d = domain.active_mask_3d;
+        auto _dz_layers = domain.dz_layers;
+        
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _coord_k = active_mesh.coord_k;
+        auto _neighbor_top = active_mesh.neighbor_top;
+        
+        // Surface water state views
+        auto _seepage = sw_state.seepage;
+        auto _seepage_old = sw_state.seepage_old;
+        auto _seepage_rate = sw_state.seepage_rate;
+        auto _reset_seepage = sw_state.reset_seepage;
+        auto _depth = sw_state.depth;
+        auto _area_top = sw_state.area_top;
+        
+        // Mesh coupling maps
+        auto _gw_to_sw = domain.mesh->gw_to_sw_idx;
+        auto _sw_to_gw = sw_domain.mesh->sw_to_gw_idx;
+        
+        // Create host mirrors for surface water (need to update seepage)
+        auto h_seepage = Kokkos::create_mirror_view(_seepage);
+        auto h_seepage_old = Kokkos::create_mirror_view(_seepage_old);
+        auto h_seepage_rate = Kokkos::create_mirror_view(_seepage_rate);
+        auto h_reset_seepage = Kokkos::create_mirror_view(_reset_seepage);
+        auto h_depth = Kokkos::create_mirror_view(_depth);
+        auto h_area_top = Kokkos::create_mirror_view(_area_top);
+        
+        Kokkos::deep_copy(h_seepage_old, _seepage_old);
+        Kokkos::deep_copy(h_seepage, _seepage);
+        Kokkos::deep_copy(h_reset_seepage, _reset_seepage);
+        Kokkos::deep_copy(h_depth, _depth);
+        Kokkos::deep_copy(h_area_top, _area_top);
+        
+        // Device views for groundwater (read-only)
+        auto h_flux_z = Kokkos::create_mirror_view(_flux_z);
+        auto h_water_content = Kokkos::create_mirror_view(_water_content);
+        auto h_water_content_sat = Kokkos::create_mirror_view(_water_content_sat);
+        auto h_water_content_res = Kokkos::create_mirror_view(_water_content_res);
+        auto h_seepage_top = Kokkos::create_mirror_view(_seepage_top);
+        auto h_active_mask_3d = Kokkos::create_mirror_view(_active_mask_3d);
+        auto h_coord_k = Kokkos::create_mirror_view(_coord_k);
+        auto h_neighbor_top = Kokkos::create_mirror_view(_neighbor_top);
+        auto h_active_to_domain = Kokkos::create_mirror_view(_active_to_domain);
+        auto h_gw_to_sw = Kokkos::create_mirror_view(_gw_to_sw);
+        
+        Kokkos::deep_copy(h_flux_z, _flux_z);
+        Kokkos::deep_copy(h_water_content, _water_content);
+        Kokkos::deep_copy(h_water_content_sat, _water_content_sat);
+        Kokkos::deep_copy(h_water_content_res, _water_content_res);
+        Kokkos::deep_copy(h_seepage_top, _seepage_top);
+        Kokkos::deep_copy(h_active_mask_3d, _active_mask_3d);
+        Kokkos::deep_copy(h_coord_k, _coord_k);
+        Kokkos::deep_copy(h_neighbor_top, _neighbor_top);
+        Kokkos::deep_copy(h_active_to_domain, _active_to_domain);
+        Kokkos::deep_copy(h_gw_to_sw, _gw_to_sw);
+        
+        // Process each active groundwater cell
+        for (Ordinal i = 0; i < active_mesh.num_active; ++i) {
+            Ordinal domain_idx = h_active_to_domain(i);
+            if (h_active_mask_3d(domain_idx) == 0) continue;
+            
+            Ordinal k = h_coord_k(i);
+            Ordinal active_top = h_neighbor_top(i);
+            
+            // Check if this is a top cell (no top neighbor or k == nz-1)
+            bool is_top_cell = (active_top < 0) || (k == domain.nz - 1);
+            
+            if (is_top_cell) {
+                // Get corresponding surface cell index
+                Ordinal sw_idx = h_gw_to_sw(domain_idx);
+                if (sw_idx < 0 || sw_idx >= sw_domain.num_cells_total) continue;
+                
+                // Get top boundary flux (flux_z at the top face)
+                // For top cells, the flux_z represents flux out of the top
+                Scalar qz_top = h_flux_z(domain_idx);
+                
+                // Get cell area (Az)
+                Scalar Az = domain.dx * domain.dy;
+                if (h_area_top(sw_idx) > 0.0) {
+                    Az = h_area_top(sw_idx);
+                }
+                
+                // Handle reset flag
+                if (h_reset_seepage(sw_idx) == 1) {
+                    h_seepage(sw_idx) = 0.0;
+                    h_reset_seepage(sw_idx) = 0;
+                }
+                
+                // Accumulate seepage: qseepage += qz / Az
+                // qz is already a flux (volume/time), so dividing by area gives velocity
+                h_seepage(sw_idx) += qz_top / Az;
+                
+                // Handle special case: if infiltration (qz < 0) and surface is dry
+                // and there's not enough pore space, add water to surface
+                if (qz_top < 0.0) {
+                    Scalar wc = h_water_content(domain_idx);
+                    Scalar wcs = h_water_content_sat(domain_idx);
+                    auto h_dz_layers = Kokkos::create_mirror_view(domain.dz_layers);
+                    Kokkos::deep_copy(h_dz_layers, domain.dz_layers);
+                    Scalar dz_layer = h_dz_layers(k);
+                    Scalar pore_space = (wcs - wc) * domain.dx * domain.dy * dz_layer;
+                    Scalar vseep = std::abs(qz_top) * dt * wcs;
+                    
+                    if (vseep > pore_space && h_depth(sw_idx) <= min_depth) {
+                        // Add water to surface (this is handled in legacy code)
+                        // For now, we'll let the surface solver handle it
+                    }
+                }
+                
+                // Store seepage rate
+                h_seepage_rate(sw_idx) = h_seepage(sw_idx);
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(_seepage, h_seepage);
+        Kokkos::deep_copy(_seepage_rate, h_seepage_rate);
+        Kokkos::deep_copy(_reset_seepage, h_reset_seepage);
     }
     
     // ========================================================================
