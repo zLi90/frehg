@@ -295,6 +295,9 @@ public:
             gw_state_ = std::make_unique<GwStateVariables>(
                 gw_domain_->num_cells_3d_total);
             
+            // Read and set soil parameters (heterogeneous or homogeneous)
+            initialize_soil_parameters();
+            
             // Initialize groundwater state variables
             initialize_gw_state();
         }
@@ -425,6 +428,127 @@ private:
         Kokkos::deep_copy(sw_state_->pressure_old, h_pressure);
         Kokkos::deep_copy(sw_state_->velocity_x_old, h_velocity_x);
         Kokkos::deep_copy(sw_state_->velocity_y_old, h_velocity_y);
+    }
+    
+    // ========================================================================
+    // INITIALIZE SOIL PARAMETERS
+    // ========================================================================
+    // Reads soil parameters from files or sets homogeneous values
+    void initialize_soil_parameters() {
+        // Create host mirrors for soil parameters
+        auto h_Ksx = Kokkos::create_mirror_view(gw_state_->conductivity_sat_x);
+        auto h_Ksy = Kokkos::create_mirror_view(gw_state_->conductivity_sat_y);
+        auto h_Ksz = Kokkos::create_mirror_view(gw_state_->conductivity_sat_z);
+        auto h_porosity = Kokkos::create_mirror_view(gw_state_->water_content_sat);
+        auto h_theta_r = Kokkos::create_mirror_view(gw_state_->water_content_res);
+        auto h_alpha = Kokkos::create_mirror_view(gw_state_->vg_alpha);
+        auto h_n = Kokkos::create_mirror_view(gw_state_->vg_n);
+        auto h_m = Kokkos::create_mirror_view(gw_state_->vg_m);
+        auto h_ha = Kokkos::create_mirror_view(gw_state_->vg_ha);
+        auto h_active_3d = Kokkos::create_mirror_view(gw_domain_->active_mask_3d);
+        
+        Kokkos::deep_copy(h_active_3d, gw_domain_->active_mask_3d);
+        
+        // Check if using heterogeneous soil parameters
+        bool use_heterogeneous = input_reader_->read_bool("use_heterogeneous_soil", false);
+        
+        if (use_heterogeneous) {
+            // Read soil type map and soil parameter file
+            std::string soil_type_map_file = input_reader_->read_string("soil_type_map_file", "");
+            std::string soil_param_file = input_reader_->read_string("soil_param_file", "");
+            
+            if (soil_type_map_file.empty() || soil_param_file.empty()) {
+                throw std::runtime_error("Heterogeneous soil enabled but soil_type_map_file or "
+                                       "soil_param_file not specified");
+            }
+            
+            // Construct full paths
+            std::string soil_type_map_path = config_.finput + "/" + soil_type_map_file;
+            std::string soil_param_path = config_.finput + "/" + soil_param_file;
+            
+            // Check if binary format
+            bool binary_soil_map = input_reader_->read_bool("soil_type_map_binary", false);
+            
+            // Read soil type map (3D)
+            std::vector<int> soil_type_map = InputReader::read_3d_soil_type_map(
+                soil_type_map_path, gw_domain_->nx, gw_domain_->ny, gw_domain_->nz, binary_soil_map);
+            
+            // Read soil parameters
+            std::map<int, InputReader::SoilParameters> soil_params = 
+                InputReader::read_soil_parameter_file(soil_param_path);
+            
+            // Assign parameters to each cell based on soil type
+            for (Ordinal k = 0; k < gw_domain_->nz; ++k) {
+                for (Ordinal j = 0; j < gw_domain_->ny; ++j) {
+                    for (Ordinal i = 0; i < gw_domain_->nx; ++i) {
+                        Ordinal idx = i + j * gw_domain_->nx + k * gw_domain_->nx * gw_domain_->ny;
+                        
+                        if (h_active_3d(idx) > 0) {
+                            int soil_type = soil_type_map[idx];
+                            
+                            // Check if soil type exists in parameter map
+                            if (soil_params.find(soil_type) == soil_params.end()) {
+                                throw std::runtime_error("Soil type " + std::to_string(soil_type) + 
+                                                       " not found in soil parameter file at "
+                                                       "cell (i=" + std::to_string(i) + 
+                                                       ", j=" + std::to_string(j) + 
+                                                       ", k=" + std::to_string(k) + ")");
+                            }
+                            
+                            const auto& params = soil_params[soil_type];
+                            
+                            // Set parameters
+                            h_Ksx(idx) = params.Ksx;
+                            h_Ksy(idx) = params.Ksy;
+                            h_Ksz(idx) = params.Ksz;
+                            h_porosity(idx) = params.porosity;
+                            h_theta_r(idx) = params.theta_r;
+                            h_alpha(idx) = params.alpha;
+                            h_n(idx) = params.n;
+                            h_m(idx) = 1.0 - 1.0 / params.n;  // m = 1 - 1/n
+                            h_ha(idx) = params.ha;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Homogeneous soil parameters
+            Scalar Ksx = input_reader_->read_double("Ksx", 1.0e-4);
+            Scalar Ksy = input_reader_->read_double("Ksy", 1.0e-4);
+            Scalar Ksz = input_reader_->read_double("Ksz", 1.0e-4);
+            Scalar porosity = input_reader_->read_double("porosity", 0.4);
+            Scalar theta_r = input_reader_->read_double("theta_r", 0.05);
+            Scalar alpha = input_reader_->read_double("vg_alpha", 0.01);
+            Scalar n = input_reader_->read_double("vg_n", 1.5);
+            Scalar ha = input_reader_->read_double("vg_ha", 0.0);
+            Scalar m = 1.0 - 1.0 / n;
+            
+            // Set homogeneous values for all active cells
+            for (Ordinal i = 0; i < gw_domain_->num_cells_3d_total; ++i) {
+                if (h_active_3d(i) > 0) {
+                    h_Ksx(i) = Ksx;
+                    h_Ksy(i) = Ksy;
+                    h_Ksz(i) = Ksz;
+                    h_porosity(i) = porosity;
+                    h_theta_r(i) = theta_r;
+                    h_alpha(i) = alpha;
+                    h_n(i) = n;
+                    h_m(i) = m;
+                    h_ha(i) = ha;
+                }
+            }
+        }
+        
+        // Copy to device
+        Kokkos::deep_copy(gw_state_->conductivity_sat_x, h_Ksx);
+        Kokkos::deep_copy(gw_state_->conductivity_sat_y, h_Ksy);
+        Kokkos::deep_copy(gw_state_->conductivity_sat_z, h_Ksz);
+        Kokkos::deep_copy(gw_state_->water_content_sat, h_porosity);
+        Kokkos::deep_copy(gw_state_->water_content_res, h_theta_r);
+        Kokkos::deep_copy(gw_state_->vg_alpha, h_alpha);
+        Kokkos::deep_copy(gw_state_->vg_n, h_n);
+        Kokkos::deep_copy(gw_state_->vg_m, h_m);
+        Kokkos::deep_copy(gw_state_->vg_ha, h_ha);
     }
     
     // ========================================================================

@@ -6,10 +6,12 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <map>
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 
 namespace Frehg {
 
@@ -427,6 +429,173 @@ public:
     // ========================================================================
     std::string get_filename() const {
         return filename_;
+    }
+    
+    // ========================================================================
+    // READ 3D SOIL TYPE MAP
+    // ========================================================================
+    // Reads a 3D soil type index map from file
+    // Format: Binary file (int32) or ASCII file (space/newline separated)
+    // Returns: 3D vector (i + j*nx + k*nx*ny indexing)
+    static std::vector<int> read_3d_soil_type_map(const std::string& filename,
+                                                  Ordinal nx, Ordinal ny, Ordinal nz,
+                                                  bool binary = false) {
+        std::vector<int> soil_type_map(nx * ny * nz);
+        
+        if (binary) {
+            // Read binary file (int32 per value)
+            std::ifstream file(filename, std::ios::binary);
+            if (!file.is_open()) {
+                throw std::runtime_error("Cannot open binary soil type map file: " + filename);
+            }
+            
+            for (Ordinal k = 0; k < nz; ++k) {
+                for (Ordinal j = 0; j < ny; ++j) {
+                    for (Ordinal i = 0; i < nx; ++i) {
+                        Ordinal idx = i + j * nx + k * nx * ny;
+                        int32_t value;
+                        file.read(reinterpret_cast<char*>(&value), sizeof(int32_t));
+                        if (!file) {
+                            throw std::runtime_error("Unexpected end of file in soil type map at "
+                                                   "i=" + std::to_string(i) + ", j=" + std::to_string(j) +
+                                                   ", k=" + std::to_string(k));
+                        }
+                        soil_type_map[idx] = static_cast<int>(value);
+                    }
+                }
+            }
+            file.close();
+        } else {
+            // Read ASCII file (space or newline separated)
+            std::ifstream file(filename);
+            if (!file.is_open()) {
+                throw std::runtime_error("Cannot open ASCII soil type map file: " + filename);
+            }
+            
+            for (Ordinal k = 0; k < nz; ++k) {
+                for (Ordinal j = 0; j < ny; ++j) {
+                    for (Ordinal i = 0; i < nx; ++i) {
+                        Ordinal idx = i + j * nx + k * nx * ny;
+                        int value;
+                        if (!(file >> value)) {
+                            throw std::runtime_error("Unexpected end of file in soil type map at "
+                                                   "i=" + std::to_string(i) + ", j=" + std::to_string(j) +
+                                                   ", k=" + std::to_string(k));
+                        }
+                        soil_type_map[idx] = value;
+                    }
+                }
+            }
+            file.close();
+        }
+        
+        return soil_type_map;
+    }
+    
+    // ========================================================================
+    // READ SOIL PARAMETER FILE
+    // ========================================================================
+    // Reads soil parameters for each soil type from a file
+    // Format: CSV or space-separated, one row per soil type
+    // Columns: soil_type_id, Ksx, Ksy, Ksz, porosity, theta_r, alpha, n, ha
+    // Returns: Map from soil_type_id to soil parameters
+    struct SoilParameters {
+        Scalar Ksx;      // Saturated hydraulic conductivity in x-direction
+        Scalar Ksy;      // Saturated hydraulic conductivity in y-direction
+        Scalar Ksz;      // Saturated hydraulic conductivity in z-direction
+        Scalar porosity; // Porosity (saturated water content)
+        Scalar theta_r;  // Residual water content
+        Scalar alpha;    // Van Genuchten alpha parameter
+        Scalar n;        // Van Genuchten n parameter
+        Scalar ha;       // Air entry value
+        
+        SoilParameters() : Ksx(1.0e-4), Ksy(1.0e-4), Ksz(1.0e-4),
+                          porosity(0.4), theta_r(0.05), alpha(0.01), n(1.5), ha(0.0) {}
+    };
+    
+    static std::map<int, SoilParameters> read_soil_parameter_file(const std::string& filename) {
+        std::map<int, SoilParameters> soil_params;
+        
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Cannot open soil parameter file: " + filename);
+        }
+        
+        std::string line;
+        bool first_line = true;
+        
+        while (std::getline(file, line)) {
+            line = trim(line);
+            
+            // Skip empty lines and comments
+            if (line.empty() || line[0] == '#' || 
+                (line.length() >= 2 && line.substr(0, 2) == "//")) {
+                continue;
+            }
+            
+            // Skip header line if present
+            if (first_line) {
+                std::string lower = line;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                if (lower.find("soil_type") != std::string::npos || 
+                    lower.find("type_id") != std::string::npos) {
+                    first_line = false;
+                    continue;
+                }
+            }
+            first_line = false;
+            
+            // Parse line (CSV or space-separated)
+            std::istringstream iss(line);
+            std::string token;
+            std::vector<std::string> tokens;
+            
+            // Check if CSV (comma-separated) or space-separated
+            bool is_csv = (line.find(',') != std::string::npos);
+            
+            if (is_csv) {
+                while (std::getline(iss, token, ',')) {
+                    tokens.push_back(trim(token));
+                }
+            } else {
+                while (iss >> token) {
+                    tokens.push_back(token);
+                }
+            }
+            
+            if (tokens.size() < 8) {
+                throw std::runtime_error("Invalid soil parameter line (need at least 8 values): " + line);
+            }
+            
+            try {
+                int soil_type_id = std::stoi(tokens[0]);
+                SoilParameters params;
+                params.Ksx = std::stod(tokens[1]);
+                params.Ksy = std::stod(tokens[2]);
+                params.Ksz = std::stod(tokens[3]);
+                params.porosity = std::stod(tokens[4]);
+                params.theta_r = std::stod(tokens[5]);
+                params.alpha = std::stod(tokens[6]);
+                params.n = std::stod(tokens[7]);
+                
+                // Air entry value (optional, default 0.0)
+                if (tokens.size() >= 9) {
+                    params.ha = std::stod(tokens[8]);
+                } else {
+                    params.ha = 0.0;
+                }
+                
+                // Compute m = 1 - 1/n (will be computed when setting parameters)
+                
+                soil_params[soil_type_id] = params;
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Error parsing soil parameter line: " + line + 
+                                       " - " + e.what());
+            }
+        }
+        
+        file.close();
+        return soil_params;
     }
 };
 

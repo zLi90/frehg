@@ -141,81 +141,200 @@ public:
 
 private:
     // ========================================================================
-    // HELPER FUNCTIONS (Soil Property Functions - Placeholders)
+    // HELPER FUNCTIONS (Mualem-van Genuchten Soil Property Functions)
     // ========================================================================
-    // These functions should be implemented based on soil property models
-    // For now, we assume they are available or will be implemented later
+    // Implements the Mualem-van Genuchten model for variably saturated flow
+    // References:
+    // - van Genuchten (1980): A closed-form equation for predicting the hydraulic
+    //   conductivity of unsaturated soils
+    // - Mualem (1976): A new model for predicting the hydraulic conductivity
     
-    // Compute hydraulic conductivity from head and saturated conductivity
-    // K = Ks * Kr(h), where Kr is relative permeability
+    // Compute effective saturation from head (Se = (θ - θr)/(θs - θr))
+    // Modified van Genuchten model with air entry value (ha)
+    // If ha = 0, returns to original van Genuchten model
     KOKKOS_INLINE_FUNCTION
-    Scalar compute_K(Scalar h, Scalar Ks, Ordinal idx) const {
-        // Placeholder: assume K = Ks for saturated, reduce for unsaturated
-        // This should be replaced with actual soil property model
-        if (h >= 0.0) {
-            return Ks;
-        } else {
-            // Simplified: exponential reduction for unsaturated
-            Scalar wc = state.water_content(idx);
-            Scalar wcs = state.water_content_sat(idx);
-            Scalar wcr = state.water_content_res(idx);
-            if (wcs > wcr) {
-                Scalar Se = (wc - wcr) / (wcs - wcr); // Effective saturation
-                return Ks * Se * Se * Se; // Cubic relationship (simplified)
-            }
-            return Ks * 1.0e-6; // Very small for dry
+    Scalar compute_Se_from_h(Scalar h, Ordinal idx) const {
+        Scalar ha = state.vg_ha(idx);
+        
+        // Modified van Genuchten: if h >= -ha, then Se = 1.0 (saturated)
+        // This improves convergence by maintaining saturation until air entry pressure
+        if (h >= -ha) {
+            return 1.0; // Saturated until air entry value
         }
+        
+        Scalar alpha = state.vg_alpha(idx);
+        Scalar n = state.vg_n(idx);
+        Scalar m = state.vg_m(idx);
+        
+        // Modified van Genuchten water retention curve
+        // Se = [1 + (α(|h| - ha))^n]^(-m) for h < -ha
+        // If ha = 0, this reduces to original: Se = [1 + (α|h|)^n]^(-m)
+        Scalar abs_h = std::abs(h);
+        Scalar h_effective = abs_h - ha;  // Effective head below air entry
+        
+        // Ensure h_effective is non-negative
+        if (h_effective < 0.0) {
+            return 1.0; // Shouldn't happen if h >= -ha check above, but safety check
+        }
+        
+        Scalar term = 1.0 + std::pow(alpha * h_effective, n);
+        Scalar Se = std::pow(term, -m);
+        
+        // Clamp to [0, 1]
+        if (Se > 1.0) Se = 1.0;
+        if (Se < 0.0) Se = 0.0;
+        
+        return Se;
     }
     
-    // Compute water content from head using water retention curve
+    // Compute water content from head using modified van Genuchten model
     KOKKOS_INLINE_FUNCTION
     Scalar compute_wch(Scalar h, Ordinal idx) const {
-        // Placeholder: simplified water retention curve
-        // This should be replaced with van Genuchten or other model
         Scalar wcs = state.water_content_sat(idx);
         Scalar wcr = state.water_content_res(idx);
+        Scalar ha = state.vg_ha(idx);
         
-        if (h >= 0.0) {
-            return wcs;
-        } else {
-            // Simplified exponential relationship
-            Scalar Se = std::exp(0.1634 * h);
-            return wcr + (wcs - wcr) * Se;
+        // Modified van Genuchten: if h >= -ha, then saturated
+        if (h >= -ha) {
+            return wcs; // Saturated until air entry value
         }
+        
+        Scalar Se = compute_Se_from_h(h, idx);
+        return wcr + (wcs - wcr) * Se;
     }
     
-    // Compute head from water content
+    // Compute head from water content (inverse modified van Genuchten)
     KOKKOS_INLINE_FUNCTION
     Scalar compute_hwc(Ordinal idx) const {
-        // Placeholder: inverse of water retention curve
         Scalar wc = state.water_content(idx);
         Scalar wcs = state.water_content_sat(idx);
         Scalar wcr = state.water_content_res(idx);
+        Scalar ha = state.vg_ha(idx);
         
         if (wc >= wcs) {
-            return 0.0; // Saturated
-        } else if (wc <= wcr) {
-            return -1000.0; // Very dry
-        } else {
-            Scalar Se = (wc - wcr) / (wcs - wcr);
-            return std::log(Se) / 0.1634;
+            return -ha; // At air entry value when saturated
         }
+        if (wc <= wcr) {
+            return -1.0e6; // Very dry (large negative head)
+        }
+        
+        // Compute effective saturation
+        Scalar Se = (wc - wcr) / (wcs - wcr);
+        if (Se >= 1.0) return -ha; // At air entry value
+        if (Se <= 0.0) return -1.0e6;
+        
+        Scalar alpha = state.vg_alpha(idx);
+        Scalar n = state.vg_n(idx);
+        Scalar m = state.vg_m(idx);
+        
+        // Inverse modified van Genuchten: 
+        // h = -ha - (1/α) * [(Se^(-1/m) - 1)^(1/n)]
+        // If ha = 0, this reduces to original: h = -(1/α) * [(Se^(-1/m) - 1)^(1/n)]
+        Scalar Se_inv_m = std::pow(Se, -1.0 / m);
+        if (Se_inv_m <= 1.0) {
+            return -ha; // Shouldn't happen, but handle edge case
+        }
+        Scalar term = std::pow(Se_inv_m - 1.0, 1.0 / n);
+        Scalar h_effective = term / alpha;  // Effective head below air entry
+        Scalar h = -ha - h_effective;
+        
+        return h;
+    }
+    
+    // Compute relative permeability using Mualem model
+    // Kr(Se) = Se^0.5 * [1 - (1 - Se^(1/m))^m]^2
+    KOKKOS_INLINE_FUNCTION
+    Scalar compute_Kr_Mualem(Scalar Se, Ordinal idx) const {
+        if (Se >= 1.0) {
+            return 1.0; // Fully saturated
+        }
+        if (Se <= 0.0) {
+            return 0.0; // Completely dry
+        }
+        
+        Scalar m = state.vg_m(idx);
+        
+        // Mualem relative permeability model
+        Scalar Se_sqrt = std::sqrt(Se);
+        Scalar Se_1_m = std::pow(Se, 1.0 / m);
+        Scalar term = 1.0 - std::pow(1.0 - Se_1_m, m);
+        Scalar Kr = Se_sqrt * term * term;
+        
+        // Clamp to [0, 1]
+        if (Kr > 1.0) Kr = 1.0;
+        if (Kr < 0.0) Kr = 0.0;
+        
+        return Kr;
+    }
+    
+    // Compute hydraulic conductivity from head and saturated conductivity
+    // K = Ks * Kr(h), where Kr is relative permeability (Mualem model)
+    // Uses modified van Genuchten model with air entry value
+    KOKKOS_INLINE_FUNCTION
+    Scalar compute_K(Scalar h, Scalar Ks, Ordinal idx) const {
+        Scalar ha = state.vg_ha(idx);
+        
+        // Modified van Genuchten: if h >= -ha, then saturated
+        if (h >= -ha) {
+            return Ks; // Saturated until air entry value
+        }
+        
+        // Compute effective saturation from head
+        Scalar Se = compute_Se_from_h(h, idx);
+        
+        // Compute relative permeability using Mualem model
+        Scalar Kr = compute_Kr_Mualem(Se, idx);
+        
+        return Ks * Kr;
     }
     
     // Compute specific moisture capacity (dwc/dh)
+    // C(h) = (θs - θr) * dSe/dh
+    // Modified van Genuchten with air entry value
     KOKKOS_INLINE_FUNCTION
     Scalar compute_ch(Ordinal idx) const {
-        // Placeholder: derivative of water retention curve
         Scalar h = state.pressure(idx);
+        Scalar ha = state.vg_ha(idx);
+        
+        // Modified van Genuchten: if h >= -ha, then dSe/dh = 0
+        if (h >= -ha) {
+            return 0.0; // Saturated until air entry value (no change)
+        }
+        
         Scalar wcs = state.water_content_sat(idx);
         Scalar wcr = state.water_content_res(idx);
+        Scalar alpha = state.vg_alpha(idx);
+        Scalar n = state.vg_n(idx);
+        Scalar m = state.vg_m(idx);
         
-        if (h >= 0.0) {
-            return 0.0; // Saturated
-        } else {
-            Scalar Se = std::exp(0.1634 * h);
-            return 0.1634 * (wcs - wcr) * Se;
+        // Derivative of modified van Genuchten water retention curve
+        // For h < -ha: Se = [1 + (α(|h| - ha))^n]^(-m)
+        // dSe/dh = dSe/d|h| * d|h|/dh
+        // Since |h| = -h for h < 0, d|h|/dh = -1
+        // dSe/d|h| = -m * n * α^n * (|h| - ha)^(n-1) * [1 + (α(|h| - ha))^n]^(-m-1)
+        // Therefore: dSe/dh = m * n * α^n * (|h| - ha)^(n-1) * [1 + (α(|h| - ha))^n]^(-m-1)
+        // If ha = 0, this reduces to original formula
+        Scalar abs_h = std::abs(h);
+        Scalar h_effective = abs_h - ha;  // Effective head below air entry
+        
+        if (h_effective <= 0.0) {
+            return 0.0; // Safety check
         }
+        
+        Scalar alpha_h_eff_n = std::pow(alpha * h_effective, n);
+        Scalar term1 = 1.0 + alpha_h_eff_n;
+        Scalar term2 = std::pow(term1, -m - 1.0);
+        Scalar h_eff_pow = (n > 1.0) ? std::pow(h_effective, n - 1.0) : 1.0;
+        // For h < -ha, derivative is positive (increasing h increases Se)
+        Scalar dSe_dh = m * n * std::pow(alpha, n) * h_eff_pow * term2;
+        
+        // Specific moisture capacity
+        Scalar ch = (wcs - wcr) * dSe_dh;
+        
+        // Ensure non-negative
+        if (ch < 0.0) ch = 0.0;
+        
+        return ch;
     }
     
     // ========================================================================

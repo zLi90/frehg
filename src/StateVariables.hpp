@@ -206,6 +206,12 @@ public:
     View1D<Scalar> water_content_sat; // Saturated water content (wcs)
     View1D<Scalar> water_content_res; // Residual water content (wcr)
     
+    // --- Van Genuchten Parameters ---
+    View1D<Scalar> vg_alpha;          // Van Genuchten alpha parameter [1/L]
+    View1D<Scalar> vg_n;              // Van Genuchten n parameter (dimensionless)
+    View1D<Scalar> vg_m;              // Van Genuchten m parameter (m = 1 - 1/n)
+    View1D<Scalar> vg_ha;             // Air entry value [L] (ha >= 0, if ha=0 uses original vG model)
+    
     // --- Hydraulic Conductivity ---
     View1D<Scalar> conductivity_x;  // Kx (face conductivity)
     View1D<Scalar> conductivity_y;  // Ky (face conductivity)
@@ -273,6 +279,12 @@ public:
         water_content_sat = View1D<Scalar>("water_content_sat", num_cells);
         water_content_res = View1D<Scalar>("water_content_res", num_cells);
         
+        // Van Genuchten parameters (default values: typical for sandy loam)
+        vg_alpha = View1D<Scalar>("vg_alpha", num_cells);
+        vg_n = View1D<Scalar>("vg_n", num_cells);
+        vg_m = View1D<Scalar>("vg_m", num_cells);
+        vg_ha = View1D<Scalar>("vg_ha", num_cells);
+        
         conductivity_x = View1D<Scalar>("conductivity_x", num_cells);
         conductivity_y = View1D<Scalar>("conductivity_y", num_cells);
         conductivity_z = View1D<Scalar>("conductivity_z", num_cells);
@@ -315,6 +327,22 @@ public:
         head_gradient = View1D<Scalar>("head_gradient", 6 * num_cells); // 6 directions
         moisture_split = View1D<Scalar>("moisture_split", 6 * num_cells); // 6 directions
         repeat = View1D<int>("repeat", num_cells);
+        
+        // Initialize van Genuchten parameters with default values
+        // (can be overridden during initialization from input files)
+        // Default values: typical for sandy loam
+        auto _vg_alpha = vg_alpha;
+        auto _vg_n = vg_n;
+        auto _vg_m = vg_m;
+        auto _vg_ha = vg_ha;
+        using RangePolicy = Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>;
+        Kokkos::parallel_for(RangePolicy(0, num_cells),
+            KOKKOS_LAMBDA (const Ordinal i) {
+                _vg_alpha(i) = 0.01;  // Default: 0.01 cm^-1 (typical for sandy loam)
+                _vg_n(i) = 1.5;       // Default: n = 1.5
+                _vg_m(i) = 1.0 - 1.0 / 1.5;  // m = 1 - 1/n ≈ 0.333
+                _vg_ha(i) = 0.0;     // Default: 0.0 (original van Genuchten model)
+            });
     }
     
     // Override update_old_values to include groundwater specific
