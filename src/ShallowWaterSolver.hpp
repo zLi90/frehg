@@ -11,6 +11,12 @@
 #include <memory>
 #include <cmath>
 
+// Use classes from Frehg namespace
+using Frehg::SwBoundaryConditionManager;
+using Frehg::SwSourceSinkManager;
+using Frehg::SwBcType;
+using Frehg::SourceSinkType;
+
 // ============================================================================
 //                      SHALLOW WATER EQUATION SOLVER
 // ============================================================================
@@ -170,7 +176,7 @@ public:
         // Compute CFL numbers from current velocities
         Kokkos::parallel_reduce(
             RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_max_cfl) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& local_max_cfl) {
                 Scalar cfl_x_val = std::abs(_velocity_x(i) * dt / domain.dx);
                 Scalar cfl_y_val = std::abs(_velocity_y(i) * dt / domain.dy);
                 Scalar max_local = (cfl_x_val > cfl_y_val) ? cfl_x_val : cfl_y_val;
@@ -297,7 +303,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 // Get domain index
                 Ordinal domain_idx = _active_to_domain(i);
                 
@@ -460,7 +466,7 @@ private:
         const Scalar pi = 3.14159265358979323846;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 // Wind direction: phi from north, omega in radians from positive x
@@ -528,7 +534,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 // Get neighbors
@@ -624,7 +630,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 Ordinal active_left = _neighbor_left(i);
@@ -724,7 +730,7 @@ private:
             if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
                 // Dirichlet BC: prescribed surface elevation
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         _matrix_diag(cell_idx) = 1.0;
                         _matrix_xp(cell_idx) = 0.0;
@@ -737,7 +743,7 @@ private:
             } else if (bc.type == SwBcType::WATER_DEPTH) {
                 // Dirichlet BC: prescribed water depth
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         Scalar eta_value = _bottom(cell_idx) + bc_value;
                         _matrix_diag(cell_idx) = 1.0;
@@ -751,7 +757,7 @@ private:
             } else if (bc.type == SwBcType::FLOW_RATE) {
                 // Flow rate BC: add to RHS as source term
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         Scalar source_flux = bc_value * dt_local;
                         _matrix_rhs(cell_idx) += source_flux;
@@ -792,21 +798,21 @@ private:
             
             if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         _pressure(cell_idx) = bc_value;
                     });
                     
             } else if (bc.type == SwBcType::WATER_DEPTH) {
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         _pressure(cell_idx) = _bottom(cell_idx) + bc_value;
                     });
                     
             } else if (bc.type == SwBcType::FREE_OUTFLOW) {
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         if (_pressure(cell_idx) < _bottom(cell_idx)) {
                             _pressure(cell_idx) = _bottom(cell_idx);
@@ -848,7 +854,7 @@ private:
             if (ss.type == SourceSinkType::VOLUME_FLUX) {
                 // Volume flux (m³/s): add/remove volume, convert to depth change
                 Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_ss_indices(i);
                         Scalar cell_area = _area_top(cell_idx);
                         if (cell_area <= 0.0) cell_area = dx_local * dy_local;
@@ -860,7 +866,7 @@ private:
             } else if (ss.type == SourceSinkType::DEPTH_RATE) {
                 // Depth rate (m/s): directly add/remove depth
                 Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_ss_indices(i);
                         Scalar depth_change = ss_value * dt_local;
                         _pressure(cell_idx) += depth_change;
@@ -876,7 +882,7 @@ private:
         auto _bottom = state.bottom;
         auto _active_to_domain = active_mesh.active_to_domain;
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_pressure(domain_idx) < _bottom(domain_idx)) {
                     _pressure(domain_idx) = _bottom(domain_idx);
@@ -907,7 +913,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 diag_active(i) = _matrix_diag(domain_idx);
                 xp_active(i) = _matrix_xp(domain_idx);
@@ -932,12 +938,13 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 _pressure(domain_idx) = solution(i);
             });
     }
     
+public:
     // ========================================================================
     // APPLY SEEPAGE TO SURFACE ELEVATION
     // ========================================================================
@@ -951,7 +958,7 @@ private:
         auto _reset_seepage = state.reset_seepage;
         
         Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Scalar qss = _seepage_rate(i);
                 Scalar diff = _pressure(i) - _bottom(i);
                 
@@ -1008,7 +1015,7 @@ private:
         auto _depth_y = state.depth_y;
         
         Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Scalar h = _pressure(i) - _bottom(i);
                 _depth(i) = (h > 0.0) ? h : 0.0;
                 
@@ -1031,7 +1038,7 @@ private:
         auto _volume_y = state.volume_y;
         
         Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 // Top area
                 if (_depth(i) > 0.0) {
                     _area_top(i) = domain.dx * domain.dy;
@@ -1064,7 +1071,7 @@ private:
         Scalar coef = grav * manning_n * manning_n;
         
         Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 if (_volume(i) > 0.0) {
                     Scalar eff_depth = _volume(i) / (domain.dx * domain.dy);
                     Scalar expo = (eff_depth < 0.1) ? (2.0 / 3.0) : (1.0 / 3.0);  // Thin layer model
@@ -1103,7 +1110,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 Ordinal active_right = _neighbor_right(i);
@@ -1157,7 +1164,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 // Zero velocity when face area is too small
@@ -1226,7 +1233,7 @@ private:
         auto _cfl_y = state.cfl_y;
         
         Kokkos::parallel_for(RangePolicy(0, domain.num_cells_total),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 _flux_x(i) = _velocity_x(i) * _area_x(i);
                 _flux_y(i) = _velocity_y(i) * _area_y(i);
                 _cfl_x(i) = std::abs(_velocity_x(i) * dt / domain.dx);
@@ -1250,7 +1257,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 Ordinal active_left = _neighbor_left(i);
@@ -1294,7 +1301,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 
                 Scalar diff = _pressure(domain_idx) - _bottom(domain_idx);

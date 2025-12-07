@@ -10,6 +10,13 @@
 #include <memory>
 #include <cmath>
 
+// Use classes from Frehg namespace
+using Frehg::SwScalarBoundaryConditionManager;
+using Frehg::GwScalarBoundaryConditionManager;
+using Frehg::ScalarBcType;
+using Frehg::SwSourceSinkManager;
+using Frehg::SourceSinkType;
+
 // ============================================================================
 //                      SCALAR TRANSPORT SOLVER
 // ============================================================================
@@ -21,6 +28,7 @@ class SwDomain;
 class GwDomain;
 class SwStateVariables;
 class GwStateVariables;
+class GwScalarTransportSolver;  // Forward declaration for cross-reference
 
 // ============================================================================
 //                      TVD SUPERBEE LIMITER
@@ -191,16 +199,56 @@ public:
     }
     
     // ========================================================================
+    // ENFORCE BOUNDARY CONDITIONS (2D)
+    // ========================================================================
+    void enforce_boundary_conditions(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        auto _scalar = scalar_concentration;
+        const auto& bcs = bc_manager_->get_boundary_conditions(scalar_index_);
+        
+        for (const auto& bc : bcs) {
+            if (bc.type != ScalarBcType::PRESCRIBED_CONCENTRATION) continue;
+            
+            Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
+            
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            // Apply BC values on device
+            Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                KOKKOS_LAMBDA (const Ordinal i) {
+                    Ordinal cell_idx = d_bc_indices(i);
+                    _scalar(cell_idx) = bc_value;
+                });
+        }
+    }
+    
+    // ========================================================================
     // EXCHANGE SCALAR WITH SUBSURFACE
     // ========================================================================
     // Exchanges scalar mass between surface and subsurface during seepage
-    // gw_scalar_solver: Groundwater scalar transport solver
-    // gw_state: Groundwater state variables (for accessing subsurface scalar)
+    // gw_scalar: Groundwater scalar concentration view
+    // gw_scalar_mass: Groundwater scalar mass view
+    // gw_state: Groundwater state variables
+    // gw_domain: Groundwater domain
     void exchange_scalar_with_subsurface(GwScalarTransportSolver* gw_scalar_solver,
                                         const GwStateVariables& gw_state,
-                                        const GwDomain& gw_domain) {
-        if (!gw_scalar_solver) return;
-        
+                                        const GwDomain& gw_domain);
+    
+    // Template version that takes arrays directly (called after GwScalarTransportSolver is defined)
+    void exchange_scalar_with_subsurface_impl(View1D<Scalar>& gw_scalar_concentration,
+                                              View1D<Scalar>& gw_scalar_mass,
+                                              const GwStateVariables& gw_state,
+                                              const GwDomain& gw_domain) {
         auto _scalar_concentration = scalar_concentration;
         auto _scalar_mass = scalar_mass;
         auto _seepage_rate = state.seepage_rate;
@@ -208,8 +256,8 @@ public:
         auto _area_top = state.area_top;
         
         // Get subsurface scalar concentration
-        auto _gw_scalar_concentration = gw_scalar_solver->scalar_concentration;
-        auto _gw_scalar_mass = gw_scalar_solver->scalar_mass;
+        auto _gw_scalar_concentration = gw_scalar_concentration;
+        auto _gw_scalar_mass = gw_scalar_mass;
         
         // Mesh coupling maps
         auto _gw_to_sw = gw_domain.mesh->gw_to_sw_idx;
@@ -332,7 +380,7 @@ public:
             SourceSinkType ss_type = ss.type;
             
             Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     Ordinal cell_idx = d_ss_indices(i);
                     
                     if (_depth(cell_idx) <= 0.0) return;  // Skip dry cells
@@ -408,7 +456,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) > 0) {
                     _scalar_mass(domain_idx) = _scalar_concentration(domain_idx) * _volume_old(domain_idx);
@@ -435,7 +483,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) == 0) {
                     return;
@@ -621,7 +669,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) == 0) {
                     return;
@@ -674,7 +722,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) > 0) {
                     if (_volume(domain_idx) > 0.0) {
@@ -706,7 +754,7 @@ private:
         View1D<Scalar> s_max("s_max", domain.num_cells_total);
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) == 0) {
                     s_min(domain_idx) = s_lim_hi;
@@ -762,7 +810,7 @@ private:
         
         // Second pass: apply limiter
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask(domain_idx) > 0) {
                     _scalar_concentration(domain_idx) = apply_limiter(_scalar_concentration(domain_idx),
@@ -1020,7 +1068,7 @@ public:
                 bc.type == ScalarBcType::CAUCHY) {
                 // Dirichlet or Cauchy BC: prescribed concentration
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         _scalar_concentration(cell_idx) = bc_value;
                     });
@@ -1039,7 +1087,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) > 0) {
                     _scalar_mass(domain_idx) = _scalar_concentration(domain_idx) * _volume_old(domain_idx);
@@ -1057,7 +1105,7 @@ private:
         auto _flux_y = state.flux_y;
         auto _flux_z = state.flux_z;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _neighbor_left = active_mesh.neighbor_left;
         auto _neighbor_right = active_mesh.neighbor_right;
@@ -1069,7 +1117,7 @@ private:
         auto _coord_k = active_mesh.coord_k;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     return;
@@ -1372,7 +1420,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _Dxx(domain_idx) = 0.0;
@@ -1463,7 +1511,7 @@ private:
         auto _conductivity_y = state.conductivity_y;
         auto _conductivity_z = state.conductivity_z;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _neighbor_left = active_mesh.neighbor_left;
         auto _neighbor_right = active_mesh.neighbor_right;
@@ -1475,7 +1523,7 @@ private:
         auto _coord_k = active_mesh.coord_k;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     return;
@@ -2003,7 +2051,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) > 0) {
                     if (_volume(domain_idx) > 0.0) {
@@ -2017,6 +2065,24 @@ private:
             });
     }
 };
+
+// ============================================================================
+//                      DEFERRED IMPLEMENTATION
+// ============================================================================
+// Implement SwScalarTransportSolver::exchange_scalar_with_subsurface after
+// GwScalarTransportSolver is fully defined
+
+inline void SwScalarTransportSolver::exchange_scalar_with_subsurface(
+    GwScalarTransportSolver* gw_scalar_solver,
+    const GwStateVariables& gw_state,
+    const GwDomain& gw_domain) {
+    if (!gw_scalar_solver) return;
+    
+    exchange_scalar_with_subsurface_impl(
+        gw_scalar_solver->scalar_concentration,
+        gw_scalar_solver->scalar_mass,
+        gw_state, gw_domain);
+}
 
 #endif // FREHG_SCALAR_TRANSPORT_SOLVER_HPP
 

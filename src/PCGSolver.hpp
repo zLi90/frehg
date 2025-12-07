@@ -89,7 +89,7 @@ public:
             auto _r = r;
             auto _rhs = rhs;
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _r(i) = _rhs(i) - _r(i);
                 });
         } else {
@@ -185,7 +185,7 @@ public:
             auto _r = r;
             auto _rhs = rhs;
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _r(i) = _rhs(i) - _r(i);
                 });
         } else {
@@ -281,7 +281,7 @@ private:
         auto _M_inv = M_inv;
         
         Kokkos::parallel_for(RangePolicy(0, num_active), 
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 if (std::abs(_diag(i)) > 1.0e-20) {
                     _M_inv(i) = 1.0 / _diag(i);
                 } else {
@@ -308,7 +308,7 @@ private:
         auto _M_inv = M_inv;
         
         Kokkos::parallel_for(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 if (std::abs(_diag(i)) > 1.0e-20) {
                     _M_inv(i) = 1.0 / _diag(i);
                 } else {
@@ -339,7 +339,7 @@ private:
             auto _z = z;
             
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _z(i) = _M_inv(i) * _r(i);
                 });
         } else if (precond_type == PreconditionerType::SSOR) {
@@ -354,7 +354,7 @@ private:
             auto _z = z;
             
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _z(i) = _M_inv(i) * _r(i);
                 });
         }
@@ -382,7 +382,7 @@ private:
             auto _z = z;
             
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _z(i) = _M_inv(i) * _r(i);
                 });
         } else if (precond_type == PreconditionerType::SSOR) {
@@ -392,7 +392,7 @@ private:
             auto _z = z;
             
             Kokkos::parallel_for(RangePolicy(0, num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     _z(i) = _M_inv(i) * _r(i);
                 });
         }
@@ -422,7 +422,7 @@ private:
         auto _neighbor_front = mesh.neighbor_front;
         
         Kokkos::parallel_for(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 // Diagonal contribution
                 Scalar result = _diag(i) * _p(i);
                 
@@ -484,7 +484,7 @@ private:
         auto _neighbor_top = mesh.neighbor_top;
         
         Kokkos::parallel_for(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 // Diagonal contribution
                 Scalar result = _diag(i) * _p(i);
                 
@@ -532,7 +532,7 @@ private:
     Scalar compute_norm(const View1D<Scalar>& v) {
         Scalar norm_sq;
         Kokkos::parallel_reduce(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& sum) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& sum) {
                 sum += v(i) * v(i);
             }, norm_sq);
         return std::sqrt(norm_sq);
@@ -543,7 +543,7 @@ private:
         auto _a = a;
         auto _b = b;
         Kokkos::parallel_reduce(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& sum) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& sum) {
                 sum += _a(i) * _b(i);
             }, dot);
         return dot;
@@ -553,7 +553,7 @@ private:
         auto _x = x;
         auto _y = y;
         Kokkos::parallel_for(RangePolicy(0, num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 _x(i) = beta * _x(i) + alpha * _y(i);
             });
     }

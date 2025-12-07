@@ -301,8 +301,8 @@ public:
     double read_double(const std::string& field_name, 
                       double default_value = 0.0) const {
         try {
-            std::string value_str = read_field(field_name);
-            if (value_str.empty()) {
+            std::string value_str = read_field(field_name, "__MISSING__");
+            if (value_str.empty() || value_str == "__MISSING__") {
                 return default_value;
             }
             return std::stod(value_str);
@@ -318,8 +318,9 @@ public:
     int read_int(const std::string& field_name, 
                 int default_value = 0) const {
         try {
-            std::string value_str = read_field(field_name);
-            if (value_str.empty()) {
+            // Pass a placeholder to read_field to prevent exception on missing field
+            std::string value_str = read_field(field_name, "__MISSING__");
+            if (value_str.empty() || value_str == "__MISSING__") {
                 return default_value;
             }
             return std::stoi(value_str);
@@ -335,8 +336,8 @@ public:
     bool read_bool(const std::string& field_name, 
                   bool default_value = false) const {
         try {
-            std::string value_str = read_field(field_name);
-            if (value_str.empty()) {
+            std::string value_str = read_field(field_name, "__MISSING__");
+            if (value_str.empty() || value_str == "__MISSING__") {
                 return default_value;
             }
             
@@ -415,6 +416,33 @@ public:
         }
         
         return result;
+    }
+    
+    // Overload with default value
+    std::vector<int> read_int_array(const std::string& field_name, 
+                                     const std::vector<int>& default_value) const {
+        std::string value_str = read_field(field_name);
+        
+        if (value_str.empty()) {
+            return default_value;
+        }
+        
+        std::vector<int> result;
+        std::istringstream iss(value_str);
+        std::string token;
+        while (std::getline(iss, token, ',')) {
+            token = trim(token);
+            if (!token.empty()) {
+                try {
+                    result.push_back(std::stoi(token));
+                } catch (const std::exception& e) {
+                    throw std::runtime_error("Cannot convert array element '" + token + 
+                                           "' to int in field '" + field_name + "'");
+                }
+            }
+        }
+        
+        return result.empty() ? default_value : result;
     }
     
     // ========================================================================

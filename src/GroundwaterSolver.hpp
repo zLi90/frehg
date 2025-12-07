@@ -11,6 +11,10 @@
 #include <cmath>
 #include <Kokkos_Core.hpp>
 
+// Use classes from Frehg namespace
+using Frehg::GwBoundaryConditionManager;
+using Frehg::GwBcType;
+
 // Forward declarations
 class SwStateVariables;
 class SwDomain;
@@ -128,7 +132,7 @@ public:
         auto _scalar = scalar_concentration;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _density_ratio(domain_idx) = 1.0;
@@ -416,7 +420,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) > 0) {
                     Scalar h = _pressure(domain_idx);
@@ -435,7 +439,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) > 0) {
                     _head_from_water_content(domain_idx) = compute_hwc(domain_idx);
@@ -473,7 +477,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _conductivity_x(domain_idx) = 0.0;
@@ -560,7 +564,7 @@ private:
         Scalar min_d = min_depth;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) return;
                 
@@ -609,7 +613,7 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _density_ratio_xp(domain_idx) = 1.0;
@@ -698,10 +702,10 @@ private:
         auto _coord_k = active_mesh.coord_k;
         
         // Get layer thicknesses from domain
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _matrix_diag(domain_idx) = 1.0;
@@ -822,10 +826,10 @@ private:
         auto _neighbor_bottom = active_mesh.neighbor_bottom;
         auto _active_to_domain = active_mesh.active_to_domain;
         auto _coord_k = active_mesh.coord_k;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _matrix_rhs(domain_idx) = _pressure_old(domain_idx);
@@ -922,7 +926,7 @@ private:
         auto _pressure = state.pressure;
         auto _active_to_domain = active_mesh.active_to_domain;
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 solution(i) = _pressure(domain_idx);
             });
@@ -940,7 +944,7 @@ private:
         
         // Copy solution back to state.pressure (h_new)
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 _pressure(domain_idx) = solution(i);
             });
@@ -982,7 +986,7 @@ private:
             if (bc.type == GwBcType::FIXED_HEAD) {
                 // Dirichlet BC: prescribed hydraulic head
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         _matrix_diag(cell_idx) = 1.0;
                         _matrix_xp(cell_idx) = 0.0;
@@ -997,7 +1001,7 @@ private:
             } else if (bc.type == GwBcType::FIXED_FLUX) {
                 // Neumann BC: prescribed flux (add to RHS)
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
                         Scalar flux_volume = bc_value * dt_local;
                         _matrix_rhs(cell_idx) += flux_volume;
@@ -1033,7 +1037,7 @@ private:
             Kokkos::deep_copy(d_bc_indices, h_bc_indices);
             
             Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                KOKKOS_LAMBDA (const Ordinal i) {
                     Ordinal cell_idx = d_bc_indices(i);
                     _pressure(cell_idx) = bc_value;
                 });
@@ -1066,10 +1070,10 @@ private:
         auto _neighbor_top = active_mesh.neighbor_top;
         auto _active_to_domain = active_mesh.active_to_domain;
         auto _coord_k = active_mesh.coord_k;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _flux_x(domain_idx) = 0.0;
@@ -1137,13 +1141,13 @@ private:
         auto _water_content_sat = state.water_content_sat;
         auto _room = state.room;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _active_to_domain = active_mesh.active_to_domain;
         auto _coord_k = active_mesh.coord_k;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     _room(domain_idx) = 0.0;
@@ -1158,6 +1162,7 @@ private:
     }
     
     // ========================================================================
+public:
     // COMPUTE SEEPAGE FLUX FROM TOP BOUNDARY
     // ========================================================================
     // Computes seepage rate (qss) from top boundary flux for surface-subsurface coupling
@@ -1171,7 +1176,7 @@ private:
         auto _water_content_res = state.water_content_res;
         auto _seepage_top = state.seepage_top;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _active_to_domain = active_mesh.active_to_domain;
         auto _coord_k = active_mesh.coord_k;
@@ -1267,8 +1272,8 @@ private:
                 if (qz_top < 0.0) {
                     Scalar wc = h_water_content(domain_idx);
                     Scalar wcs = h_water_content_sat(domain_idx);
-                    auto h_dz_layers = Kokkos::create_mirror_view(domain.dz_layers);
-                    Kokkos::deep_copy(h_dz_layers, domain.dz_layers);
+                    auto h_dz_layers = Kokkos::create_mirror_view(domain.layer_thickness);
+                    Kokkos::deep_copy(h_dz_layers, domain.layer_thickness);
                     Scalar dz_layer = h_dz_layers(k);
                     Scalar pore_space = (wcs - wc) * domain.dx * domain.dy * dz_layer;
                     Scalar vseep = std::abs(qz_top) * dt * wcs;
@@ -1307,7 +1312,7 @@ private:
         auto _pressure = state.pressure;
         auto _pressure_old = state.pressure_old;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _neighbor_left = active_mesh.neighbor_left;
         auto _neighbor_back = active_mesh.neighbor_back;
@@ -1316,7 +1321,7 @@ private:
         auto _coord_k = active_mesh.coord_k;
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+            KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) {
                     return;
@@ -1380,6 +1385,7 @@ private:
             });
     }
     
+public:
     // ========================================================================
     // ADAPTIVE TIME STEPPING
     // ========================================================================
@@ -1412,7 +1418,7 @@ private:
         auto _flux_z = state.flux_z;
         auto _conductivity_z = state.conductivity_z;
         auto _active_mask_3d = domain.active_mask_3d;
-        auto _dz_layers = domain.dz_layers;
+        auto _dz_layers = domain.layer_thickness;
         
         auto _neighbor_left = active_mesh.neighbor_left;
         auto _neighbor_back = active_mesh.neighbor_back;
@@ -1428,7 +1434,7 @@ private:
         // Reduction 1: Maximum flux divergence error
         Kokkos::parallel_reduce(
             RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dq_max) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& local_dq_max) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) return;
                 
@@ -1484,7 +1490,7 @@ private:
         
         Kokkos::parallel_reduce(
             RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dt_Comin) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& local_dt_Comin) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) return;
                 
@@ -1552,7 +1558,7 @@ private:
         // Reduction 3: Maximum error estimate
         Kokkos::parallel_reduce(
             RangePolicy(0, active_mesh.num_active),
-            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_err_max) {
+            KOKKOS_LAMBDA (const Ordinal i, Scalar& local_err_max) {
                 Ordinal domain_idx = _active_to_domain(i);
                 if (_active_mask_3d(domain_idx) == 0) return;
                 
@@ -1576,7 +1582,7 @@ private:
             // Find minimum dt_eta from surface changes
             Kokkos::parallel_reduce(
                 RangePolicy(0, active_mesh.num_active),
-                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dt_sync) {
+                KOKKOS_LAMBDA (const Ordinal i, Scalar& local_dt_sync) {
                     Ordinal domain_idx = _active_to_domain(i);
                     if (_active_mask_3d(domain_idx) == 0) return;
                     

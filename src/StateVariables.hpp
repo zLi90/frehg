@@ -48,7 +48,7 @@ public:
     virtual ~BaseStateVariables() = default;
     
     // Update old values (called at start of time step)
-    void update_old_values() {
+    virtual void update_old_values() {
         Kokkos::deep_copy(pressure_old, pressure);
         Kokkos::deep_copy(velocity_x_old, velocity_x);
         Kokkos::deep_copy(velocity_y_old, velocity_y);

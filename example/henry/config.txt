@@ -17,6 +17,8 @@
 # SIMULATION CONTROL
 # --------------------------------------------------------------------------
 sim_id = Henry_Problem
+finput = 
+foutput = 
 
 # Domain: 2m x 1m cross-section (x-z plane)
 # 100 cells in x (dx=0.02m), 1 cell in y, 50 cells in z (dz=0.02m)
@@ -33,6 +35,7 @@ dz_incre = 1.0
 use_mpi = 0
 mpi_nx = 1
 mpi_ny = 1
+nthreads = 1
 
 # Time stepping
 dt = 1.0

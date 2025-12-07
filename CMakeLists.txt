@@ -18,12 +18,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Enable aggressive warnings to help clean up legacy code
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)
+add_compile_options(-Wall -Wextra)
 
 # -----------------------------------------------------------------------------
 # 2. Dependency: MPI
 # -----------------------------------------------------------------------------
-find_package(MPI REQUIRED)
+#find_package(MPI REQUIRED)
 
 # -----------------------------------------------------------------------------
 # 3. Dependency: Kokkos

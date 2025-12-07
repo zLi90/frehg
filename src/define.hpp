@@ -171,8 +171,9 @@ namespace Constants {
 //                           KOKKOS UTILITIES
 // ============================================================================
 
-// Lambda capture for Kokkos kernels (C++14 compatibility)
-// Usage: KOKKOS_LAMBDA(int i) { /* kernel code */ }
-#define KOKKOS_LAMBDA KOKKOS_INLINE_FUNCTION constexpr auto
+// Note: KOKKOS_LAMBDA is already defined by Kokkos itself
+// For CPU backends (Serial, OpenMP), it expands to [=]
+// For GPU backends (CUDA, HIP), it includes device annotations
+// Usage: Kokkos::parallel_for(N, KOKKOS_LAMBDA(int i) { ... });
 
 #endif // FREHG_DEFINE_HPP

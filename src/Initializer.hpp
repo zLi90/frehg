@@ -820,9 +820,13 @@ private:
             Scalar visc_x = input_reader_->read_double("viscx", 0.0);
             Scalar visc_y = input_reader_->read_double("viscy", 0.0);
             
+            Scalar min_depth = input_reader_->read_double("min_dept", 1.0e-6);
+            Scalar water_threshold = input_reader_->read_double("wtfh", 0.01);
+            
             sw_solver_ = std::make_unique<ShallowWaterSolver>(
                 *sw_domain_, *sw_active_mesh_, *sw_state_,
                 config_.dt, grav, manning_n, visc_x, visc_y,
+                min_depth, water_threshold,
                 PreconditionerType::JACOBI, 1.0e-8, 10000,
                 sw_bc_manager_.get(), sw_source_sink_manager_.get());
             
@@ -923,6 +927,7 @@ private:
         }
     }
     
+public:
     // ========================================================================
     // MAIN INITIALIZATION FUNCTION
     // ========================================================================

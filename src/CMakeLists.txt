@@ -11,7 +11,7 @@ IF(NOT Enable_GPU)
 ENDIF()
 
 #   Find MPI
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE     MPI::MPI)
+#target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE     MPI::MPI)
 
 #   Find Kokkos
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE     Kokkos::kokkos)

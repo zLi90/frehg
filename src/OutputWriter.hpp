@@ -62,10 +62,6 @@ private:
     std::ofstream time_series_file_;
     std::string time_series_filename_;
     
-    // --- Output Timing ---
-    mutable Scalar next_output_time_;     // Next time to write output
-    mutable Scalar output_time_tolerance_; // Tolerance for time comparison
-    
     // --- Boundary Condition Managers (for computing fluxes) ---
     // Note: These are optional - boundary fluxes can be computed if available
     // For now, we'll compute volumes and leave flux computation as placeholder

@@ -10,7 +10,6 @@
 #include "ScalarTransportSolver.hpp"
 #include "Initializer.hpp"
 #include "OutputWriter.hpp"
-#include <mpi.h>
 #include <Kokkos_Core.hpp> // Required for Kokkos::Timer
 #include <string>
 #include <iostream>
@@ -22,10 +21,6 @@ namespace Frehg {
 
 class ModelDriver {
 private:
-    // MPI Communicator for this simulation instance
-    MPI_Comm comm_;
-    int rank_;
-    
     // Performance timer
     Kokkos::Timer timer_;
     
@@ -62,9 +57,7 @@ public:
     // ========================================================================
     // Constructor
     // ========================================================================
-    ModelDriver(MPI_Comm comm) : comm_(comm) {
-        MPI_Comm_rank(comm_, &rank_);
-    }
+    ModelDriver() = default;
 
     // ========================================================================
     // Destructor
@@ -77,13 +70,11 @@ public:
     void initialize(const std::string& input_dir, const std::string& output_dir) {
         output_dir_ = output_dir;
         
-        if (rank_ == 0) {
-            std::cout << "------------------------------------------------------------\n";
-            std::cout << "[Driver] Phase 1: Initialization\n";
-            std::cout << "[Driver] Reading configuration from: " << input_dir << "\n";
-            std::cout << "[Driver] Writing results to        : " << output_dir << "\n";
-            std::cout << "------------------------------------------------------------\n";
-        }
+        std::cout << "------------------------------------------------------------\n";
+        std::cout << "[Driver] Phase 1: Initialization\n";
+        std::cout << "[Driver] Reading configuration from: " << input_dir << "\n";
+        std::cout << "[Driver] Writing results to        : " << output_dir << "\n";
+        std::cout << "------------------------------------------------------------\n";
 
         // Create initializer and perform all initialization steps
         initializer_ = std::make_unique<Initializer>(input_dir, output_dir);
@@ -147,20 +138,16 @@ public:
         // Initialize OutputWriter
         output_writer_->initialize(dt_, n_scalar_);
         
-        if (rank_ == 0) {
-            std::cout << "[Driver] Initialization complete.\n" << std::endl;
-        }
+        std::cout << "[Driver] Initialization complete.\n" << std::endl;
     }
 
     // ========================================================================
     // Execution Phase (Time Loop)
     // ========================================================================
     void run() {
-        if (rank_ == 0) {
-            std::cout << "------------------------------------------------------------\n";
-            std::cout << "[Driver] Phase 2: Simulation Loop\n";
-            std::cout << "------------------------------------------------------------\n";
-        }
+        std::cout << "------------------------------------------------------------\n";
+        std::cout << "[Driver] Phase 2: Simulation Loop\n";
+        std::cout << "------------------------------------------------------------\n";
         
         // Reset timer to measure pure computation time (excluding setup)
         timer_.reset();
@@ -178,17 +165,13 @@ public:
         }
         
         // Write initial conditions
-        if (rank_ == 0) {
-            std::cout << "[Driver] Writing initial conditions...\n";
-        }
+        std::cout << "[Driver] Writing initial conditions...\n";
         if (output_writer_) {
             output_writer_->write_spatial_fields(current_time, step);
             output_writer_->write_time_series(current_time, step);
         }
         
-        if (rank_ == 0) {
-            std::cout << "[Driver] Beginning time loop...\n";
-        }
+        std::cout << "[Driver] Beginning time loop...\n";
 
         while (current_time < end_time_) {
             // Adaptive time stepping: adjust dt before the step
@@ -244,7 +227,7 @@ public:
             }
             step++;
             
-            if (rank_ == 0 && step % 10 == 0) {
+            if (step % 10 == 0) {
                 std::cout << "Step: " << step << " | Time: " << current_time 
                          << "s / " << end_time_ << "s | dt_sw: " << dt_sw 
                          << " | dt_gw: " << dt_gw << "\r" << std::flush;
@@ -287,9 +270,7 @@ public:
                                 solver->set_time_step(dt_gw);
                             }
                             
-                            if (rank_ == 0) {
-                                std::cout << "   >>> Subsurface executed with dt = " << dt_gw << "\n";
-                            }
+                            std::cout << "   >>> Subsurface executed with dt = " << dt_gw << "\n";
                         }
                     }
                     
@@ -386,22 +367,17 @@ public:
             }
             
             // 6. Report time step completion
-            if (rank_ == 0 && step % 100 == 0) {
+            if (step % 100 == 0) {
                 std::cout << "\n[Driver] Step " << step << " (" << current_time 
                          << "s of " << end_time_ << "s) completed, dt = " << dt_ << "\n";
             }
         }
-
-        // Barrier to ensure all ranks finish before printing time
-        MPI_Barrier(comm_);
         
         double total_time = timer_.seconds();
-        if (rank_ == 0) {
-            std::cout << "\n[Driver] Simulation completed!\n";
-            std::cout << "[Driver] Total steps: " << step << "\n";
-            std::cout << "[Driver] Total wall time: " << total_time << " s\n";
-            std::cout << "[Driver] Average time per step: " << total_time / step << " s\n";
-        }
+        std::cout << "\n[Driver] Simulation completed!\n";
+        std::cout << "[Driver] Total steps: " << step << "\n";
+        std::cout << "[Driver] Total wall time: " << total_time << " s\n";
+        std::cout << "[Driver] Average time per step: " << total_time / step << " s\n";
     }
     
 private:
