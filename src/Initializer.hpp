@@ -60,6 +60,10 @@ private:
         Scalar Tend;
         Scalar dt_out;
         Ordinal n_monitor;
+        bool dt_adjust;            // Enable adaptive time stepping
+        Scalar dt_min;             // Minimum time step
+        Scalar dt_max;             // Maximum time step
+        Scalar Co_max;             // Maximum Courant number for groundwater
         
         // Physics flags
         bool sim_shallowwater;
@@ -75,6 +79,7 @@ private:
         Config() : NX(0), NY(0), NZ(0), dx(0.0), dy(0.0), dz(0.0), botZ(0.0),
                    dz_incre(1.0), use_mpi(false), mpi_nx(1), mpi_ny(1),
                    nthreads(1), dt(1.0), Tend(100.0), dt_out(10.0), n_monitor(0),
+                   dt_adjust(false), dt_min(0.0), dt_max(0.0), Co_max(0.0),
                    sim_shallowwater(true), sim_groundwater(true), sync_coupling(true),
                    n_scalar(0), baroclinic(false), superbee(true) {}
     };
@@ -151,6 +156,10 @@ public:
         config_.Tend = input_reader_->read_double("Tend", 100.0);
         config_.dt_out = input_reader_->read_double("dt_out", 10.0);
         config_.n_monitor = input_reader_->read_int("n_monitor", 0);
+        config_.dt_adjust = input_reader_->read_bool("dt_adjust", false);
+        config_.dt_min = input_reader_->read_double("dt_min", 0.0);
+        config_.dt_max = input_reader_->read_double("dt_max", 0.0);
+        config_.Co_max = input_reader_->read_double("Co_max", 0.0);
         
         // Read physics flags
         config_.sim_shallowwater = input_reader_->read_bool("sim_shallowwater", true);

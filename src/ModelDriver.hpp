@@ -36,10 +36,14 @@ private:
     bool sim_shallowwater_;
     bool sim_groundwater_;
     bool sync_coupling_;          // Synchronous coupling (same dt) vs async
+    bool use_adaptive_dt_;        // Use adaptive time stepping
     int n_scalar_;                // Number of scalar species
     Scalar dt_;                   // Surface water time step
     Scalar dtg_;                  // Groundwater time step (may differ)
-    Scalar dt_min_;               // Minimum groundwater time step for async
+    Scalar dt_min_;               // Minimum time step
+    Scalar dt_max_;               // Maximum time step
+    Scalar Co_max_;               // Maximum Courant number for groundwater
+    Scalar cfl_max_;              // Maximum CFL number for shallow water
     Scalar end_time_;             // Total simulation time
     Scalar dt_out_;               // Output interval
     int output_interval_;          // Output every N steps
@@ -92,7 +96,14 @@ public:
         n_scalar_ = config.n_scalar;
         dt_ = config.dt;
         dtg_ = config.dt;
-        dt_min_ = config.dt * 0.1;  // Default: 10% of main dt
+        
+        // Adaptive time stepping parameters (with defaults)
+        use_adaptive_dt_ = config.dt_adjust;  // Will be read from input
+        dt_min_ = (config.dt_min > 0.0) ? config.dt_min : config.dt * 0.1;
+        dt_max_ = (config.dt_max > 0.0) ? config.dt_max : config.dt;
+        Co_max_ = (config.Co_max > 0.0) ? config.Co_max : 2.0;
+        cfl_max_ = 0.7;  // Default CFL limit for shallow water
+        
         end_time_ = config.Tend;
         dt_out_ = config.dt_out;
         output_interval_ = static_cast<int>(config.dt_out / config.dt);
@@ -178,8 +189,54 @@ public:
         }
 
         while (current_time < end_time_) {
+            // Adaptive time stepping: adjust dt before the step
+            Scalar dt_sw = dt_;
+            Scalar dt_gw = dtg_;
+            
+            if (use_adaptive_dt_) {
+                // 1. Compute adaptive time step for shallow water (if enabled)
+                if (sim_shallowwater_ && initializer_) {
+                    auto* sw_solver = initializer_->get_sw_solver();
+                    if (sw_solver) {
+                        // Compute adaptive time step based on current velocities
+                        dt_sw = sw_solver->adaptive_time_step(dt_min_, dt_max_, cfl_max_);
+                        sw_solver->set_time_step(dt_sw);
+                    }
+                }
+                
+                // 2. Compute adaptive time step for groundwater (if enabled)
+                if (sim_groundwater_ && initializer_) {
+                    auto* gw_solver = initializer_->get_gw_solver();
+                    auto* sw_solver = (sim_shallowwater_) ? initializer_->get_sw_solver() : nullptr;
+                    auto* sw_state = (sim_shallowwater_) ? initializer_->get_sw_state() : nullptr;
+                    auto* sw_domain = (sim_shallowwater_) ? initializer_->get_sw_domain() : nullptr;
+                    
+                    if (gw_solver) {
+                        dt_gw = gw_solver->adaptive_time_step(
+                            dt_min_, dt_max_, Co_max_,
+                            sync_coupling_, dt_sw,
+                            sw_state, sw_domain);
+                        gw_solver->set_time_step(dt_gw);
+                    }
+                }
+                
+                // 3. Handle synchronous coupling: use minimum of both time steps
+                if (sync_coupling_ && sim_shallowwater_ && sim_groundwater_) {
+                    dt_sw = std::min(dt_sw, dt_gw);
+                    dt_gw = dt_sw;
+                    if (sim_shallowwater_ && initializer_) {
+                        auto* sw_solver = initializer_->get_sw_solver();
+                        if (sw_solver) sw_solver->set_time_step(dt_sw);
+                    }
+                    if (sim_groundwater_ && initializer_) {
+                        auto* gw_solver = initializer_->get_gw_solver();
+                        if (gw_solver) gw_solver->set_time_step(dt_gw);
+                    }
+                }
+            }
+            
             // Update time
-            current_time += dt_;
+            current_time += dt_sw;
             if (!sim_groundwater_ || sync_coupling_) {
                 t_subsurface = current_time;
             }
@@ -187,7 +244,8 @@ public:
             
             if (rank_ == 0 && step % 10 == 0) {
                 std::cout << "Step: " << step << " | Time: " << current_time 
-                         << "s / " << end_time_ << "s\r" << std::flush;
+                         << "s / " << end_time_ << "s | dt_sw: " << dt_sw 
+                         << " | dt_gw: " << dt_gw << "\r" << std::flush;
             }
             
             // Note: Boundary conditions and source/sink terms are automatically
@@ -214,11 +272,21 @@ public:
                         solver->solve(current_time);
                     } else {
                         // Asynchronous coupling: multiple groundwater steps per surface step
-                        while (t_subsurface + dtg_ <= current_time) {
-                            t_subsurface += dtg_;
+                        while (t_subsurface + dt_gw <= current_time) {
+                            t_subsurface += dt_gw;
                             solver->solve(t_subsurface);
+                            
+                            // Recompute adaptive time step for next groundwater step
+                            if (use_adaptive_dt_) {
+                                dt_gw = solver->adaptive_time_step(
+                                    dt_min_, dt_max_, Co_max_,
+                                    sync_coupling_, dt_sw,
+                                    sw_state, sw_domain);
+                                solver->set_time_step(dt_gw);
+                            }
+                            
                             if (rank_ == 0) {
-                                std::cout << "   >>> Subsurface executed with dt = " << dtg_ << "\n";
+                                std::cout << "   >>> Subsurface executed with dt = " << dt_gw << "\n";
                             }
                         }
                     }

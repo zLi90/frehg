@@ -85,6 +85,16 @@ public:
     void set_boundary_condition_manager(GwBoundaryConditionManager* bc_manager) {
         bc_manager_ = bc_manager;
     }
+    
+    // Set time step (for adaptive time stepping)
+    void set_time_step(Scalar new_dt) {
+        dt = new_dt;
+    }
+    
+    // Get current time step
+    Scalar get_time_step() const {
+        return dt;
+    }
 
     // Main solver function (predictor-corrector scheme)
     void solve(Scalar current_time = 0.0) {
@@ -1204,6 +1214,306 @@ private:
                     _water_content(domain_idx) = state.water_content_res(domain_idx);
                 }
             });
+    }
+    
+    // ========================================================================
+    // ADAPTIVE TIME STEPPING
+    // ========================================================================
+    // Adjusts time step based on flux divergence errors and Courant number
+    // Following legacy implementation in groundwater.c:adaptive_time_step()
+    // Returns the new recommended time step
+    Scalar adaptive_time_step(Scalar dt_min, Scalar dt_max, Scalar Co_max, 
+                               bool sync_coupling, Scalar surface_dt,
+                               const SwStateVariables* sw_state = nullptr,
+                               const SwDomain* sw_domain = nullptr) {
+        // Parameters from legacy code
+        Scalar r_red = 0.75;      // Reduction factor
+        Scalar r_inc = 1.25;      // Increase factor
+        Scalar q_target = 5e-4;   // Target flux for async coupling
+        
+        Scalar dq_max = 0.0;
+        Scalar dt_Comin = 1e8;
+        Scalar err_max = 0.0;
+        Scalar dt_new = dt;
+        Scalar dt_sync = dt_max;
+        
+        // Get state variables
+        auto _pressure = state.pressure;
+        auto _pressure_old = state.pressure_old;
+        auto _head_prev_prev = state.head_prev_prev;
+        auto _water_content = state.water_content;
+        auto _water_content_sat = state.water_content_sat;
+        auto _flux_x = state.flux_x;
+        auto _flux_y = state.flux_y;
+        auto _flux_z = state.flux_z;
+        auto _conductivity_z = state.conductivity_z;
+        auto _active_mask_3d = domain.active_mask_3d;
+        auto _dz_layers = domain.dz_layers;
+        
+        auto _neighbor_left = active_mesh.neighbor_left;
+        auto _neighbor_back = active_mesh.neighbor_back;
+        auto _neighbor_bottom = active_mesh.neighbor_bottom;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _coord_k = active_mesh.coord_k;
+        
+        // Get face areas from domain (need to compute or store)
+        // For now, we'll compute them on the fly
+        Scalar dt_prev = dt;  // Previous time step (dtn in legacy)
+        
+        // Compute errors and flux divergence using separate reductions
+        // Reduction 1: Maximum flux divergence error
+        Kokkos::parallel_reduce(
+            RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dq_max) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) return;
+                
+                // Flux divergence (only for interior cells, not top cells)
+                Ordinal k = _coord_k(i);
+                if (k > 0) {  // Not top cell
+                    Scalar dz = _dz_layers(k);
+                    Scalar Ax = domain.dy * dz;
+                    Scalar Ay = domain.dx * dz;
+                    Scalar Az = domain.dx * domain.dy;
+                    
+                    // Compute flux divergence
+                    Scalar qin = 0.0, qou = 0.0;
+                    
+                    // X-direction
+                    qin += _flux_x(domain_idx) / Ax;
+                    Ordinal active_left = _neighbor_left(i);
+                    if (active_left >= 0) {
+                        Ordinal idx_left = _active_to_domain(active_left);
+                        qou += _flux_x(idx_left) / Ax;
+                    }
+                    
+                    // Y-direction
+                    qin += _flux_y(domain_idx) / Ay;
+                    Ordinal active_back = _neighbor_back(i);
+                    if (active_back >= 0) {
+                        Ordinal idx_back = _active_to_domain(active_back);
+                        qou += _flux_y(idx_back) / Ay;
+                    }
+                    
+                    // Z-direction
+                    qin += _flux_z(domain_idx) / Az;
+                    Ordinal active_bottom = _neighbor_bottom(i);
+                    if (active_bottom >= 0) {
+                        Ordinal idx_bottom = _active_to_domain(active_bottom);
+                        qou += _flux_z(idx_bottom) / Az;
+                    }
+                    
+                    Scalar dq = std::abs(qin - qou) * dt / dz;
+                    if (dq > local_dq_max) local_dq_max = dq;
+                }
+            },
+            Kokkos::Max<Scalar>(dq_max)
+        );
+        
+        // Reduction 2: Minimum Courant-limited time step
+        auto _water_content_res = state.water_content_res;
+        auto _conductivity_sat_z = state.conductivity_sat_z;
+        auto _vg_alpha = state.vg_alpha;
+        auto _vg_n = state.vg_n;
+        auto _vg_m = state.vg_m;
+        auto _vg_ha = state.vg_ha;
+        
+        Kokkos::parallel_reduce(
+            RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dt_Comin) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) return;
+                
+                Ordinal k = _coord_k(i);
+                if (k > 0) {  // Not top cell
+                    Scalar dz = _dz_layers(k);
+                    Scalar wc = _water_content(domain_idx);
+                    Scalar wcs = _water_content_sat(domain_idx);
+                    
+                    // Courant number constraint for unsaturated flow
+                    if (wc < wcs) {
+                        // Compute dK/dwc inline (can't call member function from lambda)
+                        Scalar wcr = _water_content_res(domain_idx);
+                        Scalar Ks = _conductivity_sat_z(domain_idx);
+                        Scalar alpha = _vg_alpha(domain_idx);
+                        Scalar n = _vg_n(domain_idx);
+                        Scalar m = _vg_m(domain_idx);
+                        Scalar ha = _vg_ha(domain_idx);
+                        
+                        // Lambda limiter
+                        Scalar wc_lim = wc;
+                        if (wc > 0.9999 * wcs && wc < wcs) {
+                            wc_lim = 0.9999 * wcs;
+                        }
+                        
+                        Scalar s = (wc_lim - wcr) / (wcs - wcr);
+                        Scalar dKdwc = 0.0;
+                        
+                        if (s > 0.0 && s < 1.0) {
+                            Scalar term0, term1, term2;
+                            
+                            if (ha > 0.0) {
+                                // Modified van Genuchten
+                                Scalar wcm = wcr + (wcs - wcr) * std::pow((1.0 + std::pow(ha * alpha, n)), m);
+                                Scalar c2 = (wcs - wcr) / (wcm - wcr);
+                                Scalar c1 = 1.0 / std::pow(1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m), 2.0);
+                                
+                                term0 = std::pow(1.0 - std::pow(c2 * s, 1.0/m), m);
+                                term1 = 0.5 * c1 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
+                                term2 = 2.0 * c1 * Ks * c2 * std::pow(s, 0.5) * 
+                                        std::pow(c2 * s, 1.0/m - 1.0) * (1.0 - term0) * 
+                                        std::pow(1.0 - std::pow(c2 * s, 1.0/m), m - 1.0);
+                            } else {
+                                // Standard van Genuchten
+                                term0 = std::pow(1.0 - std::pow(s, 1.0/m), m);
+                                term1 = 0.5 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
+                                term2 = 2.0 * Ks * std::pow(s, (2.0 - m) / (2.0 * m)) * (1.0 - term0) * 
+                                        std::pow(1.0 - std::pow(s, 1.0/m), m - 1.0);
+                            }
+                            
+                            dKdwc = (term1 + term2) / (wcs - wcr);
+                            if (dKdwc < 0.0) dKdwc = 0.0;
+                        }
+                        
+                        if (dKdwc > 0.0) {
+                            Scalar dt_Co = Co_max * dz / dKdwc;
+                            if (dt_Co < local_dt_Comin) local_dt_Comin = dt_Co;
+                        }
+                    }
+                }
+            },
+            Kokkos::Min<Scalar>(dt_Comin)
+        );
+        
+        // Reduction 3: Maximum error estimate
+        Kokkos::parallel_reduce(
+            RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_err_max) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) return;
+                
+                // Error estimate (second-order time derivative)
+                Scalar h = _pressure(domain_idx);
+                Scalar hn = _pressure_old(domain_idx);
+                Scalar hnm = _head_prev_prev(domain_idx);
+                Scalar err = 0.5 * dt * std::abs((h - hn) / dt - (hn - hnm) / dt_prev);
+                if (err > local_err_max) local_err_max = err;
+            },
+            Kokkos::Max<Scalar>(err_max)
+        );
+        
+        // Adjust dt due to async coupling (if not synchronous)
+        if (!sync_coupling && sw_state && sw_domain) {
+            auto _depth = sw_state->depth;
+            auto _pressure_sw = sw_state->pressure;
+            auto _pressure_sw_old = sw_state->pressure_old;
+            auto _gw_to_sw = domain.mesh->gw_to_sw_idx;
+            
+            // Find minimum dt_eta from surface changes
+            Kokkos::parallel_reduce(
+                RangePolicy(0, active_mesh.num_active),
+                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_dt_sync) {
+                    Ordinal domain_idx = _active_to_domain(i);
+                    if (_active_mask_3d(domain_idx) == 0) return;
+                    
+                    Ordinal k = _coord_k(i);
+                    if (k == 0) {  // Top cell
+                        Ordinal sw_idx = _gw_to_sw(domain_idx);
+                        if (sw_idx >= 0 && sw_idx < sw_domain->num_cells_total) {
+                            Scalar depth = _depth(sw_idx);
+                            Scalar eta = _pressure_sw(sw_idx);
+                            Scalar etan = _pressure_sw_old(sw_idx);
+                            
+                            if (depth > 0.0 && std::abs(eta - etan) > 1e-10) {
+                                Scalar dz = _dz_layers(k);
+                                Scalar Kz = _conductivity_z(domain_idx);
+                                if (Kz > 0.0) {
+                                    Scalar dt_eta = std::abs(q_target * dz * surface_dt / Kz / (eta - etan));
+                                    if (dt_eta < local_dt_sync) local_dt_sync = dt_eta;
+                                }
+                            }
+                        }
+                    }
+                },
+                Kokkos::Min<Scalar>(dt_sync)
+            );
+        }
+        
+        // Adjust dt based on flux divergence
+        if (dq_max > 0.02) {
+            dt_new = dt * r_red;
+        } else if (dq_max < 0.01) {
+            dt_new = dt * r_inc;
+        }
+        
+        // Apply Courant number constraint
+        if (dt_new > dt_Comin) {
+            dt_new = dt_Comin;
+        }
+        
+        // Apply async coupling constraint (if not synchronous)
+        if (!sync_coupling && dt_new > dt_sync) {
+            dt_new = dt_sync;
+        }
+        
+        // Clamp to bounds
+        if (dt_new > dt_max) dt_new = dt_max;
+        if (dt_new < dt_min) dt_new = dt_min;
+        
+        return dt_new;
+    }
+    
+private:
+    // Helper function to compute dK/dwc for adaptive time stepping
+    // Following legacy implementation in subroutines.c:compute_dKdwc()
+    KOKKOS_INLINE_FUNCTION
+    Scalar compute_dKdwc(Ordinal idx) const {
+        Scalar wc = state.water_content(idx);
+        Scalar wcs = state.water_content_sat(idx);
+        Scalar wcr = state.water_content_res(idx);
+        Scalar Ks = state.conductivity_sat_z(idx);
+        Scalar alpha = state.vg_alpha(idx);
+        Scalar n = state.vg_n(idx);
+        Scalar m = state.vg_m(idx);
+        Scalar ha = state.vg_ha(idx);
+        
+        // Lambda limiter (from legacy code)
+        if (wc > 0.9999 * wcs && wc < wcs) {
+            wc = 0.9999 * wcs;
+        }
+        
+        Scalar s = (wc - wcr) / (wcs - wcr);
+        if (s <= 0.0 || s >= 1.0) {
+            return 0.0;  // At bounds, derivative is zero
+        }
+        
+        Scalar term0, term1, term2, dKdwc;
+        
+        if (ha > 0.0) {
+            // Modified van Genuchten
+            Scalar wcm = wcr + (wcs - wcr) * std::pow((1.0 + std::pow(ha * alpha, n)), m);
+            Scalar c2 = (wcs - wcr) / (wcm - wcr);
+            Scalar c1 = 1.0 / std::pow(1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m), 2.0);
+            
+            term0 = std::pow(1.0 - std::pow(c2 * s, 1.0/m), m);
+            term1 = 0.5 * c1 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
+            term2 = 2.0 * c1 * Ks * c2 * std::pow(s, 0.5) * 
+                    std::pow(c2 * s, 1.0/m - 1.0) * (1.0 - term0) * 
+                    std::pow(1.0 - std::pow(c2 * s, 1.0/m), m - 1.0);
+        } else {
+            // Standard van Genuchten
+            term0 = std::pow(1.0 - std::pow(s, 1.0/m), m);
+            term1 = 0.5 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
+            term2 = 2.0 * Ks * std::pow(s, (2.0 - m) / (2.0 * m)) * (1.0 - term0) * 
+                    std::pow(1.0 - std::pow(s, 1.0/m), m - 1.0);
+        }
+        
+        dKdwc = (term1 + term2) / (wcs - wcr);
+        
+        // Ensure non-negative
+        if (dKdwc < 0.0) dKdwc = 0.0;
+        
+        return dKdwc;
     }
 };
 

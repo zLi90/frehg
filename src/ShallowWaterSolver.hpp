@@ -100,6 +100,56 @@ public:
         source_sink_manager_ = source_sink_manager;
     }
     
+    // Set time step (for adaptive time stepping)
+    void set_time_step(Scalar new_dt) {
+        dt = new_dt;
+    }
+    
+    // Get current time step
+    Scalar get_time_step() const {
+        return dt;
+    }
+    
+    // ========================================================================
+    // ADAPTIVE TIME STEPPING (Based on CFL Condition)
+    // ========================================================================
+    // Computes recommended time step based on CFL number
+    // Returns the new recommended time step
+    Scalar adaptive_time_step(Scalar dt_min, Scalar dt_max, Scalar cfl_max = 0.7) {
+        Scalar max_cfl = 0.0;
+        Scalar dt_new = dt;
+        
+        auto _velocity_x = state.velocity_x;
+        auto _velocity_y = state.velocity_y;
+        
+        // Compute CFL numbers from current velocities
+        Kokkos::parallel_reduce(
+            RangePolicy(0, domain.num_cells_total),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i, Scalar& local_max_cfl) {
+                Scalar cfl_x_val = std::abs(_velocity_x(i) * dt / domain.dx);
+                Scalar cfl_y_val = std::abs(_velocity_y(i) * dt / domain.dy);
+                Scalar max_local = (cfl_x_val > cfl_y_val) ? cfl_x_val : cfl_y_val;
+                if (max_local > local_max_cfl) local_max_cfl = max_local;
+            },
+            Kokkos::Max<Scalar>(max_cfl)
+        );
+        
+        // Adjust time step based on CFL
+        if (max_cfl > cfl_max && max_cfl > 0.0) {
+            // Reduce time step to bring CFL below threshold
+            dt_new = dt * cfl_max / max_cfl;
+        } else if (max_cfl < 0.5 * cfl_max && max_cfl > 0.0) {
+            // Increase time step (but be conservative)
+            dt_new = dt * 1.1;  // 10% increase
+        }
+        
+        // Clamp to bounds
+        if (dt_new > dt_max) dt_new = dt_max;
+        if (dt_new < dt_min) dt_new = dt_min;
+        
+        return dt_new;
+    }
+    
     // ========================================================================
     // MAIN SOLVER: Solve for surface elevation (eta)
     // ========================================================================
