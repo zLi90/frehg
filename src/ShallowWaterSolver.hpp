@@ -163,28 +163,31 @@ public:
         // Step 3: Compute matrix RHS
         compute_rhs();
         
-        // Step 4: Compute matrix coefficients
+        // Step 4: Add source/sink terms (inflow, rainfall, etc.) to RHS
+        add_source_sink_to_rhs(current_time);
+        
+        // Step 5: Compute matrix coefficients
         compute_matrix_coefficients();
         
-        // Step 5: Apply boundary conditions to matrix
+        // Step 6: Apply boundary conditions to matrix
         apply_boundary_conditions_to_matrix(current_time);
         
-        // Step 6: Solve linear system
+        // Step 7: Solve linear system
         solve_linear_system();
         
-        // Step 7: Map solution back to domain
+        // Step 8: Map solution back to domain
         map_solution_to_domain();
         
-        // Step 8: Enforce boundary conditions on solution
+        // Step 9: Enforce boundary conditions on solution
         enforce_boundary_conditions_on_solution(current_time);
         
-        // Step 9: CFL limiter
+        // Step 10: CFL limiter
         apply_cfl_limiter();
         
-        // Step 10: Apply source/sink terms
+        // Step 11: Apply source/sink terms (for post-processing effects like dilution)
         apply_source_sink_terms(current_time);
         
-        // Step 11: Update depth
+        // Step 12: Update depth
         update_depth();
     }
     
@@ -414,12 +417,49 @@ private:
                 }
                 
                 _matrix_rhs(domain_idx) = _pressure(domain_idx) * _area_top(domain_idx) - dt * div_flux;
-                
-                // Inflow source terms would be added here (assumed available)
-                // if (has_inflow(domain_idx)) {
-                //     _matrix_rhs(domain_idx) += inflow_rate * dt;
-                // }
             });
+    }
+    
+    // ========================================================================
+    // ADD SOURCE/SINK TERMS TO RHS (Inflow, Rainfall, Evaporation, etc.)
+    // ========================================================================
+    // Source/sink terms are added to the RHS as: RHS += source_value * dt
+    // - Positive values: add water (inflow, rainfall)
+    // - Negative values: remove water (outflow, evaporation)
+    void add_source_sink_to_rhs(Scalar current_time) {
+        if (!source_sink_manager_) return;
+        
+        auto _matrix_rhs = state.matrix_rhs;
+        auto _area_top = state.area_top;
+        
+        const auto& ss_terms = source_sink_manager_->get_source_sink_terms();
+        
+        // Host mirrors for source/sink term application
+        auto h_matrix_rhs = Kokkos::create_mirror_view(_matrix_rhs);
+        auto h_area_top = Kokkos::create_mirror_view(_area_top);
+        
+        Kokkos::deep_copy(h_matrix_rhs, _matrix_rhs);
+        Kokkos::deep_copy(h_area_top, _area_top);
+        
+        for (const auto& ss : ss_terms) {
+            Scalar ss_value = ss.get_value(current_time);
+            Ordinal n_cells = ss.cell_indices.size();
+            
+            if (n_cells == 0) continue;
+            
+            for (Ordinal cell_idx : ss.cell_indices) {
+                if (ss.type == SourceSinkType::VOLUME_FLUX) {
+                    // Volume flux (m³/s) - distribute among cells
+                    h_matrix_rhs(cell_idx) += ss_value * dt / static_cast<Scalar>(n_cells);
+                    
+                } else if (ss.type == SourceSinkType::DEPTH_RATE) {
+                    // Depth rate (m/s) - convert to volume using cell area
+                    h_matrix_rhs(cell_idx) += ss_value * dt * h_area_top(cell_idx);
+                }
+            }
+        }
+        
+        Kokkos::deep_copy(_matrix_rhs, h_matrix_rhs);
     }
     
     // ========================================================================

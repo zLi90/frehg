@@ -67,6 +67,8 @@ public:
     // Solve Ax = b for 2D system (surface water)
     // Matrix coefficients: diag, xp, xm, yp, ym
     // ActiveCellMesh provides neighbor connectivity
+    // x: Solution vector (input: initial guess, output: solution)
+    // use_initial_guess: If true, uses x as initial guess; if false, starts from zero
     void solve_2d(const ActiveCellMesh& mesh,
                   const View1D<Scalar>& diag,      // Diagonal (Sct)
                   const View1D<Scalar>& xp,        // X+ coefficient (Sxp)
@@ -74,16 +76,27 @@ public:
                   const View1D<Scalar>& yp,        // Y+ coefficient (Syp)
                   const View1D<Scalar>& ym,        // Y- coefficient (Sym)
                   const View1D<Scalar>& rhs,       // Right-hand side (Srhs)
-                  View1D<Scalar>& x) {              // Solution (output)
-        
-        // Initialize solution
-        Kokkos::deep_copy(x, 0.0);
+                  View1D<Scalar>& x,               // Solution (input/output)
+                  bool use_initial_guess = false) { // Use x as initial guess (default: no for 2D)
         
         // Build preconditioner
         build_preconditioner_2d(mesh, diag, xp, xm, yp, ym);
         
-        // Compute initial residual: r = b - A*x (x=0 initially, so r = b)
-        Kokkos::deep_copy(r, rhs);
+        // Compute initial residual: r = b - A*x
+        if (use_initial_guess) {
+            // Compute r = b - A*x using the provided initial guess
+            matrix_vector_product_2d(mesh, diag, xp, xm, yp, ym, x, r);
+            auto _r = r;
+            auto _rhs = rhs;
+            Kokkos::parallel_for(RangePolicy(0, num_active),
+                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    _r(i) = _rhs(i) - _r(i);
+                });
+        } else {
+            // Zero initial guess: r = b - A*0 = b
+            Kokkos::deep_copy(x, 0.0);
+            Kokkos::deep_copy(r, rhs);
+        }
         
         // Compute initial residual norm
         Scalar rnorm0 = compute_norm(r);
@@ -148,6 +161,8 @@ public:
     
     // Solve Ax = b for 3D system (groundwater)
     // Matrix coefficients: diag, xp, xm, yp, ym, zp, zm
+    // x: Solution vector (input: initial guess, output: solution)
+    // use_initial_guess: If true, uses x as initial guess; if false, starts from zero
     void solve_3d(const ActiveCellMesh& mesh,
                   const View1D<Scalar>& diag,      // Diagonal (Gct)
                   const View1D<Scalar>& xp,        // X+ coefficient (Gxp)
@@ -157,16 +172,27 @@ public:
                   const View1D<Scalar>& zp,        // Z+ coefficient (Gzp)
                   const View1D<Scalar>& zm,        // Z- coefficient (Gzm)
                   const View1D<Scalar>& rhs,       // Right-hand side (Grhs)
-                  View1D<Scalar>& x) {              // Solution (output)
-        
-        // Initialize solution
-        Kokkos::deep_copy(x, 0.0);
+                  View1D<Scalar>& x,               // Solution (input/output)
+                  bool use_initial_guess = true) { // Use x as initial guess
         
         // Build preconditioner
         build_preconditioner_3d(mesh, diag, xp, xm, yp, ym, zp, zm);
         
-        // Compute initial residual: r = b - A*x (x=0 initially, so r = b)
-        Kokkos::deep_copy(r, rhs);
+        // Compute initial residual: r = b - A*x
+        if (use_initial_guess) {
+            // Compute r = b - A*x using the provided initial guess
+            matrix_vector_product_3d(mesh, diag, xp, xm, yp, ym, zp, zm, x, r);
+            auto _r = r;
+            auto _rhs = rhs;
+            Kokkos::parallel_for(RangePolicy(0, num_active),
+                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    _r(i) = _rhs(i) - _r(i);
+                });
+        } else {
+            // Zero initial guess: r = b - A*0 = b
+            Kokkos::deep_copy(x, 0.0);
+            Kokkos::deep_copy(r, rhs);
+        }
         
         // Compute initial residual norm
         Scalar rnorm0 = compute_norm(r);

@@ -180,9 +180,6 @@ public:
         // Apply source/sink terms (dilution/concentration effects)
         apply_source_sink_terms(current_time);
         
-        // Apply source/sink terms (dilution/concentration effects)
-        apply_source_sink_terms(current_time);
-        
         // Exchange scalar with subsurface (if coupled)
         // This will be called from ModelDriver after groundwater solve
         

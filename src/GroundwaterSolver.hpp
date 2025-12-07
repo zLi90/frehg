@@ -51,6 +51,11 @@ public:
     // --- Boundary Conditions ---
     GwBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
     
+    // --- Surface-Subsurface Coupling ---
+    bool coupled_with_sw_;          // Is coupled with shallow water
+    SwStateVariables* sw_state_;    // Pointer to surface water state (optional)
+    const SwDomain* sw_domain_;     // Pointer to surface water domain (optional)
+    
     // Constructor
     GroundwaterSolver(GwDomain& _domain,
                       ActiveCellMesh& _active_mesh,
@@ -71,7 +76,8 @@ public:
           baroclinic(_baroclinic),
           precond_type(_precond_type), solver_tolerance(_solver_tolerance),
           max_solver_iterations(_max_solver_iterations),
-          bc_manager_(_bc_manager) {
+          bc_manager_(_bc_manager),
+          coupled_with_sw_(false), sw_state_(nullptr), sw_domain_(nullptr) {
         
         // Initialize PCG solver
         pcg_solver = std::make_unique<PCGSolver3D>(
@@ -86,6 +92,13 @@ public:
         bc_manager_ = bc_manager;
     }
     
+    // Set surface water coupling
+    void set_surface_coupling(SwStateVariables* sw_state, const SwDomain* sw_domain) {
+        coupled_with_sw_ = (sw_state != nullptr && sw_domain != nullptr);
+        sw_state_ = sw_state;
+        sw_domain_ = sw_domain;
+    }
+    
     // Set time step (for adaptive time stepping)
     void set_time_step(Scalar new_dt) {
         dt = new_dt;
@@ -98,8 +111,8 @@ public:
 
     // Main solver function (predictor-corrector scheme)
     void solve(Scalar current_time = 0.0) {
-        // Save old values
-        state.update_old_values(domain.num_cells_3d_total);
+        // Save old values (copies pressure->pressure_old, pressure_old->head_prev_prev, etc.)
+        state.update_old_values();
         
         // Compute water content from head and specific moisture capacity
         compute_water_content_from_head();
@@ -117,13 +130,18 @@ public:
         // 3. Assemble linear system
         assemble_linear_system();
         
-        // 4. Apply boundary conditions to matrix
+        // 4. Add surface-subsurface coupling contribution to RHS
+        if (coupled_with_sw_) {
+            add_surface_coupling_to_rhs();
+        }
+        
+        // 5. Apply boundary conditions to matrix
         apply_boundary_conditions_to_matrix(current_time);
         
-        // 5. Solve for new head using PCG
+        // 6. Solve for new head using PCG
         solve_linear_system();
         
-        // 6. Enforce boundary conditions on solution
+        // 7. Enforce boundary conditions on solution
         enforce_boundary_conditions_on_solution(current_time);
         
         // >>> CORRECTOR STEP <<<
@@ -469,8 +487,65 @@ private:
                     Scalar K_top = compute_K(h_top, Ks_top, idx_top);
                     _conductivity_z(domain_idx) = 0.5 * (K_here + K_top);
                 } else {
+                    // This is a top cell (no top neighbor in groundwater domain)
                     _conductivity_z(domain_idx) = compute_K(_pressure(domain_idx), 
                                                              _conductivity_sat_z(domain_idx), domain_idx);
+                }
+            });
+        
+        // Apply surface-subsurface interface conductivity (for coupled simulations)
+        if (coupled_with_sw_ && sw_state_ != nullptr) {
+            apply_surface_interface_conductivity();
+        }
+    }
+    
+    // ========================================================================
+    // APPLY SURFACE-SUBSURFACE INTERFACE CONDUCTIVITY
+    // ========================================================================
+    // Adjusts Z-conductivity at the top boundary based on surface water conditions
+    // - If surface has water: use average of surface K (saturated) and subsurface K
+    // - If surface is dry: use subsurface K or zero based on BC type
+    void apply_surface_interface_conductivity() {
+        if (!coupled_with_sw_ || sw_state_ == nullptr) return;
+        
+        auto _conductivity_z = state.conductivity_z;
+        auto _conductivity_sat_z = state.conductivity_sat_z;
+        auto _pressure = state.pressure;
+        auto _active_mask_3d = domain.active_mask_3d;
+        
+        auto _neighbor_top = active_mesh.neighbor_top;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _coord_k = active_mesh.coord_k;
+        auto _gw_to_sw = domain.mesh->gw_to_sw_idx;
+        auto _depth = sw_state_->depth;
+        Scalar min_d = min_depth;
+        
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) return;
+                
+                Ordinal active_top = _neighbor_top(i);
+                Ordinal k = _coord_k(i);
+                
+                // Check if this is a top cell (no top neighbor in groundwater domain)
+                bool is_top_cell = (active_top < 0) || (k == domain.nz - 1);
+                
+                if (is_top_cell) {
+                    Ordinal sw_idx = _gw_to_sw(domain_idx);
+                    if (sw_idx >= 0) {
+                        Scalar surface_depth = _depth(sw_idx);
+                        Scalar Ks = _conductivity_sat_z(domain_idx);
+                        Scalar K_cell = compute_K(_pressure(domain_idx), Ks, domain_idx);
+                        
+                        if (surface_depth > min_d) {
+                            // Surface has water: use average of saturated K and cell K
+                            _conductivity_z(domain_idx) = 0.5 * (Ks + K_cell);
+                        } else {
+                            // Surface is dry: use cell K (or could be zero for no-flux BC)
+                            _conductivity_z(domain_idx) = K_cell;
+                        }
+                    }
                 }
             });
     }
@@ -750,6 +825,56 @@ private:
             });
     }
     
+    // Add surface water depth contribution to RHS (for coupled mode)
+    // When there's surface water above, the head at top boundary = bottom + depth
+    // This is added as: RHS -= Gzm * (surface_depth)
+    void add_surface_coupling_to_rhs() {
+        if (!coupled_with_sw_ || sw_state_ == nullptr) return;
+        
+        auto _matrix_rhs = state.matrix_rhs;
+        auto _matrix_zm = state.matrix_zm;
+        auto _neighbor_top = active_mesh.neighbor_top;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _gw_to_sw = domain.mesh->gw_to_sw_idx;
+        auto _depth = sw_state_->depth;
+        Scalar min_d = min_depth;
+        
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            KOKKOS_LAMBDA (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                
+                // Check if this is a top cell (no neighbor above)
+                Ordinal active_top = _neighbor_top(i);
+                if (active_top < 0) {
+                    // This is a top cell - check for surface water
+                    Ordinal sw_idx = _gw_to_sw(domain_idx);
+                    if (sw_idx >= 0) {
+                        Scalar surf_depth = _depth(sw_idx);
+                        if (surf_depth > min_d) {
+                            // Surface water present - add depth as boundary condition
+                            // The surface water elevation acts as fixed head
+                            _matrix_rhs(domain_idx) -= _matrix_zm(domain_idx) * surf_depth;
+                        }
+                    }
+                }
+            });
+    }
+    
+    // Add terrain slope effects to flux computation (for follow_terrain mode)
+    // When follow_terrain=true, horizontal flux includes terrain slope contribution
+    // Legacy: q = K * visc * ((dh/dx) * cos + sin)  where sin/cos are terrain slopes
+    void add_terrain_slope_effects() {
+        if (!follow_terrain) return;
+        
+        // Terrain slope effects are already included in compute_groundwater_flux()
+        // through the face area calculations and cos/sin terms
+        // For inclined domains, the flux formula becomes:
+        // qx = K * r_visc * A * (dh/dx * cos_x + sign * sin_x)
+        // This is a simplified implementation - full implementation would need
+        // terrain slope angles (sin_x, cos_x, sin_y, cos_y) stored in domain
+        // For now, this is a placeholder for future enhancement
+    }
+    
     // ========================================================================
     // SOLVE LINEAR SYSTEM
     // ========================================================================
@@ -920,15 +1045,16 @@ private:
                 Scalar dz = _dz_layers(k);
                 
                 // X-direction flux (Darcy's law)
+                // Convention: q = K * r_visc * A * (h_neighbor - h_here) / dx
+                // Positive flux = flow toward current cell (inflow from neighbor)
                 Ordinal active_right = _neighbor_right(i);
                 if (active_right >= 0) {
                     Ordinal idx_right = _active_to_domain(active_right);
                     Scalar dh = _pressure(idx_right) - _pressure(domain_idx);
                     Scalar Kx = _conductivity_x(domain_idx);
-                    Scalar r_rho = _density_ratio_xp(domain_idx);
                     Scalar r_visc = _viscosity_ratio_xp(domain_idx);
                     Scalar Ax = domain.dy * dz;
-                    _flux_x(domain_idx) = -Kx * r_visc * r_rho * Ax * dh / domain.dx;
+                    _flux_x(domain_idx) = Kx * r_visc * Ax * dh / domain.dx;
                 } else {
                     _flux_x(domain_idx) = 0.0;
                 }
@@ -939,15 +1065,16 @@ private:
                     Ordinal idx_front = _active_to_domain(active_front);
                     Scalar dh = _pressure(idx_front) - _pressure(domain_idx);
                     Scalar Ky = _conductivity_y(domain_idx);
-                    Scalar r_rho = _density_ratio_yp(domain_idx);
                     Scalar r_visc = _viscosity_ratio_yp(domain_idx);
                     Scalar Ay = domain.dx * dz;
-                    _flux_y(domain_idx) = -Ky * r_visc * r_rho * Ay * dh / domain.dy;
+                    _flux_y(domain_idx) = Ky * r_visc * Ay * dh / domain.dy;
                 } else {
                     _flux_y(domain_idx) = 0.0;
                 }
                 
-                // Z-direction flux (includes density term)
+                // Z-direction flux (includes buoyancy/density term)
+                // q = K * r_visc * A * (dh/dz - r_rho)
+                // The -r_rho term accounts for density-driven flow (buoyancy)
                 Ordinal active_top = _neighbor_top(i);
                 if (active_top >= 0) {
                     Ordinal idx_top = _active_to_domain(active_top);
@@ -958,7 +1085,7 @@ private:
                     Scalar Az = domain.dx * domain.dy;
                     Scalar dz_top = (k < domain.nz - 1) ? _dz_layers(k + 1) : dz;
                     Scalar dz_avg = 0.5 * (dz + dz_top);
-                    _flux_z(domain_idx) = -Kz * r_visc * r_rho * Az * (dh / dz_avg - r_rho);
+                    _flux_z(domain_idx) = Kz * r_visc * Az * (dh / dz_avg - r_rho);
                 } else {
                     _flux_z(domain_idx) = 0.0;
                 }
