@@ -1,0 +1,156 @@
+# =============================================================================
+# HENRY'S PROBLEM - Classical Density-Driven Saltwater Intrusion Benchmark
+# =============================================================================
+# Reference: Henry, H.R. (1964). Effects of dispersion on salt encroachment 
+#            in coastal aquifers. USGS Water-Supply Paper 1613-C.
+#
+# Domain: 2m (length) x 1m (height), 2D cross-section (x-z)
+# Physics: Density-driven groundwater flow with salt transport
+#
+# Boundary Conditions:
+#   - Left (x-):  Freshwater flux inflow (q = 6.6e-5 m/s)
+#   - Right (x+): Fixed head (h = 1.0 m) + seawater salinity (S = 35 kg/m³)
+#   - Top/Bottom: No flow
+# =============================================================================
+
+# --------------------------------------------------------------------------
+# SIMULATION CONTROL
+# --------------------------------------------------------------------------
+sim_id = Henry_Problem
+
+# Domain: 2m x 1m cross-section (x-z plane)
+# 100 cells in x (dx=0.02m), 1 cell in y, 50 cells in z (dz=0.02m)
+NX = 100
+NY = 1
+NZ = 50
+dx = 0.02
+dy = 0.02
+dz = 0.02
+botZ = 0.0
+dz_incre = 1.0
+
+# MPI (single process)
+use_mpi = 0
+mpi_nx = 1
+mpi_ny = 1
+
+# Time stepping
+dt = 1.0
+Tend = 50000.0
+dt_out = 1000.0
+
+# Adaptive time stepping
+dt_adjust = 1
+dt_min = 0.001
+dt_max = 10.0
+Co_max = 0.5
+
+# --------------------------------------------------------------------------
+# PHYSICS FLAGS
+# --------------------------------------------------------------------------
+# Groundwater only (no shallow water)
+sim_shallowwater = 0
+sim_groundwater = 1
+sync_coupling = 1
+
+# Physical parameters
+grav = 9.81
+rhow = 1000.0
+
+# --------------------------------------------------------------------------
+# GROUNDWATER SOLVER
+# --------------------------------------------------------------------------
+# Solver settings
+use_corrector = 1
+follow_terrain = 0
+
+# Hydraulic properties (isotropic)
+# K = 1.0e-2 m/s (standard Henry problem value)
+Ksx = 0.01
+Ksy = 0.01
+Ksz = 0.01
+
+# Storage coefficient
+Ss = 1.0e-4
+
+# Van Genuchten parameters (saturated flow - not used but required)
+soil_a = 1.0
+soil_n = 2.0
+wcs = 0.35
+wcr = 0.01
+
+# Initial conditions (saturated, freshwater)
+init_wc = 0.35
+init_h = 1.0
+init_wt_rel = 1.0
+h_file = 0
+wc_file = 0
+
+# --------------------------------------------------------------------------
+# GROUNDWATER BOUNDARY CONDITIONS
+# --------------------------------------------------------------------------
+# Number of boundary conditions
+n_gw_bc = 2
+
+# BC 0: Left boundary (x-) - Freshwater inflow
+# Standard Henry problem: qf = 6.6e-5 m/s (Darcy flux)
+# Volume flux per cell = qf * dz * dy = 6.6e-5 * 0.02 * 0.02 = 2.64e-8 m³/s
+gw_bc_type_0 = fixed_flux
+gw_bc_face_0 = x-
+gw_bc_value_type_0 = constant
+gw_bc_value_0 = 2.64e-8
+
+# BC 1: Right boundary (x+) - Fixed head (seawater)
+# Head = 1.0 m (hydrostatic)
+gw_bc_type_1 = fixed_head
+gw_bc_face_1 = x+
+gw_bc_value_type_1 = constant
+gw_bc_value_1 = 1.0
+
+# --------------------------------------------------------------------------
+# SCALAR TRANSPORT (SALINITY)
+# --------------------------------------------------------------------------
+n_scalar = 1
+baroclinic = 1
+superbee = 1
+
+# Diffusion coefficients (molecular diffusion)
+# Dm = 1.886e-5 m²/s for salt in water
+difux = 1.886e-5
+difuy = 1.886e-5
+difuz = 1.886e-5
+
+# Dispersivity (set to 0 for original Henry problem - diffusion only)
+# For modified Henry problem, use non-zero values
+disp_lon = 0.0
+disp_lat = 0.0
+
+# Initial salinity (freshwater everywhere)
+init_s_subs = 0.0
+
+# --------------------------------------------------------------------------
+# SCALAR BOUNDARY CONDITIONS
+# --------------------------------------------------------------------------
+# Number of scalar BCs for scalar 0 (salinity)
+n_gw_scalar_bc_0 = 2
+
+# Scalar BC 0: Left boundary - freshwater (S = 0)
+gw_scalar_bc_type_0_0 = prescribed
+gw_scalar_bc_face_0_0 = x-
+gw_scalar_bc_value_type_0_0 = constant
+gw_scalar_bc_value_0_0 = 0.0
+
+# Scalar BC 1: Right boundary - seawater (S = 35 kg/m³)
+gw_scalar_bc_type_0_1 = prescribed
+gw_scalar_bc_face_0_1 = x+
+gw_scalar_bc_value_type_0_1 = constant
+gw_scalar_bc_value_0_1 = 35.0
+
+# --------------------------------------------------------------------------
+# OUTPUT
+# --------------------------------------------------------------------------
+# Output every 1000 seconds
+n_monitor = 0
+
+# END
+
