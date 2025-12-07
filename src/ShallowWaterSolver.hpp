@@ -35,6 +35,17 @@ public:
     Scalar min_depth;           // Minimum depth threshold
     Scalar water_threshold;     // Water depth threshold for wetting (wtfh)
     
+    // --- Wind Forcing Parameters ---
+    bool sim_wind_;             // Enable wind forcing
+    Scalar wind_speed_;         // Current wind speed (m/s)
+    Scalar wind_direction_;     // Current wind direction from north (degrees)
+    Scalar north_angle_;        // Angle of domain north from true north (degrees)
+    Scalar rho_air_;            // Air density (kg/m³), default 1.225
+    Scalar rho_water_;          // Water density (kg/m³), default 1000
+    Scalar Cw_;                 // Wind drag coefficient, default 0.0013
+    Scalar CwT_;                // Thin layer model coefficient, default 1.0
+    Scalar hD_;                 // Reference depth for thin layer model (m), default 1.0
+    
     // --- Linear Solver ---
     std::unique_ptr<PCGSolver2D> pcg_solver;
     PreconditionerType precond_type;
@@ -76,6 +87,15 @@ public:
           visc_y(_visc_y),
           min_depth(_min_depth),
           water_threshold(_water_threshold),
+          sim_wind_(false),
+          wind_speed_(0.0),
+          wind_direction_(0.0),
+          north_angle_(0.0),
+          rho_air_(1.225),
+          rho_water_(1000.0),
+          Cw_(0.0013),
+          CwT_(1.0),
+          hD_(1.0),
           precond_type(_precond),
           solver_tolerance(_solver_tol),
           max_solver_iterations(_max_iter),
@@ -98,6 +118,31 @@ public:
     // Set source/sink manager
     void set_source_sink_manager(SwSourceSinkManager* source_sink_manager) {
         source_sink_manager_ = source_sink_manager;
+    }
+    
+    // ========================================================================
+    // WIND FORCING SETUP
+    // ========================================================================
+    // Enable/disable wind forcing
+    void set_wind_enabled(bool enabled) {
+        sim_wind_ = enabled;
+    }
+    
+    // Set wind parameters
+    void set_wind_parameters(Scalar rho_air, Scalar rho_water, Scalar Cw, 
+                             Scalar CwT = 1.0, Scalar hD = 1.0, Scalar north_angle = 0.0) {
+        rho_air_ = rho_air;
+        rho_water_ = rho_water;
+        Cw_ = Cw;
+        CwT_ = CwT;
+        hD_ = hD;
+        north_angle_ = north_angle;
+    }
+    
+    // Update wind conditions (call each time step if wind varies)
+    void set_wind_conditions(Scalar wind_speed, Scalar wind_direction) {
+        wind_speed_ = wind_speed;
+        wind_direction_ = wind_direction;
     }
     
     // Set time step (for adaptive time stepping)
@@ -377,6 +422,93 @@ private:
                 _momentum_x(domain_idx) *= _drag_factor_x(domain_idx);
                 _momentum_y(domain_idx) *= _drag_factor_y(domain_idx);
             });
+        
+        // Add wind forcing if enabled
+        if (sim_wind_) {
+            apply_wind_forcing();
+        }
+    }
+    
+    // ========================================================================
+    // WIND FORCING
+    // ========================================================================
+    // Applies wind stress to momentum source terms
+    // Based on: τ = ρ_air * Cw * (U_wind - u·cos(ω) - v·sin(ω))²
+    // With thin-layer model for shallow water
+    void apply_wind_forcing() {
+        auto _momentum_x = state.momentum_x;
+        auto _momentum_y = state.momentum_y;
+        auto _velocity_x = state.velocity_x;
+        auto _velocity_y = state.velocity_y;
+        auto _depth_x = state.depth_x;
+        auto _depth_y = state.depth_y;
+        auto _drag_factor_x = state.drag_factor_x;
+        auto _drag_factor_y = state.drag_factor_y;
+        
+        auto _active_to_domain = active_mesh.active_to_domain;
+        
+        // Wind parameters (captured by value for device)
+        const Scalar wind_spd = wind_speed_;
+        const Scalar wind_dir = wind_direction_;
+        const Scalar north_ang = north_angle_;
+        const Scalar rho_a = rho_air_;
+        const Scalar rho_w = rho_water_;
+        const Scalar cw = Cw_;
+        const Scalar cwt = CwT_;
+        const Scalar hd = hD_;
+        const Scalar dt_local = dt;
+        const Scalar pi = 3.14159265358979323846;
+        
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                
+                // Wind direction: phi from north, omega in radians from positive x
+                Scalar phi = wind_dir + north_ang;
+                Scalar omega = phi * pi / 180.0;
+                
+                Scalar u = _velocity_x(domain_idx);
+                Scalar v = _velocity_y(domain_idx);
+                
+                // Relative wind speed (wind relative to water surface velocity)
+                Scalar u_rel = wind_spd - u * std::cos(omega) - v * std::sin(omega);
+                
+                // Total wind stress magnitude: τ = ρ_air * Cw * u_rel²
+                Scalar tau = rho_a * cw * u_rel * u_rel;
+                
+                // X-direction wind stress with thin-layer model
+                Scalar depth_x = _depth_x(domain_idx);
+                Scalar tau_x = tau;
+                if (depth_x < hd) {
+                    // Thin layer model: reduce wind stress exponentially for shallow water
+                    tau_x = tau * std::exp(cwt * (depth_x - hd) / hd);
+                    if (depth_x < 0.5 * hd) {
+                        tau_x = 0.0;  // No wind stress for very shallow water
+                    }
+                }
+                
+                // Y-direction wind stress with thin-layer model
+                Scalar depth_y = _depth_y(domain_idx);
+                Scalar tau_y = tau;
+                if (depth_y < hd) {
+                    tau_y = tau * std::exp(cwt * (depth_y - hd) / hd);
+                    if (depth_y < 0.5 * hd) {
+                        tau_y = 0.0;
+                    }
+                }
+                
+                // Add wind stress to momentum
+                // Wind stress contribution: dv/dt = τ * cos(ω) / (depth * ρ_water)
+                if (depth_x > 0.0) {
+                    Scalar wind_mom_x = dt_local * tau_x * std::cos(omega) / (depth_x * rho_w);
+                    _momentum_x(domain_idx) += wind_mom_x * _drag_factor_x(domain_idx);
+                }
+                
+                if (depth_y > 0.0) {
+                    Scalar wind_mom_y = dt_local * tau_y * std::sin(omega) / (depth_y * rho_w);
+                    _momentum_y(domain_idx) += wind_mom_y * _drag_factor_y(domain_idx);
+                }
+            });
     }
     
     // ========================================================================
@@ -572,78 +704,64 @@ private:
         auto _bottom = state.bottom;
         
         const auto& bcs = bc_manager_->get_boundary_conditions();
+        Scalar dt_local = dt;
         
-        // Create host mirrors for boundary condition application
-        auto h_matrix_diag = Kokkos::create_mirror_view(_matrix_diag);
-        auto h_matrix_xp = Kokkos::create_mirror_view(_matrix_xp);
-        auto h_matrix_xm = Kokkos::create_mirror_view(_matrix_xm);
-        auto h_matrix_yp = Kokkos::create_mirror_view(_matrix_yp);
-        auto h_matrix_ym = Kokkos::create_mirror_view(_matrix_ym);
-        auto h_matrix_rhs = Kokkos::create_mirror_view(_matrix_rhs);
-        auto h_bottom = Kokkos::create_mirror_view(_bottom);
-        
-        Kokkos::deep_copy(h_matrix_diag, _matrix_diag);
-        Kokkos::deep_copy(h_matrix_xp, _matrix_xp);
-        Kokkos::deep_copy(h_matrix_xm, _matrix_xm);
-        Kokkos::deep_copy(h_matrix_yp, _matrix_yp);
-        Kokkos::deep_copy(h_matrix_ym, _matrix_ym);
-        Kokkos::deep_copy(h_matrix_rhs, _matrix_rhs);
-        Kokkos::deep_copy(h_bottom, _bottom);
-        
-        // Apply each boundary condition
+        // Process each boundary condition using device-side parallel operations
         for (const auto& bc : bcs) {
             Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
             
-            for (Ordinal cell_idx : bc.cell_indices) {
-                if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
-                    // Dirichlet BC: prescribed surface elevation
-                    // Set diagonal = 1.0, off-diagonals = 0.0, RHS = BC value
-                    h_matrix_diag(cell_idx) = 1.0;
-                    h_matrix_xp(cell_idx) = 0.0;
-                    h_matrix_xm(cell_idx) = 0.0;
-                    h_matrix_yp(cell_idx) = 0.0;
-                    h_matrix_ym(cell_idx) = 0.0;
-                    h_matrix_rhs(cell_idx) = bc_value;
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices (only for this BC)
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
+                // Dirichlet BC: prescribed surface elevation
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        _matrix_diag(cell_idx) = 1.0;
+                        _matrix_xp(cell_idx) = 0.0;
+                        _matrix_xm(cell_idx) = 0.0;
+                        _matrix_yp(cell_idx) = 0.0;
+                        _matrix_ym(cell_idx) = 0.0;
+                        _matrix_rhs(cell_idx) = bc_value;
+                    });
                     
-                } else if (bc.type == SwBcType::WATER_DEPTH) {
-                    // Dirichlet BC: prescribed water depth
-                    // Convert depth to surface elevation: eta = bottom + depth
-                    Scalar eta_value = h_bottom(cell_idx) + bc_value;
-                    h_matrix_diag(cell_idx) = 1.0;
-                    h_matrix_xp(cell_idx) = 0.0;
-                    h_matrix_xm(cell_idx) = 0.0;
-                    h_matrix_yp(cell_idx) = 0.0;
-                    h_matrix_ym(cell_idx) = 0.0;
-                    h_matrix_rhs(cell_idx) = eta_value;
+            } else if (bc.type == SwBcType::WATER_DEPTH) {
+                // Dirichlet BC: prescribed water depth
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        Scalar eta_value = _bottom(cell_idx) + bc_value;
+                        _matrix_diag(cell_idx) = 1.0;
+                        _matrix_xp(cell_idx) = 0.0;
+                        _matrix_xm(cell_idx) = 0.0;
+                        _matrix_yp(cell_idx) = 0.0;
+                        _matrix_ym(cell_idx) = 0.0;
+                        _matrix_rhs(cell_idx) = eta_value;
+                    });
                     
-                } else if (bc.type == SwBcType::FLOW_RATE) {
-                    // Flow rate BC: add to RHS as source term
-                    // Flow rate is discharge per unit width, convert to volume flux
-                    // For now, treat as a source term in the RHS
-                    // This is a simplified treatment - full implementation would
-                    // modify flux terms at boundaries
-                    Scalar source_flux = bc_value * dt;  // Volume added per time step
-                    h_matrix_rhs(cell_idx) += source_flux;
+            } else if (bc.type == SwBcType::FLOW_RATE) {
+                // Flow rate BC: add to RHS as source term
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        Scalar source_flux = bc_value * dt_local;
+                        _matrix_rhs(cell_idx) += source_flux;
+                    });
                     
-                } else if (bc.type == SwBcType::FREE_OUTFLOW) {
-                    // Free outflow: zero gradient (Neumann BC)
-                    // Remove boundary connection by zeroing off-diagonal coefficients
-                    // This allows free flow out of the domain
-                    // The diagonal remains unchanged, allowing natural outflow
-                    // For cells at domain edge, we zero the appropriate off-diagonal
-                    // For now, we'll keep the matrix as-is and let natural outflow occur
-                    // This could be refined to explicitly set gradient = 0
-                }
+            } else if (bc.type == SwBcType::FREE_OUTFLOW) {
+                // Free outflow: zero gradient (Neumann BC)
+                // Natural outflow - no modification needed
             }
         }
-        
-        // Copy back to device
-        Kokkos::deep_copy(_matrix_diag, h_matrix_diag);
-        Kokkos::deep_copy(_matrix_xp, h_matrix_xp);
-        Kokkos::deep_copy(_matrix_xm, h_matrix_xm);
-        Kokkos::deep_copy(_matrix_yp, h_matrix_yp);
-        Kokkos::deep_copy(_matrix_ym, h_matrix_ym);
-        Kokkos::deep_copy(_matrix_rhs, h_matrix_rhs);
     }
     
     // ========================================================================
@@ -657,41 +775,45 @@ private:
         
         const auto& bcs = bc_manager_->get_boundary_conditions();
         
-        // Create host mirrors
-        auto h_pressure = Kokkos::create_mirror_view(_pressure);
-        auto h_bottom = Kokkos::create_mirror_view(_bottom);
-        
-        Kokkos::deep_copy(h_pressure, _pressure);
-        Kokkos::deep_copy(h_bottom, _bottom);
-        
-        // Apply each boundary condition
+        // Process each boundary condition using device-side parallel operations
         for (const auto& bc : bcs) {
             Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
             
-            for (Ordinal cell_idx : bc.cell_indices) {
-                if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
-                    // Enforce prescribed surface elevation
-                    h_pressure(cell_idx) = bc_value;
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            if (bc.type == SwBcType::FREE_SURFACE_ELEVATION) {
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        _pressure(cell_idx) = bc_value;
+                    });
                     
-                } else if (bc.type == SwBcType::WATER_DEPTH) {
-                    // Enforce prescribed water depth
-                    h_pressure(cell_idx) = h_bottom(cell_idx) + bc_value;
+            } else if (bc.type == SwBcType::WATER_DEPTH) {
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        _pressure(cell_idx) = _bottom(cell_idx) + bc_value;
+                    });
                     
-                } else if (bc.type == SwBcType::FLOW_RATE) {
-                    // Flow rate BC is handled in matrix, but ensure solution is valid
-                    // (no additional enforcement needed here)
-                    
-                } else if (bc.type == SwBcType::FREE_OUTFLOW) {
-                    // Free outflow: ensure solution is valid (no negative depth)
-                    if (h_pressure(cell_idx) < h_bottom(cell_idx)) {
-                        h_pressure(cell_idx) = h_bottom(cell_idx);
-                    }
-                }
+            } else if (bc.type == SwBcType::FREE_OUTFLOW) {
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        if (_pressure(cell_idx) < _bottom(cell_idx)) {
+                            _pressure(cell_idx) = _bottom(cell_idx);
+                        }
+                    });
             }
         }
-        
-        // Copy back to device
-        Kokkos::deep_copy(_pressure, h_pressure);
     }
     
     // ========================================================================
@@ -701,53 +823,65 @@ private:
         if (!source_sink_manager_) return;
         
         auto _pressure = state.pressure;
-        auto _bottom = state.bottom;
         auto _area_top = state.area_top;
         
         const auto& ss_terms = source_sink_manager_->get_source_sink_terms();
+        Scalar dt_local = dt;
+        Scalar dx_local = domain.dx;
+        Scalar dy_local = domain.dy;
         
-        // Create host mirrors
-        auto h_pressure = Kokkos::create_mirror_view(_pressure);
-        auto h_bottom = Kokkos::create_mirror_view(_bottom);
-        auto h_area_top = Kokkos::create_mirror_view(_area_top);
-        
-        Kokkos::deep_copy(h_pressure, _pressure);
-        Kokkos::deep_copy(h_bottom, _bottom);
-        Kokkos::deep_copy(h_area_top, _area_top);
-        
-        // Apply each source/sink term
+        // Process each source/sink term using device-side parallel operations
         for (const auto& ss : ss_terms) {
             Scalar ss_value = ss.get_value(current_time);
+            Ordinal n_ss_cells = ss.cell_indices.size();
             
-            for (Ordinal cell_idx : ss.cell_indices) {
-                Scalar cell_area = h_area_top(cell_idx);
-                if (cell_area <= 0.0) cell_area = domain.dx * domain.dy;
-                
-                if (ss.type == SourceSinkType::VOLUME_FLUX) {
-                    // Volume flux (m³/s): add/remove volume, convert to depth change
-                    Scalar volume_change = ss_value * dt;
-                    Scalar depth_change = volume_change / cell_area;
-                    h_pressure(cell_idx) += depth_change;
+            if (n_ss_cells == 0) continue;
+            
+            // Create device view for source/sink cell indices
+            View1D<Ordinal> d_ss_indices("ss_indices", n_ss_cells);
+            auto h_ss_indices = Kokkos::create_mirror_view(d_ss_indices);
+            for (Ordinal i = 0; i < n_ss_cells; ++i) {
+                h_ss_indices(i) = ss.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_ss_indices, h_ss_indices);
+            
+            if (ss.type == SourceSinkType::VOLUME_FLUX) {
+                // Volume flux (m³/s): add/remove volume, convert to depth change
+                Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_ss_indices(i);
+                        Scalar cell_area = _area_top(cell_idx);
+                        if (cell_area <= 0.0) cell_area = dx_local * dy_local;
+                        Scalar volume_change = ss_value * dt_local;
+                        Scalar depth_change = volume_change / cell_area;
+                        _pressure(cell_idx) += depth_change;
+                    });
                     
-                } else if (ss.type == SourceSinkType::DEPTH_RATE) {
-                    // Depth rate (m/s): directly add/remove depth
-                    Scalar depth_change = ss_value * dt;
-                    h_pressure(cell_idx) += depth_change;
+            } else if (ss.type == SourceSinkType::DEPTH_RATE) {
+                // Depth rate (m/s): directly add/remove depth
+                Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_ss_indices(i);
+                        Scalar depth_change = ss_value * dt_local;
+                        _pressure(cell_idx) += depth_change;
+                    });
                     
-                } else if (ss.type == SourceSinkType::MASS_FLUX) {
-                    // Mass flux: for scalar transport only, not applied here
-                    // This will be handled in scalar transport solver
-                }
-                
-                // Ensure eta >= bottom
-                if (h_pressure(cell_idx) < h_bottom(cell_idx)) {
-                    h_pressure(cell_idx) = h_bottom(cell_idx);
-                }
+            } else if (ss.type == SourceSinkType::MASS_FLUX) {
+                // Mass flux: for scalar transport only, not applied here
+                // This will be handled in scalar transport solver
             }
         }
         
-        // Copy back to device
-        Kokkos::deep_copy(_pressure, h_pressure);
+        // Ensure eta >= bottom for all cells (device-side)
+        auto _bottom = state.bottom;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_pressure(domain_idx) < _bottom(domain_idx)) {
+                    _pressure(domain_idx) = _bottom(domain_idx);
+                }
+            });
     }
     
     // ========================================================================

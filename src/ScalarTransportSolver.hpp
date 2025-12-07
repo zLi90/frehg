@@ -308,93 +308,93 @@ public:
         auto _depth = state.depth;
         
         const auto& ss_terms = source_sink_manager_->get_source_sink_terms();
+        Scalar dt_local = dt;
+        Scalar default_area = domain.dx * domain.dy;
         
-        // Create host mirrors
-        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
-        auto h_scalar_mass = Kokkos::create_mirror_view(_scalar_mass);
-        auto h_volume = Kokkos::create_mirror_view(_volume);
-        auto h_volume_old = Kokkos::create_mirror_view(_volume_old);
-        auto h_area_top = Kokkos::create_mirror_view(_area_top);
-        auto h_depth = Kokkos::create_mirror_view(_depth);
-        
-        Kokkos::deep_copy(h_scalar, _scalar_concentration);
-        Kokkos::deep_copy(h_scalar_mass, _scalar_mass);
-        Kokkos::deep_copy(h_volume, _volume);
-        Kokkos::deep_copy(h_volume_old, _volume_old);
-        Kokkos::deep_copy(h_area_top, _area_top);
-        Kokkos::deep_copy(h_depth, _depth);
-        
-        // Apply each source/sink term
+        // Apply each source/sink term using device-side parallel operations
         for (const auto& ss : ss_terms) {
             Scalar ss_value = ss.get_value(current_time);
+            Ordinal n_ss_cells = ss.cell_indices.size();
             
-            for (Ordinal cell_idx : ss.cell_indices) {
-                if (h_depth(cell_idx) <= 0.0) continue;  // Skip dry cells
-                
-                Scalar cell_area = h_area_top(cell_idx);
-                if (cell_area <= 0.0) cell_area = domain.dx * domain.dy;
-                
-                Scalar V_old = h_volume_old(cell_idx);
-                Scalar V_new = h_volume(cell_idx);
-                
-                if (ss.type == SourceSinkType::VOLUME_FLUX) {
-                    // Volume flux: adds/removes water, affects concentration through dilution/concentration
-                    Scalar volume_change = ss_value * dt;
-                    Scalar V_after_ss = V_new + volume_change;
-                    
-                    if (V_after_ss > 0.0) {
-                        if (ss.has_scalar_concentration && volume_change > 0.0) {
-                            // Source with concentration: add scalar mass
-                            Scalar mass_added = ss.scalar_concentration * volume_change;
-                            h_scalar_mass(cell_idx) += mass_added;
-                            // Update concentration from new mass and volume
-                            h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_after_ss;
-                        } else {
-                            // Sink or source without concentration: dilution/concentration effect
-                            // s_new = s_old * V_old / V_after_ss
-                            // This conserves mass if no scalar is added
-                            if (V_old > 0.0) {
-                                h_scalar(cell_idx) = h_scalar(cell_idx) * V_old / V_after_ss;
-                            }
-                        }
-                    }
-                    
-                } else if (ss.type == SourceSinkType::DEPTH_RATE) {
-                    // Depth rate: convert to volume change
-                    Scalar depth_change = ss_value * dt;
-                    Scalar volume_change = depth_change * cell_area;
-                    Scalar V_after_ss = V_new + volume_change;
-                    
-                    if (V_after_ss > 0.0) {
-                        if (ss.has_scalar_concentration && volume_change > 0.0) {
-                            // Source with concentration
-                            Scalar mass_added = ss.scalar_concentration * volume_change;
-                            h_scalar_mass(cell_idx) += mass_added;
-                            h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_after_ss;
-                        } else {
-                            // Dilution/concentration
-                            if (V_old > 0.0) {
-                                h_scalar(cell_idx) = h_scalar(cell_idx) * V_old / V_after_ss;
-                            }
-                        }
-                    }
-                    
-                } else if (ss.type == SourceSinkType::MASS_FLUX) {
-                    // Mass flux: directly add scalar mass
-                    Scalar mass_added = ss_value * dt;
-                    h_scalar_mass(cell_idx) += mass_added;
-                    
-                    // Update concentration from new mass
-                    if (V_new > 0.0) {
-                        h_scalar(cell_idx) = h_scalar_mass(cell_idx) / V_new;
-                    }
-                }
+            if (n_ss_cells == 0) continue;
+            
+            // Create device view for source/sink cell indices
+            View1D<Ordinal> d_ss_indices("ss_indices", n_ss_cells);
+            auto h_ss_indices = Kokkos::create_mirror_view(d_ss_indices);
+            for (Ordinal i = 0; i < n_ss_cells; ++i) {
+                h_ss_indices(i) = ss.cell_indices[i];
             }
+            Kokkos::deep_copy(d_ss_indices, h_ss_indices);
+            
+            // Capture source/sink properties by value for device
+            bool has_scalar_conc = ss.has_scalar_concentration;
+            Scalar scalar_conc = ss.scalar_concentration;
+            SourceSinkType ss_type = ss.type;
+            
+            Kokkos::parallel_for(RangePolicy(0, n_ss_cells),
+                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    Ordinal cell_idx = d_ss_indices(i);
+                    
+                    if (_depth(cell_idx) <= 0.0) return;  // Skip dry cells
+                    
+                    Scalar cell_area = _area_top(cell_idx);
+                    if (cell_area <= 0.0) cell_area = default_area;
+                    
+                    Scalar V_old = _volume_old(cell_idx);
+                    Scalar V_new = _volume(cell_idx);
+                    
+                    if (ss_type == SourceSinkType::VOLUME_FLUX) {
+                        // Volume flux: adds/removes water, affects concentration through dilution/concentration
+                        Scalar volume_change = ss_value * dt_local;
+                        Scalar V_after_ss = V_new + volume_change;
+                        
+                        if (V_after_ss > 0.0) {
+                            if (has_scalar_conc && volume_change > 0.0) {
+                                // Source with concentration: add scalar mass
+                                Scalar mass_added = scalar_conc * volume_change;
+                                _scalar_mass(cell_idx) += mass_added;
+                                // Update concentration from new mass and volume
+                                _scalar_concentration(cell_idx) = _scalar_mass(cell_idx) / V_after_ss;
+                            } else {
+                                // Sink or source without concentration: dilution/concentration effect
+                                if (V_old > 0.0) {
+                                    _scalar_concentration(cell_idx) = _scalar_concentration(cell_idx) * V_old / V_after_ss;
+                                }
+                            }
+                        }
+                        
+                    } else if (ss_type == SourceSinkType::DEPTH_RATE) {
+                        // Depth rate: convert to volume change
+                        Scalar depth_change = ss_value * dt_local;
+                        Scalar volume_change = depth_change * cell_area;
+                        Scalar V_after_ss = V_new + volume_change;
+                        
+                        if (V_after_ss > 0.0) {
+                            if (has_scalar_conc && volume_change > 0.0) {
+                                // Source with concentration
+                                Scalar mass_added = scalar_conc * volume_change;
+                                _scalar_mass(cell_idx) += mass_added;
+                                _scalar_concentration(cell_idx) = _scalar_mass(cell_idx) / V_after_ss;
+                            } else {
+                                // Dilution/concentration
+                                if (V_old > 0.0) {
+                                    _scalar_concentration(cell_idx) = _scalar_concentration(cell_idx) * V_old / V_after_ss;
+                                }
+                            }
+                        }
+                        
+                    } else if (ss_type == SourceSinkType::MASS_FLUX) {
+                        // Mass flux: directly add scalar mass
+                        Scalar mass_added = ss_value * dt_local;
+                        _scalar_mass(cell_idx) += mass_added;
+                        
+                        // Update concentration from new mass
+                        if (V_new > 0.0) {
+                            _scalar_concentration(cell_idx) = _scalar_mass(cell_idx) / V_new;
+                        }
+                    }
+                });
         }
-        
-        // Copy back to device
-        Kokkos::deep_copy(_scalar_concentration, h_scalar);
-        Kokkos::deep_copy(_scalar_mass, h_scalar_mass);
     }
     
 private:
@@ -1001,30 +1001,31 @@ public:
         auto _scalar_concentration = scalar_concentration;
         const auto& bcs = bc_manager_->get_boundary_conditions(scalar_index_);
         
-        // Create host mirrors
-        auto h_scalar = Kokkos::create_mirror_view(_scalar_concentration);
-        Kokkos::deep_copy(h_scalar, _scalar_concentration);
-        
-        // Apply each boundary condition
+        // Process each boundary condition using device-side parallel operations
         for (const auto& bc : bcs) {
             Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
             
-            for (Ordinal cell_idx : bc.cell_indices) {
-                if (bc.type == ScalarBcType::PRESCRIBED_CONCENTRATION) {
-                    // Dirichlet BC: prescribed concentration
-                    h_scalar(cell_idx) = bc_value;
-                    
-                } else if (bc.type == ScalarBcType::CAUCHY) {
-                    // Cauchy BC: mixed boundary condition for interface exchange
-                    // For now, treat as prescribed concentration
-                    // Full implementation would modify flux terms based on exchange coefficient
-                    h_scalar(cell_idx) = bc_value;
-                }
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            if (bc.type == ScalarBcType::PRESCRIBED_CONCENTRATION ||
+                bc.type == ScalarBcType::CAUCHY) {
+                // Dirichlet or Cauchy BC: prescribed concentration
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        _scalar_concentration(cell_idx) = bc_value;
+                    });
             }
         }
-        
-        // Copy back to device
-        Kokkos::deep_copy(_scalar_concentration, h_scalar);
     }
     
 private:

@@ -108,6 +108,45 @@ public:
     Scalar get_time_step() const {
         return dt;
     }
+    
+    // ========================================================================
+    // UPDATE DENSITY/VISCOSITY FROM SCALAR CONCENTRATION
+    // ========================================================================
+    // Updates density and viscosity ratios based on scalar (e.g., salinity) concentration
+    // For seawater: r_rho = 1.0 + S * 0.000744 (where S is salinity in g/kg)
+    //               r_visc = 1.0 / (1.0 + S * 0.0022)
+    // This should be called before solve() when baroclinic effects are enabled
+    void update_density_viscosity_from_scalar(const View1D<Scalar>& scalar_concentration,
+                                              Scalar density_coeff = 0.000744,
+                                              Scalar viscosity_coeff = 0.0022) {
+        if (!baroclinic) return;
+        
+        auto _density_ratio = state.density_ratio;
+        auto _viscosity_ratio = state.viscosity_ratio;
+        auto _active_mask_3d = domain.active_mask_3d;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _scalar = scalar_concentration;
+        
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) {
+                    _density_ratio(domain_idx) = 1.0;
+                    _viscosity_ratio(domain_idx) = 1.0;
+                    return;
+                }
+                
+                Scalar s = _scalar(domain_idx);
+                
+                // Density ratio: rho/rho_0 = 1 + coeff * S
+                // Typical for seawater: coeff ≈ 0.000744 per g/kg salinity
+                _density_ratio(domain_idx) = 1.0 + s * density_coeff;
+                
+                // Viscosity ratio: mu_0/mu = 1 / (1 + coeff * S)
+                // Typical for seawater: coeff ≈ 0.0022 per g/kg salinity
+                _viscosity_ratio(domain_idx) = 1.0 / (1.0 + s * viscosity_coeff);
+            });
+    }
 
     // Main solver function (predictor-corrector scheme)
     void solve(Scalar current_time = 0.0) {
@@ -923,59 +962,48 @@ private:
         auto _matrix_rhs = state.matrix_rhs;
         
         const auto& bcs = bc_manager_->get_boundary_conditions();
+        Scalar dt_local = dt;
         
-        // Create host mirrors for boundary condition application
-        auto h_matrix_diag = Kokkos::create_mirror_view(_matrix_diag);
-        auto h_matrix_xp = Kokkos::create_mirror_view(_matrix_xp);
-        auto h_matrix_xm = Kokkos::create_mirror_view(_matrix_xm);
-        auto h_matrix_yp = Kokkos::create_mirror_view(_matrix_yp);
-        auto h_matrix_ym = Kokkos::create_mirror_view(_matrix_ym);
-        auto h_matrix_zp = Kokkos::create_mirror_view(_matrix_zp);
-        auto h_matrix_zm = Kokkos::create_mirror_view(_matrix_zm);
-        auto h_matrix_rhs = Kokkos::create_mirror_view(_matrix_rhs);
-        
-        Kokkos::deep_copy(h_matrix_diag, _matrix_diag);
-        Kokkos::deep_copy(h_matrix_xp, _matrix_xp);
-        Kokkos::deep_copy(h_matrix_xm, _matrix_xm);
-        Kokkos::deep_copy(h_matrix_yp, _matrix_yp);
-        Kokkos::deep_copy(h_matrix_ym, _matrix_ym);
-        Kokkos::deep_copy(h_matrix_zp, _matrix_zp);
-        Kokkos::deep_copy(h_matrix_zm, _matrix_zm);
-        Kokkos::deep_copy(h_matrix_rhs, _matrix_rhs);
-        
-        // Apply each boundary condition
+        // Process each boundary condition using device-side parallel operations
         for (const auto& bc : bcs) {
             Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
             
-            for (Ordinal cell_idx : bc.cell_indices) {
-                if (bc.type == GwBcType::FIXED_HEAD) {
-                    // Dirichlet BC: prescribed hydraulic head
-                    h_matrix_diag(cell_idx) = 1.0;
-                    h_matrix_xp(cell_idx) = 0.0;
-                    h_matrix_xm(cell_idx) = 0.0;
-                    h_matrix_yp(cell_idx) = 0.0;
-                    h_matrix_ym(cell_idx) = 0.0;
-                    h_matrix_zp(cell_idx) = 0.0;
-                    h_matrix_zm(cell_idx) = 0.0;
-                    h_matrix_rhs(cell_idx) = bc_value;
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
+            }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            if (bc.type == GwBcType::FIXED_HEAD) {
+                // Dirichlet BC: prescribed hydraulic head
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        _matrix_diag(cell_idx) = 1.0;
+                        _matrix_xp(cell_idx) = 0.0;
+                        _matrix_xm(cell_idx) = 0.0;
+                        _matrix_yp(cell_idx) = 0.0;
+                        _matrix_ym(cell_idx) = 0.0;
+                        _matrix_zp(cell_idx) = 0.0;
+                        _matrix_zm(cell_idx) = 0.0;
+                        _matrix_rhs(cell_idx) = bc_value;
+                    });
                     
-                } else if (bc.type == GwBcType::FIXED_FLUX) {
-                    // Neumann BC: prescribed flux (add to RHS)
-                    Scalar flux_volume = bc_value * dt;
-                    h_matrix_rhs(cell_idx) += flux_volume;
-                }
+            } else if (bc.type == GwBcType::FIXED_FLUX) {
+                // Neumann BC: prescribed flux (add to RHS)
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                        Ordinal cell_idx = d_bc_indices(i);
+                        Scalar flux_volume = bc_value * dt_local;
+                        _matrix_rhs(cell_idx) += flux_volume;
+                    });
             }
         }
-        
-        // Copy back to device
-        Kokkos::deep_copy(_matrix_diag, h_matrix_diag);
-        Kokkos::deep_copy(_matrix_xp, h_matrix_xp);
-        Kokkos::deep_copy(_matrix_xm, h_matrix_xm);
-        Kokkos::deep_copy(_matrix_yp, h_matrix_yp);
-        Kokkos::deep_copy(_matrix_ym, h_matrix_ym);
-        Kokkos::deep_copy(_matrix_zp, h_matrix_zp);
-        Kokkos::deep_copy(_matrix_zm, h_matrix_zm);
-        Kokkos::deep_copy(_matrix_rhs, h_matrix_rhs);
     }
     
     // ========================================================================
@@ -987,20 +1015,29 @@ private:
         auto _pressure = state.pressure;
         const auto& bcs = bc_manager_->get_boundary_conditions();
         
-        auto h_pressure = Kokkos::create_mirror_view(_pressure);
-        Kokkos::deep_copy(h_pressure, _pressure);
-        
+        // Process each boundary condition using device-side parallel operations
         for (const auto& bc : bcs) {
-            Scalar bc_value = bc.get_value(current_time);
+            if (bc.type != GwBcType::FIXED_HEAD) continue;
             
-            for (Ordinal cell_idx : bc.cell_indices) {
-                if (bc.type == GwBcType::FIXED_HEAD) {
-                    h_pressure(cell_idx) = bc_value;
-                }
+            Scalar bc_value = bc.get_value(current_time);
+            Ordinal n_bc_cells = bc.cell_indices.size();
+            
+            if (n_bc_cells == 0) continue;
+            
+            // Create device view for BC cell indices
+            View1D<Ordinal> d_bc_indices("bc_indices", n_bc_cells);
+            auto h_bc_indices = Kokkos::create_mirror_view(d_bc_indices);
+            for (Ordinal i = 0; i < n_bc_cells; ++i) {
+                h_bc_indices(i) = bc.cell_indices[i];
             }
+            Kokkos::deep_copy(d_bc_indices, h_bc_indices);
+            
+            Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                [=] KOKKOS_INLINE_FUNCTION (const Ordinal i) {
+                    Ordinal cell_idx = d_bc_indices(i);
+                    _pressure(cell_idx) = bc_value;
+                });
         }
-        
-        Kokkos::deep_copy(_pressure, h_pressure);
     }
     
     // ========================================================================

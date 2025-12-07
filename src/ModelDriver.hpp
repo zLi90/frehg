@@ -38,6 +38,7 @@ private:
     bool sync_coupling_;          // Synchronous coupling (same dt) vs async
     bool use_adaptive_dt_;        // Use adaptive time stepping
     int n_scalar_;                // Number of scalar species
+    bool baroclinic_;             // Baroclinic effects (density/viscosity from scalar)
     Scalar dt_;                   // Surface water time step
     Scalar dtg_;                  // Groundwater time step (may differ)
     Scalar dt_min_;               // Minimum time step
@@ -94,6 +95,7 @@ public:
         sim_groundwater_ = config.sim_groundwater;
         sync_coupling_ = config.sync_coupling;
         n_scalar_ = config.n_scalar;
+        baroclinic_ = config.baroclinic;
         dt_ = config.dt;
         dtg_ = config.dt;
         
@@ -354,6 +356,19 @@ public:
                                 gw_solvers[kk]->exchange_scalar_with_surface(
                                     sw_solvers[kk].get(), *sw_state, *sw_domain);
                             }
+                        }
+                    }
+                    
+                    // Update density/viscosity from scalar concentration (for baroclinic flow)
+                    // Uses the first scalar species (typically salinity)
+                    if (baroclinic_ && n_scalar_ > 0 && !gw_solvers.empty() && gw_solvers[0]) {
+                        auto* gw_solver = initializer_->get_gw_solver();
+                        if (gw_solver) {
+                            // Default coefficients for seawater salinity:
+                            // r_rho = 1.0 + S * 0.000744 (density ratio)
+                            // r_visc = 1.0 / (1.0 + S * 0.0022) (viscosity ratio)
+                            gw_solver->update_density_viscosity_from_scalar(
+                                gw_solvers[0]->scalar_concentration, 0.000744, 0.0022);
                         }
                     }
                 }

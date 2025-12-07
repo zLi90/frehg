@@ -75,13 +75,27 @@ private:
         bool baroclinic;
         bool superbee;
         
+        // Wind forcing parameters
+        bool sim_wind;              // Enable wind forcing
+        Scalar wind_speed;          // Initial wind speed (m/s)
+        Scalar wind_direction;      // Initial wind direction from north (degrees)
+        Scalar north_angle;         // Domain north angle from true north (degrees)
+        Scalar rho_air;             // Air density (kg/m³)
+        Scalar rho_water;           // Water density (kg/m³)
+        Scalar Cw;                  // Wind drag coefficient
+        Scalar CwT;                 // Thin layer model coefficient
+        Scalar hD;                  // Reference depth for thin layer (m)
+        
         // Default constructor
         Config() : NX(0), NY(0), NZ(0), dx(0.0), dy(0.0), dz(0.0), botZ(0.0),
                    dz_incre(1.0), use_mpi(false), mpi_nx(1), mpi_ny(1),
                    nthreads(1), dt(1.0), Tend(100.0), dt_out(10.0), n_monitor(0),
                    dt_adjust(false), dt_min(0.0), dt_max(0.0), Co_max(0.0),
                    sim_shallowwater(true), sim_groundwater(true), sync_coupling(true),
-                   n_scalar(0), baroclinic(false), superbee(true) {}
+                   n_scalar(0), baroclinic(false), superbee(true),
+                   sim_wind(false), wind_speed(0.0), wind_direction(0.0),
+                   north_angle(0.0), rho_air(1.225), rho_water(1000.0),
+                   Cw(0.0013), CwT(1.0), hD(1.0) {}
     };
     
     Config config_;
@@ -171,12 +185,22 @@ public:
         config_.baroclinic = input_reader_->read_bool("baroclinic", false);
         config_.superbee = input_reader_->read_bool("superbee", true);
         
+        // Read wind forcing settings
+        config_.sim_wind = input_reader_->read_bool("sim_wind", false);
+        config_.wind_speed = input_reader_->read_double("init_windspd", 0.0);
+        config_.wind_direction = input_reader_->read_double("init_winddir", 0.0);
+        config_.north_angle = input_reader_->read_double("north_angle", 0.0);
+        config_.rho_air = input_reader_->read_double("rhoa", 1.225);
+        config_.rho_water = input_reader_->read_double("rhow", 1000.0);
+        config_.Cw = input_reader_->read_double("Cw", 0.0013);
+        config_.CwT = input_reader_->read_double("CwT", 1.0);
+        config_.hD = input_reader_->read_double("hD", 1.0);
+        
         // TODO: Add more fields as needed:
         // - Bathymetry file settings
         // - Physical parameters (grav, visc, manning, etc.)
         // - Boundary conditions
         // - Initial conditions
-        // - Wind model settings
         // - Evaporation/rainfall settings
         // - Inflow/tide settings
         // - Groundwater parameters (Ksx, Ksy, Ksz, Ss, wcs, wcr, etc.)
@@ -801,6 +825,15 @@ private:
                 config_.dt, grav, manning_n, visc_x, visc_y,
                 PreconditionerType::JACOBI, 1.0e-8, 10000,
                 sw_bc_manager_.get(), sw_source_sink_manager_.get());
+            
+            // Configure wind forcing
+            if (config_.sim_wind) {
+                sw_solver_->set_wind_enabled(true);
+                sw_solver_->set_wind_parameters(
+                    config_.rho_air, config_.rho_water, config_.Cw,
+                    config_.CwT, config_.hD, config_.north_angle);
+                sw_solver_->set_wind_conditions(config_.wind_speed, config_.wind_direction);
+            }
         }
         
         // Create groundwater solver
