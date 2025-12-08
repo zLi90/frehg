@@ -50,11 +50,6 @@ private:
         Scalar botZ;
         Scalar dz_incre;
         
-        // MPI settings
-        bool use_mpi;
-        Ordinal mpi_nx, mpi_ny;
-        Ordinal nthreads;
-        
         // Time control
         Scalar dt;
         Scalar Tend;
@@ -88,8 +83,7 @@ private:
         
         // Default constructor
         Config() : NX(0), NY(0), NZ(0), dx(0.0), dy(0.0), dz(0.0), botZ(0.0),
-                   dz_incre(1.0), use_mpi(false), mpi_nx(1), mpi_ny(1),
-                   nthreads(1), dt(1.0), Tend(100.0), dt_out(10.0), n_monitor(0),
+                   dz_incre(1.0), dt(1.0), Tend(100.0), dt_out(10.0), n_monitor(0),
                    dt_adjust(false), dt_min(0.0), dt_max(0.0), Co_max(0.0),
                    sim_shallowwater(true), sim_groundwater(true), sync_coupling(true),
                    n_scalar(0), baroclinic(false), superbee(true),
@@ -158,12 +152,6 @@ public:
         config_.dz = input_reader_->read_double("dz", 1.0);
         config_.botZ = input_reader_->read_double("botZ", 0.0);
         config_.dz_incre = input_reader_->read_double("dz_incre", 1.0);
-        
-        // Read MPI settings
-        config_.use_mpi = input_reader_->read_bool("use_mpi", false);
-        config_.mpi_nx = input_reader_->read_int("mpi_nx", 1);
-        config_.mpi_ny = input_reader_->read_int("mpi_ny", 1);
-        config_.nthreads = input_reader_->read_int("nthreads", 1);
         
         // Read time control
         config_.dt = input_reader_->read_double("dt", 1.0);

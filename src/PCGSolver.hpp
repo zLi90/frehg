@@ -164,19 +164,21 @@ public:
     // x: Solution vector (input: initial guess, output: solution)
     // use_initial_guess: If true, uses x as initial guess; if false, starts from zero
     void solve_3d(const ActiveCellMesh& mesh,
-                  const View1D<Scalar>& diag,      // Diagonal (Gct)
-                  const View1D<Scalar>& xp,        // X+ coefficient (Gxp)
-                  const View1D<Scalar>& xm,        // X- coefficient (Gxm)
-                  const View1D<Scalar>& yp,        // Y+ coefficient (Gyp)
-                  const View1D<Scalar>& ym,        // Y- coefficient (Gym)
-                  const View1D<Scalar>& zp,        // Z+ coefficient (Gzp)
-                  const View1D<Scalar>& zm,        // Z- coefficient (Gzm)
-                  const View1D<Scalar>& rhs,       // Right-hand side (Grhs)
-                  View1D<Scalar>& x,               // Solution (input/output)
+                  const View1D<Scalar>& diag,      // Diagonal (Gct) - indexed by domain
+                  const View1D<Scalar>& xp,        // X+ coefficient (Gxp) - indexed by domain
+                  const View1D<Scalar>& xm,        // X- coefficient (Gxm) - indexed by domain
+                  const View1D<Scalar>& yp,        // Y+ coefficient (Gyp) - indexed by domain
+                  const View1D<Scalar>& ym,        // Y- coefficient (Gym) - indexed by domain
+                  const View1D<Scalar>& zp,        // Z+ coefficient (Gzp) - indexed by domain
+                  const View1D<Scalar>& zm,        // Z- coefficient (Gzm) - indexed by domain
+                  const View1D<Scalar>& rhs,       // Right-hand side (Grhs) - indexed by domain
+                  View1D<Scalar>& x,               // Solution (input/output) - indexed by active
                   bool use_initial_guess = true) { // Use x as initial guess
         
         // Build preconditioner
         build_preconditioner_3d(mesh, diag, xp, xm, yp, ym, zp, zm);
+        
+        auto _active_to_domain = mesh.active_to_domain;
         
         // Compute initial residual: r = b - A*x
         if (use_initial_guess) {
@@ -186,12 +188,20 @@ public:
             auto _rhs = rhs;
             Kokkos::parallel_for(RangePolicy(0, num_active),
                 KOKKOS_LAMBDA (const Ordinal i) {
-                    _r(i) = _rhs(i) - _r(i);
+                    Ordinal domain_idx = _active_to_domain(i);
+                    _r(i) = _rhs(domain_idx) - _r(i);
                 });
         } else {
             // Zero initial guess: r = b - A*0 = b
+            // Copy RHS with index mapping (rhs is indexed by domain, r by active)
             Kokkos::deep_copy(x, 0.0);
-            Kokkos::deep_copy(r, rhs);
+            auto _r = r;
+            auto _rhs = rhs;
+            Kokkos::parallel_for(RangePolicy(0, num_active),
+                KOKKOS_LAMBDA (const Ordinal i) {
+                    Ordinal domain_idx = _active_to_domain(i);
+                    _r(i) = _rhs(domain_idx);
+                });
         }
         
         // Compute initial residual norm
@@ -238,6 +248,11 @@ public:
             
             if (rnorm < tolerance * rnorm0) {
                 converged = true;
+                break;
+            }
+            
+            // Check for NaN
+            if (std::isnan(rnorm)) {
                 break;
             }
             
@@ -306,11 +321,14 @@ private:
         
         auto _diag = diag;
         auto _M_inv = M_inv;
+        auto _active_to_domain = mesh.active_to_domain;
         
+        // Note: diag is indexed by domain index, M_inv is indexed by active index
         Kokkos::parallel_for(RangePolicy(0, num_active),
             KOKKOS_LAMBDA (const Ordinal i) {
-                if (std::abs(_diag(i)) > 1.0e-20) {
-                    _M_inv(i) = 1.0 / _diag(i);
+                Ordinal domain_idx = _active_to_domain(i);
+                if (Kokkos::abs(_diag(domain_idx)) > 1.0e-20) {
+                    _M_inv(i) = 1.0 / _diag(domain_idx);
                 } else {
                     _M_inv(i) = 1.0;
                 }
@@ -421,6 +439,8 @@ private:
         auto _neighbor_back = mesh.neighbor_back;
         auto _neighbor_front = mesh.neighbor_front;
         
+        // Matrix-vector product for SPD matrix (2D):
+        // A*p = diag*p + xp*p[right] + xm*p[left] + yp*p[front] + ym*p[back]
         Kokkos::parallel_for(RangePolicy(0, num_active),
             KOKKOS_LAMBDA (const Ordinal i) {
                 // Diagonal contribution
@@ -429,25 +449,25 @@ private:
                 // X+ neighbor (right)
                 Ordinal n_right = _neighbor_right(i);
                 if (n_right >= 0 && n_right < num_active) {
-                    result -= _xp(i) * _p(n_right);
+                    result += _xp(i) * _p(n_right);
                 }
                 
                 // X- neighbor (left)
                 Ordinal n_left = _neighbor_left(i);
                 if (n_left >= 0 && n_left < num_active) {
-                    result -= _xm(i) * _p(n_left);
+                    result += _xm(i) * _p(n_left);
                 }
                 
                 // Y+ neighbor (front)
                 Ordinal n_front = _neighbor_front(i);
                 if (n_front >= 0 && n_front < num_active) {
-                    result -= _yp(i) * _p(n_front);
+                    result += _yp(i) * _p(n_front);
                 }
                 
                 // Y- neighbor (back)
                 Ordinal n_back = _neighbor_back(i);
                 if (n_back >= 0 && n_back < num_active) {
-                    result -= _ym(i) * _p(n_back);
+                    result += _ym(i) * _p(n_back);
                 }
                 
                 _Ap(i) = result;
@@ -455,6 +475,8 @@ private:
     }
     
     // Matrix-vector product: Ap = A * p (3D)
+    // Note: Matrix coefficients (diag, xp, etc.) are indexed by DOMAIN index
+    //       Solution vectors (p, Ap) are indexed by ACTIVE index
     void matrix_vector_product_3d(const ActiveCellMesh& mesh,
                                  const View1D<Scalar>& diag,
                                  const View1D<Scalar>& xp,
@@ -482,46 +504,53 @@ private:
         auto _neighbor_front = mesh.neighbor_front;
         auto _neighbor_bottom = mesh.neighbor_bottom;
         auto _neighbor_top = mesh.neighbor_top;
+        auto _active_to_domain = mesh.active_to_domain;
         
+        // Matrix-vector product for SPD matrix:
+        // A*p = diag*p + xp*p[right] + xm*p[left] + yp*p[front] + ym*p[back] + zp*p[top] + zm*p[bottom]
+        // Off-diagonal coefficients (xp, xm, etc.) are NEGATIVE for SPD matrix
         Kokkos::parallel_for(RangePolicy(0, num_active),
             KOKKOS_LAMBDA (const Ordinal i) {
-                // Diagonal contribution
-                Scalar result = _diag(i) * _p(i);
+                // Get domain index for matrix coefficient access
+                Ordinal domain_idx = _active_to_domain(i);
                 
-                // X+ neighbor
+                // Diagonal contribution
+                Scalar result = _diag(domain_idx) * _p(i);
+                
+                // X+ neighbor (off-diag is stored as negative value)
                 Ordinal n_right = _neighbor_right(i);
                 if (n_right >= 0 && n_right < num_active) {
-                    result -= _xp(i) * _p(n_right);
+                    result += _xp(domain_idx) * _p(n_right);
                 }
                 
                 // X- neighbor
                 Ordinal n_left = _neighbor_left(i);
                 if (n_left >= 0 && n_left < num_active) {
-                    result -= _xm(i) * _p(n_left);
+                    result += _xm(domain_idx) * _p(n_left);
                 }
                 
                 // Y+ neighbor
                 Ordinal n_front = _neighbor_front(i);
                 if (n_front >= 0 && n_front < num_active) {
-                    result -= _yp(i) * _p(n_front);
+                    result += _yp(domain_idx) * _p(n_front);
                 }
                 
                 // Y- neighbor
                 Ordinal n_back = _neighbor_back(i);
                 if (n_back >= 0 && n_back < num_active) {
-                    result -= _ym(i) * _p(n_back);
+                    result += _ym(domain_idx) * _p(n_back);
                 }
                 
                 // Z+ neighbor (top/shallow)
                 Ordinal n_top = _neighbor_top(i);
                 if (n_top >= 0 && n_top < num_active) {
-                    result -= _zp(i) * _p(n_top);
+                    result += _zp(domain_idx) * _p(n_top);
                 }
                 
                 // Z- neighbor (bottom/deep)
                 Ordinal n_bottom = _neighbor_bottom(i);
                 if (n_bottom >= 0 && n_bottom < num_active) {
-                    result -= _zm(i) * _p(n_bottom);
+                    result += _zm(domain_idx) * _p(n_bottom);
                 }
                 
                 _Ap(i) = result;
@@ -549,7 +578,8 @@ private:
         return dot;
     }
     
-    void update_vector(View1D<Scalar>& x, const View1D<Scalar>& y, Scalar alpha, Scalar beta = 0.0) {
+    // x = x + alpha*y (default), or x = beta*x + alpha*y (if beta specified)
+    void update_vector(View1D<Scalar>& x, const View1D<Scalar>& y, Scalar alpha, Scalar beta = 1.0) {
         auto _x = x;
         auto _y = y;
         Kokkos::parallel_for(RangePolicy(0, num_active),

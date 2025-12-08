@@ -144,12 +144,11 @@ public:
                 // Active Flag
                 h_sw_active(id) = active_mask_2d[id];
 
-                // Connectivity (Clamped)
-                // If at boundary, point to self. Solver handles physics BC.
-                h_sw_left(id)  = (i > 0)      ? (id - 1)  : id;
-                h_sw_right(id) = (i < nx - 1) ? (id + 1)  : id;
-                h_sw_back(id)  = (j > 0)      ? (id - nx) : id;
-                h_sw_front(id) = (j < ny - 1) ? (id + nx) : id;
+                // Connectivity - use -1 for boundary (no neighbor)
+                h_sw_left(id)  = (i > 0)      ? (id - 1)  : -1;
+                h_sw_right(id) = (i < nx - 1) ? (id + 1)  : -1;
+                h_sw_back(id)  = (j > 0)      ? (id - nx) : -1;
+                h_sw_front(id) = (j < ny - 1) ? (id + nx) : -1;
                 
                 // Initialize coupling map default
                 h_sw_to_gw(id) = -1; 
@@ -181,15 +180,15 @@ public:
                     // Simple Z calculation (needs refinement for complex bathymetry)
                     h_z_coords(gw_id) = current_z_bottom + 0.5 * layer_thickness;
 
-                    // Connectivity (Horizontal - Clamped)
-                    h_gw_left(gw_id)  = (i > 0)      ? (gw_id - 1)  : gw_id;
-                    h_gw_right(gw_id) = (i < nx - 1) ? (gw_id + 1)  : gw_id;
-                    h_gw_back(gw_id)  = (j > 0)      ? (gw_id - nx) : gw_id;
-                    h_gw_front(gw_id) = (j < ny - 1) ? (gw_id + nx) : gw_id;
+                    // Connectivity (Horizontal) - use -1 for boundary
+                    h_gw_left(gw_id)  = (i > 0)      ? (gw_id - 1)  : -1;
+                    h_gw_right(gw_id) = (i < nx - 1) ? (gw_id + 1)  : -1;
+                    h_gw_back(gw_id)  = (j > 0)      ? (gw_id - nx) : -1;
+                    h_gw_front(gw_id) = (j < ny - 1) ? (gw_id + nx) : -1;
 
-                    // Connectivity (Vertical - Clamped)
-                    h_gw_bot(gw_id) = (k > 0)      ? (gw_id - num_cells_2d) : gw_id;
-                    h_gw_top(gw_id) = (k < nz - 1) ? (gw_id + num_cells_2d) : gw_id;
+                    // Connectivity (Vertical) - use -1 for boundary
+                    h_gw_bot(gw_id) = (k > 0)      ? (gw_id - num_cells_2d) : -1;
+                    h_gw_top(gw_id) = (k < nz - 1) ? (gw_id + num_cells_2d) : -1;
 
                     // Coupling Maps
                     h_gw_to_sw(gw_id) = sw_id;

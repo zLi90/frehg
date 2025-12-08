@@ -7,10 +7,13 @@
 #include <iostream>
 #include <string>
 #include <cstdlib> // for std::stoi
+#include <filesystem>
 #include <Kokkos_Core.hpp>
 
 #include "define.hpp"
 #include "ModelDriver.hpp"
+
+namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
     // 1. Parse Runtime Arguments
@@ -26,7 +29,31 @@ int main(int argc, char* argv[]) {
     std::string output_dir = argv[2];
     int num_threads = (argc >= 4) ? std::stoi(argv[3]) : 1;
 
-    // 2. Initialize Kokkos with Explicit Thread Count
+    // 2. Validate Input/Output Directories
+    // ------------------------------------------------------------------------
+    // Check input directory exists
+    if (!fs::exists(input_dir)) {
+        std::cerr << "Error: Input directory does not exist: " << input_dir << "\n";
+        return 1;
+    }
+    
+    // Check output directory - create if not exists, error if exists
+    if (fs::exists(output_dir)) {
+        std::cerr << "Error: Output directory already exists: " << output_dir << "\n";
+        std::cerr << "       Please remove or rename the existing directory to avoid overwriting data.\n";
+        return 1;
+    } else {
+        // Create output directory
+        try {
+            fs::create_directories(output_dir);
+            std::cout << "Created output directory: " << output_dir << "\n";
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Error: Failed to create output directory: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // 3. Initialize Kokkos with Explicit Thread Count
     // ------------------------------------------------------------------------
     // Set the number of threads for the Host execution space (e.g., OpenMP).
     Kokkos::InitializationSettings settings;
@@ -34,7 +61,7 @@ int main(int argc, char* argv[]) {
     
     Kokkos::initialize(settings);
 
-    // 3. Simulation Scope (RAII)
+    // 4. Simulation Scope (RAII)
     // ------------------------------------------------------------------------
     // The brace block ensures 'driver' is destroyed before Kokkos::finalize()
     {
@@ -67,7 +94,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 4. Finalize Resources
+    // 5. Finalize Resources
     // ------------------------------------------------------------------------
     Kokkos::finalize();
 

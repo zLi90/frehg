@@ -314,6 +314,17 @@ public:
         viscosity_ratio_yp = View1D<Scalar>("viscosity_ratio_yp", num_cells);
         viscosity_ratio_zp = View1D<Scalar>("viscosity_ratio_zp", num_cells);
         
+        // Initialize density and viscosity ratios to 1.0 (no baroclinic modification)
+        Kokkos::deep_copy(density_ratio, 1.0);
+        Kokkos::deep_copy(density_ratio_old, 1.0);
+        Kokkos::deep_copy(viscosity_ratio, 1.0);
+        Kokkos::deep_copy(density_ratio_xp, 1.0);
+        Kokkos::deep_copy(density_ratio_yp, 1.0);
+        Kokkos::deep_copy(density_ratio_zp, 1.0);
+        Kokkos::deep_copy(viscosity_ratio_xp, 1.0);
+        Kokkos::deep_copy(viscosity_ratio_yp, 1.0);
+        Kokkos::deep_copy(viscosity_ratio_zp, 1.0);
+        
         volume = View1D<Scalar>("volume", num_cells);
         volume_old = View1D<Scalar>("volume_old", num_cells);
         volume_flux = View1D<Scalar>("volume_flux", num_cells);

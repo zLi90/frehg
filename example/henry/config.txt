@@ -17,8 +17,6 @@
 # SIMULATION CONTROL
 # --------------------------------------------------------------------------
 sim_id = Henry_Problem
-finput = 
-foutput = 
 
 # Domain: 2m x 1m cross-section (x-z plane)
 # 100 cells in x (dx=0.02m), 1 cell in y, 50 cells in z (dz=0.02m)
@@ -31,21 +29,15 @@ dz = 0.02
 botZ = 0.0
 dz_incre = 1.0
 
-# MPI (single process)
-use_mpi = 0
-mpi_nx = 1
-mpi_ny = 1
-nthreads = 1
-
 # Time stepping
-dt = 1.0
-Tend = 50000.0
-dt_out = 1000.0
+dt = 0.01
+Tend = 1000.0
+dt_out = 200.0
 
 # Adaptive time stepping
 dt_adjust = 1
 dt_min = 0.001
-dt_max = 10.0
+dt_max = 0.02
 Co_max = 0.5
 
 # --------------------------------------------------------------------------
@@ -77,17 +69,18 @@ Ksz = 0.01
 Ss = 1.0e-4
 
 # Van Genuchten parameters (saturated flow - not used but required)
-soil_a = 1.0
-soil_n = 2.0
-wcs = 0.35
-wcr = 0.01
+# Note: parameter names must match code: porosity, theta_r, vg_alpha, vg_n, vg_ha
+porosity = 0.35
+theta_r = 0.01
+vg_alpha = 1.0
+vg_n = 2.0
+vg_ha = 0.0
 
 # Initial conditions (saturated, freshwater)
+ic_wc_type = constant
 init_wc = 0.35
+ic_h_type = constant
 init_h = 1.0
-init_wt_rel = 1.0
-h_file = 0
-wc_file = 0
 
 # --------------------------------------------------------------------------
 # GROUNDWATER BOUNDARY CONDITIONS

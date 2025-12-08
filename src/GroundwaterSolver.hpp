@@ -735,13 +735,14 @@ private:
                 Scalar V = domain.dx * domain.dy * dz;
                 
                 // X-direction coefficients
+                // Standard FV discretization: -dt * K * A / dx
                 _matrix_xp(domain_idx) = 0.0;
                 if (active_right >= 0) {
                     Scalar Kx = _conductivity_x(domain_idx);
                     Scalar r_rho = _density_ratio_xp(domain_idx);
                     Scalar r_visc = _viscosity_ratio_xp(domain_idx);
                     Scalar Ax = domain.dy * dz; // Face area
-                    _matrix_xp(domain_idx) = -Kx * dt * r_rho * r_visc * Ax / (domain.dx * domain.dx);
+                    _matrix_xp(domain_idx) = -Kx * dt * r_rho * r_visc * Ax / domain.dx;
                 }
                 
                 _matrix_xm(domain_idx) = 0.0;
@@ -751,7 +752,7 @@ private:
                     Scalar r_rho = _density_ratio_xp(idx_left);
                     Scalar r_visc = _viscosity_ratio_xp(idx_left);
                     Scalar Ax = domain.dy * dz;
-                    _matrix_xm(domain_idx) = -Kx * dt * r_rho * r_visc * Ax / (domain.dx * domain.dx);
+                    _matrix_xm(domain_idx) = -Kx * dt * r_rho * r_visc * Ax / domain.dx;
                 }
                 
                 // Y-direction coefficients
@@ -761,7 +762,7 @@ private:
                     Scalar r_rho = _density_ratio_yp(domain_idx);
                     Scalar r_visc = _viscosity_ratio_yp(domain_idx);
                     Scalar Ay = domain.dx * dz;
-                    _matrix_yp(domain_idx) = -Ky * dt * r_rho * r_visc * Ay / (domain.dy * domain.dy);
+                    _matrix_yp(domain_idx) = -Ky * dt * r_rho * r_visc * Ay / domain.dy;
                 }
                 
                 _matrix_ym(domain_idx) = 0.0;
@@ -771,10 +772,11 @@ private:
                     Scalar r_rho = _density_ratio_yp(idx_back);
                     Scalar r_visc = _viscosity_ratio_yp(idx_back);
                     Scalar Ay = domain.dx * dz;
-                    _matrix_ym(domain_idx) = -Ky * dt * r_rho * r_visc * Ay / (domain.dy * domain.dy);
+                    _matrix_ym(domain_idx) = -Ky * dt * r_rho * r_visc * Ay / domain.dy;
                 }
                 
                 // Z-direction coefficients
+                // Use average dz for non-uniform layer thicknesses
                 _matrix_zp(domain_idx) = 0.0;
                 if (active_top >= 0) {
                     Scalar Kz = _conductivity_z(domain_idx);
@@ -783,7 +785,7 @@ private:
                     Scalar Az = domain.dx * domain.dy;
                     Scalar dz_top = (k < domain.nz - 1) ? _dz_layers(k + 1) : dz;
                     Scalar dz_avg_z = 0.5 * (dz + dz_top);
-                    _matrix_zp(domain_idx) = -Kz * dt * r_rho * r_visc * V / (dz * dz_avg_z);
+                    _matrix_zp(domain_idx) = -Kz * dt * r_rho * r_visc * Az / dz_avg_z;
                 }
                 
                 _matrix_zm(domain_idx) = 0.0;
@@ -796,7 +798,7 @@ private:
                     Ordinal k_bottom = _coord_k(active_bottom);
                     Scalar dz_bottom = _dz_layers(k_bottom);
                     Scalar dz_avg_z = 0.5 * (dz + dz_bottom);
-                    _matrix_zm(domain_idx) = -Kz * dt * r_rho * r_visc * V / (dz * dz_avg_z);
+                    _matrix_zm(domain_idx) = -Kz * dt * r_rho * r_visc * Az / dz_avg_z;
                 }
                 
                 // Diagonal coefficient
@@ -849,19 +851,20 @@ private:
                                 _density_ratio(domain_idx);
                 _matrix_rhs(domain_idx) = ch_term * _pressure_old(domain_idx) * V;
                 
-                // Density-driven flow term (vertical)
-                _matrix_rhs(domain_idx) -= dt * V * _conductivity_z(domain_idx) * 
-                                          _density_ratio_zp(domain_idx) * _density_ratio_zp(domain_idx) * 
-                                          _viscosity_ratio_zp(domain_idx) / dz;
+                // Density-driven flow term (vertical buoyancy)
+                // This accounts for density-driven flow: q_z = -K * r_visc * (dh/dz + r_rho - 1)
+                // The (r_rho - 1) term is the density-difference driving force
+                Scalar Az = domain.dx * domain.dy;
+                _matrix_rhs(domain_idx) -= dt * Az * _conductivity_z(domain_idx) * 
+                                          _viscosity_ratio_zp(domain_idx) * 
+                                          (_density_ratio_zp(domain_idx) - 1.0);
                 
                 Ordinal active_bottom = _neighbor_bottom(i);
                 if (active_bottom >= 0) {
                     Ordinal idx_bottom = _active_to_domain(active_bottom);
-                    Ordinal k_bottom = _coord_k(active_bottom);
-                    Scalar dz_bottom = _dz_layers(k_bottom);
-                    _matrix_rhs(domain_idx) += dt * V * _conductivity_z(idx_bottom) * 
-                                              _density_ratio_zp(idx_bottom) * _density_ratio_zp(idx_bottom) * 
-                                              _viscosity_ratio_zp(idx_bottom) / dz_bottom;
+                    _matrix_rhs(domain_idx) += dt * Az * _conductivity_z(idx_bottom) * 
+                                              _viscosity_ratio_zp(idx_bottom) * 
+                                              (_density_ratio_zp(idx_bottom) - 1.0);
                 }
                 
                 // Boundary conditions and source/sink terms will be added here later
@@ -931,6 +934,11 @@ private:
                 solution(i) = _pressure(domain_idx);
             });
         
+        // Use zero initial guess for first solve (more stable), then use previous solution
+        static bool first_solve = true;
+        bool use_guess = !first_solve;
+        first_solve = false;
+        
         pcg_solver->solve_3d(active_mesh,
                             state.matrix_diag,
                             state.matrix_xp,
@@ -940,7 +948,9 @@ private:
                             state.matrix_zp,
                             state.matrix_zm,
                             state.matrix_rhs,
-                            solution);
+                            solution,
+                            use_guess);
+        
         
         // Copy solution back to state.pressure (h_new)
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
@@ -985,6 +995,85 @@ private:
             
             if (bc.type == GwBcType::FIXED_HEAD) {
                 // Dirichlet BC: prescribed hydraulic head
+                // We need to modify both:
+                // 1. The BC cell row (set diag=1, rhs=bc_value, zero off-diagonals)
+                // 2. The neighbor cells (move known BC to RHS for symmetry)
+                
+                // First, modify neighbor cells to create symmetric matrix
+                // For each BC cell, find its neighbors and update their RHS
+                auto _neighbor_left = active_mesh.neighbor_left;
+                auto _neighbor_right = active_mesh.neighbor_right;
+                auto _neighbor_back = active_mesh.neighbor_back;
+                auto _neighbor_front = active_mesh.neighbor_front;
+                auto _neighbor_bottom = active_mesh.neighbor_bottom;
+                auto _neighbor_top = active_mesh.neighbor_top;
+                auto _active_to_domain = active_mesh.active_to_domain;
+                auto _domain_to_active = active_mesh.domain_to_active;
+                Ordinal num_active_cells = active_mesh.num_active;
+                Scalar _bc_value = bc_value;
+                
+                Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
+                    KOKKOS_LAMBDA (const Ordinal i) {
+                        Ordinal bc_cell_domain = d_bc_indices(i);
+                        Ordinal bc_cell_active = _domain_to_active(bc_cell_domain);
+                        if (bc_cell_active < 0 || bc_cell_active >= num_active_cells) return;
+                        
+                        // For each neighbor of the BC cell, modify their equation:
+                        // Original: diag*h[i] + coeff*h[bc] + ... = rhs
+                        // Modified: diag*h[i] + ... = rhs - coeff*h_bc
+                        // So: rhs_new = rhs - coeff*bc_value
+                        
+                        // Right neighbor: has xm pointing to BC cell
+                        Ordinal n_right = _neighbor_right(bc_cell_active);
+                        if (n_right >= 0 && n_right < num_active_cells) {
+                            Ordinal right_domain = _active_to_domain(n_right);
+                            // Move xm*h_bc to RHS: rhs -= xm * bc_value
+                            Kokkos::atomic_sub(&_matrix_rhs(right_domain), _matrix_xm(right_domain) * _bc_value);
+                            _matrix_xm(right_domain) = 0.0;
+                        }
+                        
+                        // Left neighbor: has xp pointing to BC cell
+                        Ordinal n_left = _neighbor_left(bc_cell_active);
+                        if (n_left >= 0 && n_left < num_active_cells) {
+                            Ordinal left_domain = _active_to_domain(n_left);
+                            Kokkos::atomic_sub(&_matrix_rhs(left_domain), _matrix_xp(left_domain) * _bc_value);
+                            _matrix_xp(left_domain) = 0.0;
+                        }
+                        
+                        // Front neighbor: has ym pointing to BC cell
+                        Ordinal n_front = _neighbor_front(bc_cell_active);
+                        if (n_front >= 0 && n_front < num_active_cells) {
+                            Ordinal front_domain = _active_to_domain(n_front);
+                            Kokkos::atomic_sub(&_matrix_rhs(front_domain), _matrix_ym(front_domain) * _bc_value);
+                            _matrix_ym(front_domain) = 0.0;
+                        }
+                        
+                        // Back neighbor: has yp pointing to BC cell
+                        Ordinal n_back = _neighbor_back(bc_cell_active);
+                        if (n_back >= 0 && n_back < num_active_cells) {
+                            Ordinal back_domain = _active_to_domain(n_back);
+                            Kokkos::atomic_sub(&_matrix_rhs(back_domain), _matrix_yp(back_domain) * _bc_value);
+                            _matrix_yp(back_domain) = 0.0;
+                        }
+                        
+                        // Top neighbor: has zm pointing to BC cell
+                        Ordinal n_top = _neighbor_top(bc_cell_active);
+                        if (n_top >= 0 && n_top < num_active_cells) {
+                            Ordinal top_domain = _active_to_domain(n_top);
+                            Kokkos::atomic_sub(&_matrix_rhs(top_domain), _matrix_zm(top_domain) * _bc_value);
+                            _matrix_zm(top_domain) = 0.0;
+                        }
+                        
+                        // Bottom neighbor: has zp pointing to BC cell
+                        Ordinal n_bottom = _neighbor_bottom(bc_cell_active);
+                        if (n_bottom >= 0 && n_bottom < num_active_cells) {
+                            Ordinal bottom_domain = _active_to_domain(n_bottom);
+                            Kokkos::atomic_sub(&_matrix_rhs(bottom_domain), _matrix_zp(bottom_domain) * _bc_value);
+                            _matrix_zp(bottom_domain) = 0.0;
+                        }
+                    });
+                
+                // Now set the BC cell row itself
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
                     KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
@@ -995,7 +1084,7 @@ private:
                         _matrix_ym(cell_idx) = 0.0;
                         _matrix_zp(cell_idx) = 0.0;
                         _matrix_zm(cell_idx) = 0.0;
-                        _matrix_rhs(cell_idx) = bc_value;
+                        _matrix_rhs(cell_idx) = _bc_value;
                     });
                     
             } else if (bc.type == GwBcType::FIXED_FLUX) {
@@ -1510,39 +1599,53 @@ public:
                         Scalar m = _vg_m(domain_idx);
                         Scalar ha = _vg_ha(domain_idx);
                         
-                        // Lambda limiter
+                        // Lambda limiter - clamp saturation to avoid NaN at boundaries
                         Scalar wc_lim = wc;
-                        if (wc > 0.9999 * wcs && wc < wcs) {
-                            wc_lim = 0.9999 * wcs;
+                        if (wc >= wcs) {
+                            wc_lim = 0.9999 * wcs;  // Slightly below saturation
+                        } else if (wc <= wcr) {
+                            wc_lim = wcr + 1.0e-6 * (wcs - wcr);  // Slightly above residual
                         }
                         
                         Scalar s = (wc_lim - wcr) / (wcs - wcr);
+                        // Clamp s to safe range
+                        if (s < 1.0e-6) s = 1.0e-6;
+                        if (s > 0.9999) s = 0.9999;
+                        
                         Scalar dKdwc = 0.0;
                         
-                        if (s > 0.0 && s < 1.0) {
+                        if (s > 1.0e-6 && s < 0.9999) {
                             Scalar term0, term1, term2;
                             
                             if (ha > 0.0) {
                                 // Modified van Genuchten
                                 Scalar wcm = wcr + (wcs - wcr) * std::pow((1.0 + std::pow(ha * alpha, n)), m);
                                 Scalar c2 = (wcs - wcr) / (wcm - wcr);
-                                Scalar c1 = 1.0 / std::pow(1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m), 2.0);
+                                Scalar denom = 1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m);
+                                if (denom < 1.0e-10) return;  // Avoid division by zero
+                                Scalar c1 = 1.0 / (denom * denom);
                                 
-                                term0 = std::pow(1.0 - std::pow(c2 * s, 1.0/m), m);
+                                Scalar c2s_pow = std::pow(c2 * s, 1.0/m);
+                                if (c2s_pow >= 1.0) return;  // Avoid negative base
+                                
+                                term0 = std::pow(1.0 - c2s_pow, m);
                                 term1 = 0.5 * c1 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
                                 term2 = 2.0 * c1 * Ks * c2 * std::pow(s, 0.5) * 
                                         std::pow(c2 * s, 1.0/m - 1.0) * (1.0 - term0) * 
-                                        std::pow(1.0 - std::pow(c2 * s, 1.0/m), m - 1.0);
+                                        std::pow(1.0 - c2s_pow, m - 1.0);
                             } else {
                                 // Standard van Genuchten
-                                term0 = std::pow(1.0 - std::pow(s, 1.0/m), m);
+                                Scalar s_pow = std::pow(s, 1.0/m);
+                                if (s_pow >= 1.0) return;  // Avoid negative base
+                                
+                                term0 = std::pow(1.0 - s_pow, m);
                                 term1 = 0.5 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
                                 term2 = 2.0 * Ks * std::pow(s, (2.0 - m) / (2.0 * m)) * (1.0 - term0) * 
-                                        std::pow(1.0 - std::pow(s, 1.0/m), m - 1.0);
+                                        std::pow(1.0 - s_pow, m - 1.0);
                             }
                             
                             dKdwc = (term1 + term2) / (wcs - wcr);
-                            if (dKdwc < 0.0) dKdwc = 0.0;
+                            if (dKdwc < 0.0 || !Kokkos::isfinite(dKdwc)) dKdwc = 0.0;
                         }
                         
                         if (dKdwc > 0.0) {
@@ -1563,11 +1666,14 @@ public:
                 if (_active_mask_3d(domain_idx) == 0) return;
                 
                 // Error estimate (second-order time derivative)
+                // Skip if dt_prev is too small to avoid division by zero
+                if (dt_prev < 1.0e-10) return;
+                
                 Scalar h = _pressure(domain_idx);
                 Scalar hn = _pressure_old(domain_idx);
                 Scalar hnm = _head_prev_prev(domain_idx);
-                Scalar err = 0.5 * dt * std::abs((h - hn) / dt - (hn - hnm) / dt_prev);
-                if (err > local_err_max) local_err_max = err;
+                Scalar err = 0.5 * dt * Kokkos::abs((h - hn) / dt - (hn - hnm) / dt_prev);
+                if (Kokkos::isfinite(err) && err > local_err_max) local_err_max = err;
             },
             Kokkos::Max<Scalar>(err_max)
         );
@@ -1647,14 +1753,21 @@ private:
         Scalar m = state.vg_m(idx);
         Scalar ha = state.vg_ha(idx);
         
-        // Lambda limiter (from legacy code)
-        if (wc > 0.9999 * wcs && wc < wcs) {
+        // Lambda limiter - clamp to safe range to avoid NaN
+        if (wc >= wcs) {
             wc = 0.9999 * wcs;
+        } else if (wc <= wcr) {
+            wc = wcr + 1.0e-6 * (wcs - wcr);
         }
         
         Scalar s = (wc - wcr) / (wcs - wcr);
-        if (s <= 0.0 || s >= 1.0) {
-            return 0.0;  // At bounds, derivative is zero
+        // Clamp s to safe range
+        if (s < 1.0e-6) s = 1.0e-6;
+        if (s > 0.9999) s = 0.9999;
+        
+        // For saturated or near-saturated conditions, dK/dwc approaches 0
+        if (s <= 1.0e-6 || s >= 0.9999) {
+            return 0.0;
         }
         
         Scalar term0, term1, term2, dKdwc;
@@ -1663,25 +1776,33 @@ private:
             // Modified van Genuchten
             Scalar wcm = wcr + (wcs - wcr) * std::pow((1.0 + std::pow(ha * alpha, n)), m);
             Scalar c2 = (wcs - wcr) / (wcm - wcr);
-            Scalar c1 = 1.0 / std::pow(1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m), 2.0);
+            Scalar denom = 1.0 - std::pow((1.0 - std::pow(c2, 1.0/m)), m);
+            if (denom < 1.0e-10) return 0.0;  // Avoid division by zero
+            Scalar c1 = 1.0 / (denom * denom);
             
-            term0 = std::pow(1.0 - std::pow(c2 * s, 1.0/m), m);
+            Scalar c2s_pow = std::pow(c2 * s, 1.0/m);
+            if (c2s_pow >= 1.0) return 0.0;  // Avoid negative base for power
+            
+            term0 = std::pow(1.0 - c2s_pow, m);
             term1 = 0.5 * c1 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
             term2 = 2.0 * c1 * Ks * c2 * std::pow(s, 0.5) * 
                     std::pow(c2 * s, 1.0/m - 1.0) * (1.0 - term0) * 
-                    std::pow(1.0 - std::pow(c2 * s, 1.0/m), m - 1.0);
+                    std::pow(1.0 - c2s_pow, m - 1.0);
         } else {
             // Standard van Genuchten
-            term0 = std::pow(1.0 - std::pow(s, 1.0/m), m);
+            Scalar s_pow = std::pow(s, 1.0/m);
+            if (s_pow >= 1.0) return 0.0;  // Avoid negative base for power
+            
+            term0 = std::pow(1.0 - s_pow, m);
             term1 = 0.5 * Ks * std::pow(s, -0.5) * (1.0 - term0) * (1.0 - term0);
             term2 = 2.0 * Ks * std::pow(s, (2.0 - m) / (2.0 * m)) * (1.0 - term0) * 
-                    std::pow(1.0 - std::pow(s, 1.0/m), m - 1.0);
+                    std::pow(1.0 - s_pow, m - 1.0);
         }
         
         dKdwc = (term1 + term2) / (wcs - wcr);
         
-        // Ensure non-negative
-        if (dKdwc < 0.0) dKdwc = 0.0;
+        // Ensure non-negative and finite
+        if (dKdwc < 0.0 || !Kokkos::isfinite(dKdwc)) dKdwc = 0.0;
         
         return dKdwc;
     }

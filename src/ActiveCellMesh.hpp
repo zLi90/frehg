@@ -157,9 +157,9 @@ private:
         for (Ordinal active_idx = 0; active_idx < num_active; ++active_idx) {
             Ordinal domain_idx = h_active_to_domain(active_idx);
             
-            // Left neighbor (i-1)
+            // Left neighbor (i-1) - with bounds check for -1
             Ordinal left_domain = h_sw_left(domain_idx);
-            if (h_active_mask(left_domain) > 0) {
+            if (left_domain >= 0 && h_active_mask(left_domain) > 0) {
                 Ordinal left_active = h_domain_to_active(left_domain);
                 h_neighbor_left(active_idx) = left_active;
                 h_dist_left(active_idx) = active_idx - left_active;
@@ -168,9 +168,9 @@ private:
                 h_dist_left(active_idx) = -1;
             }
             
-            // Right neighbor (i+1)
+            // Right neighbor (i+1) - with bounds check for -1
             Ordinal right_domain = h_sw_right(domain_idx);
-            if (h_active_mask(right_domain) > 0) {
+            if (right_domain >= 0 && h_active_mask(right_domain) > 0) {
                 Ordinal right_active = h_domain_to_active(right_domain);
                 h_neighbor_right(active_idx) = right_active;
                 h_dist_right(active_idx) = right_active - active_idx;
@@ -179,9 +179,9 @@ private:
                 h_dist_right(active_idx) = -1;
             }
             
-            // Back neighbor (j-1)
+            // Back neighbor (j-1) - with bounds check for -1
             Ordinal back_domain = h_sw_back(domain_idx);
-            if (h_active_mask(back_domain) > 0) {
+            if (back_domain >= 0 && h_active_mask(back_domain) > 0) {
                 Ordinal back_active = h_domain_to_active(back_domain);
                 h_neighbor_back(active_idx) = back_active;
                 h_dist_back(active_idx) = active_idx - back_active;
@@ -190,9 +190,9 @@ private:
                 h_dist_back(active_idx) = -1;
             }
             
-            // Front neighbor (j+1)
+            // Front neighbor (j+1) - with bounds check for -1
             Ordinal front_domain = h_sw_front(domain_idx);
-            if (h_active_mask(front_domain) > 0) {
+            if (front_domain >= 0 && h_active_mask(front_domain) > 0) {
                 Ordinal front_active = h_domain_to_active(front_domain);
                 h_neighbor_front(active_idx) = front_active;
                 h_dist_front(active_idx) = front_active - active_idx;
@@ -311,9 +311,9 @@ private:
         for (Ordinal active_idx = 0; active_idx < num_active; ++active_idx) {
             Ordinal domain_idx = h_active_to_domain(active_idx);
             
-            // Horizontal neighbors (same logic as 2D)
+            // Horizontal neighbors (with bounds check for -1)
             Ordinal left_domain = h_gw_left(domain_idx);
-            if (h_active_mask_3d(left_domain) > 0) {
+            if (left_domain >= 0 && h_active_mask_3d(left_domain) > 0) {
                 Ordinal left_active = h_domain_to_active(left_domain);
                 h_neighbor_left(active_idx) = left_active;
                 h_dist_left(active_idx) = active_idx - left_active;
@@ -323,7 +323,7 @@ private:
             }
             
             Ordinal right_domain = h_gw_right(domain_idx);
-            if (h_active_mask_3d(right_domain) > 0) {
+            if (right_domain >= 0 && h_active_mask_3d(right_domain) > 0) {
                 Ordinal right_active = h_domain_to_active(right_domain);
                 h_neighbor_right(active_idx) = right_active;
                 h_dist_right(active_idx) = right_active - active_idx;
@@ -333,7 +333,7 @@ private:
             }
             
             Ordinal back_domain = h_gw_back(domain_idx);
-            if (h_active_mask_3d(back_domain) > 0) {
+            if (back_domain >= 0 && h_active_mask_3d(back_domain) > 0) {
                 Ordinal back_active = h_domain_to_active(back_domain);
                 h_neighbor_back(active_idx) = back_active;
                 h_dist_back(active_idx) = active_idx - back_active;
@@ -343,7 +343,7 @@ private:
             }
             
             Ordinal front_domain = h_gw_front(domain_idx);
-            if (h_active_mask_3d(front_domain) > 0) {
+            if (front_domain >= 0 && h_active_mask_3d(front_domain) > 0) {
                 Ordinal front_active = h_domain_to_active(front_domain);
                 h_neighbor_front(active_idx) = front_active;
                 h_dist_front(active_idx) = front_active - active_idx;
@@ -354,7 +354,7 @@ private:
             
             // Vertical neighbors
             Ordinal bottom_domain = h_gw_bot(domain_idx);
-            if (h_active_mask_3d(bottom_domain) > 0) {
+            if (bottom_domain >= 0 && h_active_mask_3d(bottom_domain) > 0) {
                 Ordinal bottom_active = h_domain_to_active(bottom_domain);
                 h_neighbor_bottom(active_idx) = bottom_active;
                 h_dist_bottom(active_idx) = active_idx - bottom_active;
@@ -364,7 +364,7 @@ private:
             }
             
             Ordinal top_domain = h_gw_top(domain_idx);
-            if (h_active_mask_3d(top_domain) > 0) {
+            if (top_domain >= 0 && h_active_mask_3d(top_domain) > 0) {
                 Ordinal top_active = h_domain_to_active(top_domain);
                 h_neighbor_top(active_idx) = top_active;
                 h_dist_top(active_idx) = top_active - active_idx;

@@ -4,8 +4,8 @@ Plot results for Henry's Problem - Density-Driven Saltwater Intrusion
 
 This script plots:
 1. Salinity distribution (showing the saltwater wedge)
-2. Velocity vectors
-3. Comparison with analytical/semi-analytical solution
+2. Pressure head distribution
+3. Time series analysis
 
 Usage:
     python plot_henry.py <output_dir> [time_step]
@@ -14,9 +14,9 @@ Usage:
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from matplotlib.colors import Normalize
 import os
 import sys
+import re
 
 # Domain parameters (should match config.txt)
 NX = 100
@@ -30,25 +30,100 @@ H = NZ * dz  # Domain height (1m)
 # Physical parameters
 S_sea = 35.0  # Seawater salinity (kg/m³)
 
-def read_scalar_data(filepath):
-    """Read 3D scalar data from output file."""
+def read_vtk_data(filepath):
+    """Read data from legacy VTK file format."""
     try:
-        data = np.loadtxt(filepath)
-        # Reshape to 3D (assuming row-major order: k, j, i)
-        if data.size == NX * NY * NZ:
-            return data.reshape((NZ, NY, NX))
-        else:
-            print(f"Warning: Data size {data.size} doesn't match grid {NX*NY*NZ}")
-            return data
+        with open(filepath, 'r') as f:
+            lines = f.readlines()
+        
+        # Parse VTK file
+        data = {}
+        i = 0
+        n_data = 0  # Number of data points (either from POINT_DATA or CELL_DATA)
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            if line.startswith('DIMENSIONS'):
+                dims = list(map(int, line.split()[1:]))
+                data['dims'] = dims
+            elif line.startswith('ORIGIN'):
+                data['origin'] = list(map(float, line.split()[1:]))
+            elif line.startswith('SPACING'):
+                data['spacing'] = list(map(float, line.split()[1:]))
+            elif line.startswith('POINT_DATA'):
+                n_data = int(line.split()[1])
+                data['data_type'] = 'point'
+            elif line.startswith('CELL_DATA'):
+                n_data = int(line.split()[1])
+                data['data_type'] = 'cell'
+            elif line.startswith('SCALARS'):
+                parts = line.split()
+                var_name = parts[1]
+                data_type = parts[2] if len(parts) > 2 else 'float'
+                i += 1  # Skip LOOKUP_TABLE line
+                if i < len(lines) and lines[i].strip().startswith('LOOKUP_TABLE'):
+                    i += 1
+                # Read the scalar data
+                values = []
+                while i < len(lines) and len(values) < n_data:
+                    val_line = lines[i].strip()
+                    if not val_line or val_line.startswith(('SCALARS', 'VECTORS', 'POINT_DATA', 'CELL_DATA')):
+                        break
+                    vals = val_line.split()
+                    try:
+                        if data_type == 'int':
+                            values.extend([int(v) for v in vals])
+                        else:
+                            values.extend([float(v) for v in vals])
+                    except ValueError:
+                        break
+                    i += 1
+                data[var_name] = np.array(values)
+                continue
+            
+            i += 1
+        
+        return data
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
-def read_velocity_data(output_dir, time_step):
-    """Read velocity components."""
-    vx = read_scalar_data(os.path.join(output_dir, f"flux_x_{time_step:06d}.txt"))
-    vz = read_scalar_data(os.path.join(output_dir, f"flux_z_{time_step:06d}.txt"))
-    return vx, vz
+def reshape_vtk_data(data, var_name):
+    """Reshape VTK data to 3D array (NZ, NY, NX)."""
+    if var_name not in data:
+        return None
+    
+    values = data[var_name]
+    if len(values) == 0:
+        return None
+        
+    dims = data.get('dims', [NX+1, NY+1, NZ+1])
+    data_type = data.get('data_type', 'cell')
+    
+    # VTK structured grids have (nx+1, ny+1, nz+1) nodes for (nx, ny, nz) cells
+    # For CELL_DATA, we have cell_dims = dims - 1
+    cell_dims = [d - 1 for d in dims]
+    n_cells = cell_dims[0] * cell_dims[1] * cell_dims[2]
+    n_nodes = dims[0] * dims[1] * dims[2]
+    
+    try:
+        if data_type == 'cell' or len(values) == n_cells:
+            # Cell-centered data: reshape to (nz, ny, nx)
+            arr = values.reshape((cell_dims[2], cell_dims[1], cell_dims[0]))
+        elif len(values) == n_nodes:
+            # Node-centered data - take values at cell centers (approx)
+            node_arr = values.reshape((dims[2], dims[1], dims[0]))
+            arr = node_arr[:-1, :-1, :-1]
+        else:
+            print(f"Warning: {var_name} size {len(values)} doesn't match cells ({n_cells}) or nodes ({n_nodes})")
+            return None
+        return arr
+    except Exception as e:
+        print(f"Warning: Could not reshape {var_name} (size={len(values)}, dims={dims}): {e}")
+        return None
 
 def plot_salinity_distribution(salinity, title="Salinity Distribution"):
     """Plot 2D salinity distribution (x-z cross-section)."""
@@ -66,13 +141,15 @@ def plot_salinity_distribution(salinity, title="Salinity Distribution"):
     X, Z = np.meshgrid(x, z)
     
     # Plot filled contours
-    levels = np.linspace(0, S_sea, 15)
+    S_max = max(np.max(S), 0.1)
+    levels = np.linspace(0, S_max, 15)
     cf = ax.contourf(X, Z, S, levels=levels, cmap='RdYlBu_r', extend='both')
     
-    # Add contour lines
-    cs = ax.contour(X, Z, S, levels=[0.1*S_sea, 0.5*S_sea, 0.9*S_sea], 
-                    colors='black', linewidths=1.5)
-    ax.clabel(cs, inline=True, fontsize=10, fmt='%.1f')
+    # Add contour lines for relative concentrations
+    if S_max > 0.01:
+        cs = ax.contour(X, Z, S, levels=[0.1*S_max, 0.5*S_max, 0.9*S_max], 
+                        colors='black', linewidths=1.5)
+        ax.clabel(cs, inline=True, fontsize=10, fmt='%.2f')
     
     # Colorbar
     cbar = plt.colorbar(cf, ax=ax, label='Salinity (kg/m³)')
@@ -87,189 +164,165 @@ def plot_salinity_distribution(salinity, title="Salinity Distribution"):
     
     return fig, ax
 
-def plot_saltwater_interface(salinity, ax=None):
-    """Plot the 50% isoline (saltwater-freshwater interface)."""
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(12, 5))
-    
-    # Extract x-z plane
-    if salinity.ndim == 3:
-        S = salinity[:, 0, :]
-    else:
-        S = salinity.reshape((NZ, NX))
-    
-    x = np.linspace(dx/2, L - dx/2, NX)
-    z = np.linspace(dz/2, H - dz/2, NZ)
-    X, Z = np.meshgrid(x, z)
-    
-    # Plot 50% isoline (mixing zone)
-    cs = ax.contour(X, Z, S/S_sea, levels=[0.5], colors='red', linewidths=2)
-    ax.clabel(cs, inline=True, fontsize=10, fmt='50%%')
-    
-    return ax
-
-def plot_henry_analytical(ax, a=0.263):
-    """
-    Plot semi-analytical solution for Henry's problem.
-    
-    The analytical solution gives the position of the 50% isoline.
-    For the standard Henry problem:
-    - a = qf/(K*ε) where qf is freshwater flux, K is conductivity, ε is porosity
-    - For standard values: a ≈ 0.263
-    """
-    # Simplified analytical approximation for 50% isoline
-    # This is a rough approximation - exact solution requires numerical integration
-    x_tip = L * (1 - 0.5 * np.exp(-2*a))  # Toe position
-    
-    # Simple exponential profile approximation
-    x = np.linspace(x_tip, L, 50)
-    z = H * (1 - np.exp(-(x - x_tip)/(L - x_tip + 0.01)))
-    
-    ax.plot(x, z, 'k--', linewidth=2, label='Semi-analytical (approx.)')
-    ax.legend()
-    
-    return ax
-
-def plot_velocity_field(vx, vz, salinity, subsample=5):
-    """Plot velocity vectors over salinity field."""
+def plot_pressure_distribution(pressure, title="Pressure Head Distribution"):
+    """Plot 2D pressure head distribution."""
     fig, ax = plt.subplots(figsize=(12, 5))
     
-    # Plot salinity background
-    if salinity.ndim == 3:
-        S = salinity[:, 0, :]
+    if pressure.ndim == 3:
+        P = pressure[:, 0, :]
     else:
-        S = salinity.reshape((NZ, NX))
+        P = pressure.reshape((NZ, NX))
     
     x = np.linspace(dx/2, L - dx/2, NX)
     z = np.linspace(dz/2, H - dz/2, NZ)
     X, Z = np.meshgrid(x, z)
     
-    cf = ax.contourf(X, Z, S, levels=15, cmap='RdYlBu_r', alpha=0.5)
-    plt.colorbar(cf, ax=ax, label='Salinity (kg/m³)')
+    cf = ax.contourf(X, Z, P, levels=20, cmap='viridis')
+    cs = ax.contour(X, Z, P, levels=10, colors='white', linewidths=0.5, alpha=0.5)
     
-    # Extract velocity components
-    if vx is not None and vz is not None:
-        if vx.ndim == 3:
-            Vx = vx[:, 0, :]
-            Vz = vz[:, 0, :]
-        else:
-            Vx = vx.reshape((NZ, NX))
-            Vz = vz.reshape((NZ, NX))
-        
-        # Subsample for clearer visualization
-        X_sub = X[::subsample, ::subsample]
-        Z_sub = Z[::subsample, ::subsample]
-        Vx_sub = Vx[::subsample, ::subsample]
-        Vz_sub = Vz[::subsample, ::subsample]
-        
-        # Normalize velocity magnitude
-        V_mag = np.sqrt(Vx_sub**2 + Vz_sub**2)
-        V_max = np.max(V_mag)
-        if V_max > 0:
-            Vx_norm = Vx_sub / V_max
-            Vz_norm = Vz_sub / V_max
-        else:
-            Vx_norm = Vx_sub
-            Vz_norm = Vz_sub
-        
-        ax.quiver(X_sub, Z_sub, Vx_norm, Vz_norm, color='black', alpha=0.7)
+    plt.colorbar(cf, ax=ax, label='Pressure Head (m)')
     
     ax.set_xlabel('Distance (m)', fontsize=12)
     ax.set_ylabel('Height (m)', fontsize=12)
-    ax.set_title("Velocity Field over Salinity Distribution", fontsize=14)
+    ax.set_title(title, fontsize=14)
     ax.set_aspect('equal')
     ax.set_xlim(0, L)
     ax.set_ylim(0, H)
     
     return fig, ax
 
-def plot_concentration_profiles(salinity, x_positions=[0.5, 1.0, 1.5, 1.9]):
-    """Plot vertical concentration profiles at different x positions."""
-    fig, ax = plt.subplots(figsize=(8, 6))
+def plot_time_series(output_dir):
+    """Plot time series data."""
+    ts_file = os.path.join(output_dir, 'time_series.txt')
+    if not os.path.exists(ts_file):
+        print("Time series file not found")
+        return None
     
-    if salinity.ndim == 3:
-        S = salinity[:, 0, :]
-    else:
-        S = salinity.reshape((NZ, NX))
+    # Read time series (skip header lines)
+    data = []
+    with open(ts_file, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.strip().split()
+            if len(parts) >= 4:
+                data.append([float(p) for p in parts[:5]])
     
-    z = np.linspace(dz/2, H - dz/2, NZ)
-    x = np.linspace(dx/2, L - dx/2, NX)
+    if not data:
+        print("No data in time series file")
+        return None
     
-    colors = plt.cm.viridis(np.linspace(0, 1, len(x_positions)))
+    data = np.array(data)
     
-    for x_pos, color in zip(x_positions, colors):
-        # Find nearest grid index
-        i = int(x_pos / dx)
-        if i >= NX:
-            i = NX - 1
-        
-        ax.plot(S[:, i]/S_sea, z, color=color, linewidth=2, 
-                label=f'x = {x_pos:.1f} m')
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
     
-    ax.set_xlabel('Relative Salinity (S/S_sea)', fontsize=12)
-    ax.set_ylabel('Height (m)', fontsize=12)
-    ax.set_title('Vertical Salinity Profiles', fontsize=14)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, H)
+    # Plot groundwater volume
+    axes[0].plot(data[:, 1], data[:, 2], 'b-', linewidth=1.5)
+    axes[0].set_xlabel('Time (s)')
+    axes[0].set_ylabel('GW Volume (m³)')
+    axes[0].set_title('Groundwater Volume over Time')
+    axes[0].grid(True, alpha=0.3)
     
-    return fig, ax
+    # Plot scalar mass if available
+    if data.shape[1] > 4:
+        axes[1].plot(data[:, 1], data[:, 4], 'r-', linewidth=1.5)
+        axes[1].set_xlabel('Time (s)')
+        axes[1].set_ylabel('Scalar Mass (kg)')
+        axes[1].set_title('Salt Mass over Time')
+        axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
 
 def main():
     if len(sys.argv) < 2:
         print("Usage: python plot_henry.py <output_dir> [time_step]")
-        print("Example: python plot_henry.py output 50")
+        print("Example: python plot_henry.py out1 80000")
         sys.exit(1)
     
     output_dir = sys.argv[1]
-    time_step = int(sys.argv[2]) if len(sys.argv) > 2 else 50
+    time_step = int(sys.argv[2]) if len(sys.argv) > 2 else None
     
     print(f"Reading results from: {output_dir}")
-    print(f"Time step: {time_step}")
     
-    # Read salinity data
-    salinity_file = os.path.join(output_dir, f"scalar_0_{time_step:06d}.txt")
-    if not os.path.exists(salinity_file):
-        # Try alternative naming
-        salinity_file = os.path.join(output_dir, f"gw_scalar_0_{time_step:06d}.txt")
+    # Find available VTK files
+    vtk_files = sorted([f for f in os.listdir(output_dir) if f.endswith('.vtk')])
+    print(f"Found {len(vtk_files)} VTK files")
     
-    if os.path.exists(salinity_file):
-        salinity = read_scalar_data(salinity_file)
-        if salinity is not None:
-            print(f"Salinity range: {np.min(salinity):.2f} to {np.max(salinity):.2f} kg/m³")
-            
-            # Plot salinity distribution
-            fig1, ax1 = plot_salinity_distribution(salinity, 
-                f"Henry's Problem - Saltwater Intrusion (t = {time_step * 1000}s)")
-            plot_saltwater_interface(salinity, ax1)
-            fig1.savefig(os.path.join(output_dir, f'henry_salinity_{time_step:06d}.png'), 
+    if not vtk_files:
+        print("No VTK files found!")
+        sys.exit(1)
+    
+    # If no time step specified, use the last one
+    if time_step is None:
+        # Extract time step from filename (e.g., gw_080000.vtk -> 80000)
+        last_file = vtk_files[-1]
+        match = re.search(r'_(\d+)\.vtk$', last_file)
+        if match:
+            time_step = int(match.group(1))
+        else:
+            time_step = 0
+    
+    print(f"Plotting time step: {time_step}")
+    
+    # Find the VTK file for this time step
+    vtk_file = None
+    for f in vtk_files:
+        if f'{time_step:06d}.vtk' in f:
+            vtk_file = os.path.join(output_dir, f)
+            break
+    
+    if vtk_file is None:
+        print(f"VTK file for time step {time_step} not found")
+        print("Available files:")
+        for f in vtk_files[:10]:
+            print(f"  {f}")
+        sys.exit(1)
+    
+    print(f"Reading: {vtk_file}")
+    
+    # Read VTK data
+    data = read_vtk_data(vtk_file)
+    if data is None:
+        sys.exit(1)
+    
+    print(f"Variables found: {[k for k in data.keys() if isinstance(data[k], np.ndarray)]}")
+    
+    # Plot pressure head (check both 'pressure' and 'pressure_head' names)
+    pressure_var = 'pressure_head' if 'pressure_head' in data else 'pressure'
+    if pressure_var in data:
+        pressure = reshape_vtk_data(data, pressure_var)
+        if pressure is not None and pressure.size > 0:
+            print(f"Pressure range: {np.min(pressure):.4f} to {np.max(pressure):.4f} m")
+            fig1, ax1 = plot_pressure_distribution(pressure, 
+                f"Henry's Problem - Pressure Head (step {time_step})")
+            fig1.savefig(os.path.join(output_dir, f'henry_pressure_{time_step:06d}.png'), 
+                        dpi=150, bbox_inches='tight')
+            print(f"Saved: henry_pressure_{time_step:06d}.png")
+        else:
+            print("Could not read pressure data")
+    
+    # Plot salinity (scalar_0)
+    if 'scalar_0' in data:
+        salinity = reshape_vtk_data(data, 'scalar_0')
+        if salinity is not None and salinity.size > 0:
+            print(f"Salinity range: {np.min(salinity):.4f} to {np.max(salinity):.4f} kg/m³")
+            fig2, ax2 = plot_salinity_distribution(salinity, 
+                f"Henry's Problem - Salinity (step {time_step})")
+            fig2.savefig(os.path.join(output_dir, f'henry_salinity_{time_step:06d}.png'), 
                         dpi=150, bbox_inches='tight')
             print(f"Saved: henry_salinity_{time_step:06d}.png")
-            
-            # Plot concentration profiles
-            fig2, ax2 = plot_concentration_profiles(salinity)
-            fig2.savefig(os.path.join(output_dir, f'henry_profiles_{time_step:06d}.png'),
-                        dpi=150, bbox_inches='tight')
-            print(f"Saved: henry_profiles_{time_step:06d}.png")
-            
-            # Try to plot velocity field
-            vx, vz = read_velocity_data(output_dir, time_step)
-            if vx is not None:
-                fig3, ax3 = plot_velocity_field(vx, vz, salinity)
-                fig3.savefig(os.path.join(output_dir, f'henry_velocity_{time_step:06d}.png'),
-                            dpi=150, bbox_inches='tight')
-                print(f"Saved: henry_velocity_{time_step:06d}.png")
-            
-            plt.show()
-    else:
-        print(f"Error: Salinity file not found: {salinity_file}")
-        print("Available files in output directory:")
-        if os.path.exists(output_dir):
-            for f in sorted(os.listdir(output_dir))[:20]:
-                print(f"  {f}")
-        sys.exit(1)
+        else:
+            print("Could not read salinity data")
+    
+    # Plot time series
+    fig3 = plot_time_series(output_dir)
+    if fig3:
+        fig3.savefig(os.path.join(output_dir, 'henry_time_series.png'),
+                    dpi=150, bbox_inches='tight')
+        print("Saved: henry_time_series.png")
+    
+    plt.show()
 
 if __name__ == "__main__":
     main()
-
