@@ -852,9 +852,41 @@ private:
                 _matrix_rhs(domain_idx) = ch_term * _pressure_old(domain_idx) * V;
                 
                 // Density-driven flow term (vertical buoyancy)
-                // TEMPORARILY DISABLED for debugging
-                // The implementation needs more investigation to produce correct Henry wedge
-                (void)_neighbor_bottom(i); // Suppress unused warning
+                // In the pressure equation, the buoyancy term represents the density-driven
+                // vertical flux divergence. Following legacy code (groundwater.c):
+                //   RHS -= dt * V/dz * Kz * r_rhozp² * r_visczp  (at z+ face)
+                //   RHS += dt * V/dz * Kz_zm * r_rhozp_zm² * r_visczp_zm  (at z- face)
+                // This creates a net term: dt * (buoy_zm - buoy_zp)
+                // When density is higher at bottom (stable stratification): buoy_zm > buoy_zp
+                // This INCREASES RHS, which increases head at bottom, driving upward flow
+                // That's wrong for Henry! We want dense water to SINK.
+                // 
+                // Correct physics: dense water creates higher pressure per unit height
+                // At z+ face (above cell), if r_rho > 1, the column above exerts more pressure
+                // This should DECREASE the head at the current cell (more pressure from above)
+                // So the correct sign is: RHS += dt * (buoy_zp - buoy_zm)
+                Ordinal active_bottom = _neighbor_bottom(i);
+                
+                // Buoyancy contribution at z+ face (top of cell)
+                Scalar buoy_zp = _conductivity_z(domain_idx) * 
+                                _density_ratio_zp(domain_idx) * 
+                                _viscosity_ratio_zp(domain_idx) * V / dz;
+                
+                // Buoyancy contribution at z- face (bottom of cell)
+                Scalar buoy_zm = 0.0;
+                if (active_bottom >= 0) {
+                    Ordinal idx_bottom = _active_to_domain(active_bottom);
+                    buoy_zm = _conductivity_z(idx_bottom) * 
+                             _density_ratio_zp(idx_bottom) * 
+                             _viscosity_ratio_zp(idx_bottom) * V / dz;
+                }
+                
+                // Apply buoyancy: when r_rho > 1 at z+ face (dense water above)
+                // the dense water column creates higher effective pressure, which should
+                // push water DOWN (INTO this cell from above). To achieve this, we need
+                // to DECREASE the solved head, which drives flow INTO the cell.
+                // Using opposite sign from before:
+                _matrix_rhs(domain_idx) -= dt * (buoy_zp - buoy_zm);
                 
                 // Boundary conditions and source/sink terms will be added here later
             });
@@ -1197,9 +1229,10 @@ private:
                 }
                 
                 // Z-direction flux (includes buoyancy/density term)
-                // Positive flux = flow INTO cell from top neighbor
-                // q = K * A * ((h_top - h_here)/dz - r_rho)
-                // The -r_rho term accounts for density-driven flow (buoyancy)
+                // Positive flux = flow in positive z direction (upward)
+                // Darcy's law with density: q_z = -K * r_visc * (∂h/∂z + (r_rho - 1))
+                // The buoyancy term (r_rho - 1) represents the extra pressure from density
+                // When r_rho > 1 (dense water), buoyancy drives downward flow (negative)
                 Ordinal active_top = _neighbor_top(i);
                 if (active_top >= 0) {
                     Ordinal idx_top = _active_to_domain(active_top);
@@ -1210,7 +1243,8 @@ private:
                     Scalar Az = domain.dx * domain.dy;
                     Scalar dz_top = (k < domain.nz - 1) ? _dz_layers(k + 1) : dz;
                     Scalar dz_avg = 0.5 * (dz + dz_top);
-                    _flux_z(domain_idx) = Kz * r_visc * Az * (dh / dz_avg - r_rho);
+                    // Include buoyancy: -(r_rho - 1) gives downward flux for dense water
+                    _flux_z(domain_idx) = Kz * r_visc * Az * (dh / dz_avg - (r_rho - 1.0));
                 } else {
                     _flux_z(domain_idx) = 0.0;
                 }

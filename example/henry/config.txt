@@ -31,8 +31,8 @@ dz_incre = 1.0
 
 # Time stepping
 dt = 0.05
-Tend = 1800.0
-dt_out = 300.0
+Tend = 180.0
+dt_out = 30.0
 
 # Adaptive time stepping
 dt_adjust = 1
@@ -90,7 +90,9 @@ n_gw_bc = 2
 
 # BC 0: Left boundary (x-) - Freshwater inflow
 # Standard Henry problem: qf = 6.6e-5 m/s (Darcy flux)
-# Volume flux per cell = qf * dz * dy = 6.6e-5 * 0.05 * 0.05 = 1.65e-7 m³/s
+# Total volumetric flux = qf * H * dy = 6.6e-5 * 1.0 * 0.05 = 3.3e-6 m³/s
+# Volume flux per cell = Total / NZ = 3.3e-6 / 20 = 1.65e-7 m³/s
+# Unit: m³/s (volumetric flux rate per cell)
 gw_bc_type_0 = fixed_flux
 gw_bc_face_0 = x-
 gw_bc_value_type_0 = constant
