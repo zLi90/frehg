@@ -19,25 +19,25 @@
 sim_id = Henry_Problem
 
 # Domain: 2m x 1m cross-section (x-z plane)
-# 100 cells in x (dx=0.02m), 1 cell in y, 50 cells in z (dz=0.02m)
-NX = 100
+# 40 cells in x (dx=0.05m), 1 cell in y, 20 cells in z (dz=0.05m)
+NX = 40
 NY = 1
-NZ = 50
-dx = 0.02
-dy = 0.02
-dz = 0.02
+NZ = 20
+dx = 0.05
+dy = 0.05
+dz = 0.05
 botZ = 0.0
 dz_incre = 1.0
 
 # Time stepping
-dt = 0.01
-Tend = 1000.0
-dt_out = 200.0
+dt = 0.05
+Tend = 1800.0
+dt_out = 300.0
 
 # Adaptive time stepping
 dt_adjust = 1
-dt_min = 0.001
-dt_max = 0.02
+dt_min = 0.01
+dt_max = 0.1
 Co_max = 0.5
 
 # --------------------------------------------------------------------------
@@ -90,11 +90,11 @@ n_gw_bc = 2
 
 # BC 0: Left boundary (x-) - Freshwater inflow
 # Standard Henry problem: qf = 6.6e-5 m/s (Darcy flux)
-# Volume flux per cell = qf * dz * dy = 6.6e-5 * 0.02 * 0.02 = 2.64e-8 m³/s
+# Volume flux per cell = qf * dz * dy = 6.6e-5 * 0.05 * 0.05 = 1.65e-7 m³/s
 gw_bc_type_0 = fixed_flux
 gw_bc_face_0 = x-
 gw_bc_value_type_0 = constant
-gw_bc_value_0 = 2.64e-8
+gw_bc_value_0 = 1.65e-7
 
 # BC 1: Right boundary (x+) - Fixed head (seawater)
 # Head = 1.0 m (hydrostatic)

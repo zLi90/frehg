@@ -19,11 +19,11 @@ import sys
 import re
 
 # Domain parameters (should match config.txt)
-NX = 100
+NX = 40
 NY = 1
-NZ = 50
-dx = 0.02  # m
-dz = 0.02  # m
+NZ = 20
+dx = 0.05  # m
+dz = 0.05  # m
 L = NX * dx  # Domain length (2m)
 H = NZ * dz  # Domain height (1m)
 

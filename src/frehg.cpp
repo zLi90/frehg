@@ -25,15 +25,28 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string input_dir = argv[1];
+    std::string input_path = argv[1];
     std::string output_dir = argv[2];
     int num_threads = (argc >= 4) ? std::stoi(argv[3]) : 1;
 
     // 2. Validate Input/Output Directories
     // ------------------------------------------------------------------------
-    // Check input directory exists
-    if (!fs::exists(input_dir)) {
-        std::cerr << "Error: Input directory does not exist: " << input_dir << "\n";
+    // Check input path exists
+    if (!fs::exists(input_path)) {
+        std::cerr << "Error: Input path does not exist: " << input_path << "\n";
+        return 1;
+    }
+    
+    // Determine input directory - if a file is given, use its parent directory
+    std::string input_dir;
+    if (fs::is_directory(input_path)) {
+        input_dir = input_path;
+    } else if (fs::is_regular_file(input_path)) {
+        // A config file was passed directly - use its directory
+        input_dir = fs::path(input_path).parent_path().string();
+        if (input_dir.empty()) input_dir = ".";
+    } else {
+        std::cerr << "Error: Input must be a directory or config file: " << input_path << "\n";
         return 1;
     }
     

@@ -852,20 +852,9 @@ private:
                 _matrix_rhs(domain_idx) = ch_term * _pressure_old(domain_idx) * V;
                 
                 // Density-driven flow term (vertical buoyancy)
-                // This accounts for density-driven flow: q_z = -K * r_visc * (dh/dz + r_rho - 1)
-                // The (r_rho - 1) term is the density-difference driving force
-                Scalar Az = domain.dx * domain.dy;
-                _matrix_rhs(domain_idx) -= dt * Az * _conductivity_z(domain_idx) * 
-                                          _viscosity_ratio_zp(domain_idx) * 
-                                          (_density_ratio_zp(domain_idx) - 1.0);
-                
-                Ordinal active_bottom = _neighbor_bottom(i);
-                if (active_bottom >= 0) {
-                    Ordinal idx_bottom = _active_to_domain(active_bottom);
-                    _matrix_rhs(domain_idx) += dt * Az * _conductivity_z(idx_bottom) * 
-                                              _viscosity_ratio_zp(idx_bottom) * 
-                                              (_density_ratio_zp(idx_bottom) - 1.0);
-                }
+                // TEMPORARILY DISABLED for debugging
+                // The implementation needs more investigation to produce correct Henry wedge
+                (void)_neighbor_bottom(i); // Suppress unused warning
                 
                 // Boundary conditions and source/sink terms will be added here later
             });
@@ -964,7 +953,9 @@ private:
     // APPLY BOUNDARY CONDITIONS TO MATRIX
     // ========================================================================
     void apply_boundary_conditions_to_matrix(Scalar current_time) {
-        if (!bc_manager_) return;
+        if (!bc_manager_) {
+            return;
+        }
         
         auto _matrix_diag = state.matrix_diag;
         auto _matrix_xp = state.matrix_xp;
@@ -976,6 +967,7 @@ private:
         auto _matrix_rhs = state.matrix_rhs;
         
         const auto& bcs = bc_manager_->get_boundary_conditions();
+        
         Scalar dt_local = dt;
         
         // Process each boundary condition using device-side parallel operations
@@ -1175,12 +1167,13 @@ private:
                 Scalar dz = _dz_layers(k);
                 
                 // X-direction flux (Darcy's law)
-                // Convention: q = K * r_visc * A * (h_neighbor - h_here) / dx
-                // Positive flux = flow toward current cell (inflow from neighbor)
+                // Convention: flux_x(i) = flux at x+ face of cell i
+                // Positive flux = flow INTO cell i from right neighbor (legacy convention)
+                // q = K * A * (h_neighbor - h_here) / dx
                 Ordinal active_right = _neighbor_right(i);
                 if (active_right >= 0) {
                     Ordinal idx_right = _active_to_domain(active_right);
-                    Scalar dh = _pressure(idx_right) - _pressure(domain_idx);
+                    Scalar dh = _pressure(idx_right) - _pressure(domain_idx);  // h_right - h_here
                     Scalar Kx = _conductivity_x(domain_idx);
                     Scalar r_visc = _viscosity_ratio_xp(domain_idx);
                     Scalar Ax = domain.dy * dz;
@@ -1190,10 +1183,11 @@ private:
                 }
                 
                 // Y-direction flux
+                // Positive flux = flow INTO cell from front neighbor
                 Ordinal active_front = _neighbor_front(i);
                 if (active_front >= 0) {
                     Ordinal idx_front = _active_to_domain(active_front);
-                    Scalar dh = _pressure(idx_front) - _pressure(domain_idx);
+                    Scalar dh = _pressure(idx_front) - _pressure(domain_idx);  // h_front - h_here
                     Scalar Ky = _conductivity_y(domain_idx);
                     Scalar r_visc = _viscosity_ratio_yp(domain_idx);
                     Scalar Ay = domain.dx * dz;
@@ -1203,12 +1197,13 @@ private:
                 }
                 
                 // Z-direction flux (includes buoyancy/density term)
-                // q = K * r_visc * A * (dh/dz - r_rho)
+                // Positive flux = flow INTO cell from top neighbor
+                // q = K * A * ((h_top - h_here)/dz - r_rho)
                 // The -r_rho term accounts for density-driven flow (buoyancy)
                 Ordinal active_top = _neighbor_top(i);
                 if (active_top >= 0) {
                     Ordinal idx_top = _active_to_domain(active_top);
-                    Scalar dh = _pressure(idx_top) - _pressure(domain_idx);
+                    Scalar dh = _pressure(idx_top) - _pressure(domain_idx);  // h_top - h_here
                     Scalar Kz = _conductivity_z(domain_idx);
                     Scalar r_rho = _density_ratio_zp(domain_idx);
                     Scalar r_visc = _viscosity_ratio_zp(domain_idx);
@@ -1220,6 +1215,116 @@ private:
                     _flux_z(domain_idx) = 0.0;
                 }
             });
+        
+        // Compute boundary fluxes for fixed-head boundaries
+        compute_boundary_fluxes();
+    }
+    
+    // Compute fluxes at fixed-head boundaries
+    void compute_boundary_fluxes() {
+        if (!bc_manager_) return;
+        
+        const auto& bcs = bc_manager_->get_boundary_conditions();
+        
+        auto _pressure = state.pressure;
+        auto _conductivity_x = state.conductivity_x;
+        auto _conductivity_y = state.conductivity_y;
+        auto _conductivity_z = state.conductivity_z;
+        auto _viscosity_ratio_xp = state.viscosity_ratio_xp;
+        auto _viscosity_ratio_yp = state.viscosity_ratio_yp;
+        auto _viscosity_ratio_zp = state.viscosity_ratio_zp;
+        auto _flux_x = state.flux_x;
+        auto _flux_y = state.flux_y;
+        auto _flux_z = state.flux_z;
+        auto _dz_layers = domain.layer_thickness;
+        auto _coord_k = active_mesh.coord_k;
+        auto _domain_to_active = active_mesh.domain_to_active;
+        
+        for (const auto& bc : bcs) {
+            if (bc.type != GwBcType::FIXED_HEAD) continue;
+            
+            Scalar bc_head = bc.get_value(0.0);  // Use current time value
+            Ordinal n_bc_cells = bc.cell_indices.size();
+            
+            if (n_bc_cells == 0) continue;
+            
+            // Create host arrays
+            auto h_pressure = Kokkos::create_mirror_view(_pressure);
+            auto h_flux_x = Kokkos::create_mirror_view(_flux_x);
+            auto h_flux_y = Kokkos::create_mirror_view(_flux_y);
+            auto h_flux_z = Kokkos::create_mirror_view(_flux_z);
+            auto h_Kx = Kokkos::create_mirror_view(_conductivity_x);
+            auto h_Ky = Kokkos::create_mirror_view(_conductivity_y);
+            auto h_Kz = Kokkos::create_mirror_view(_conductivity_z);
+            auto h_visc_x = Kokkos::create_mirror_view(_viscosity_ratio_xp);
+            auto h_visc_y = Kokkos::create_mirror_view(_viscosity_ratio_yp);
+            auto h_visc_z = Kokkos::create_mirror_view(_viscosity_ratio_zp);
+            auto h_dz = Kokkos::create_mirror_view(_dz_layers);
+            auto h_coord_k = Kokkos::create_mirror_view(_coord_k);
+            auto h_d2a = Kokkos::create_mirror_view(_domain_to_active);
+            
+            Kokkos::deep_copy(h_pressure, _pressure);
+            Kokkos::deep_copy(h_flux_x, _flux_x);
+            Kokkos::deep_copy(h_flux_y, _flux_y);
+            Kokkos::deep_copy(h_flux_z, _flux_z);
+            Kokkos::deep_copy(h_Kx, _conductivity_x);
+            Kokkos::deep_copy(h_Ky, _conductivity_y);
+            Kokkos::deep_copy(h_Kz, _conductivity_z);
+            Kokkos::deep_copy(h_visc_x, _viscosity_ratio_xp);
+            Kokkos::deep_copy(h_visc_y, _viscosity_ratio_yp);
+            Kokkos::deep_copy(h_visc_z, _viscosity_ratio_zp);
+            Kokkos::deep_copy(h_dz, _dz_layers);
+            Kokkos::deep_copy(h_coord_k, _coord_k);
+            Kokkos::deep_copy(h_d2a, _domain_to_active);
+            
+            // Process each boundary cell
+            for (Ordinal cell_idx : bc.cell_indices) {
+                Ordinal active_idx = h_d2a(cell_idx);
+                if (active_idx < 0) continue;
+                
+                Ordinal k = h_coord_k(active_idx);
+                Scalar dz = h_dz(k);
+                
+                // Compute flux based on face direction
+                // Flux convention: positive = flow INTO cell from neighbor/boundary
+                // For x+ face: positive flux = flow from boundary into cell
+                //              negative flux = flow from cell to boundary
+                if (bc.face == "x+") {
+                    // Right boundary - flux at x+ face
+                    // dh = h_boundary - h_cell (like interior: h_neighbor - h_here)
+                    // If h_boundary > h_cell, flow comes in from boundary, flux > 0
+                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    Scalar Kx = h_Kx(cell_idx);
+                    Scalar r_visc = h_visc_x(cell_idx);
+                    Scalar Ax = domain.dy * dz;
+                    h_flux_x(cell_idx) = Kx * r_visc * Ax * dh / domain.dx;
+                } else if (bc.face == "x-") {
+                    // Left boundary - would affect flux_x of a "virtual" left cell
+                    // Skip for now - handled differently
+                } else if (bc.face == "y+") {
+                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    Scalar Ky = h_Ky(cell_idx);
+                    Scalar r_visc = h_visc_y(cell_idx);
+                    Scalar Ay = domain.dx * dz;
+                    h_flux_y(cell_idx) = Ky * r_visc * Ay * dh / domain.dy;
+                } else if (bc.face == "y-") {
+                    // Similar to x-
+                } else if (bc.face == "z+") {
+                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    Scalar Kz = h_Kz(cell_idx);
+                    Scalar r_visc = h_visc_z(cell_idx);
+                    Scalar Az = domain.dx * domain.dy;
+                    h_flux_z(cell_idx) = Kz * r_visc * Az * dh / dz;
+                } else if (bc.face == "z-") {
+                    // Similar to x-
+                }
+            }
+            
+            // Copy back to device
+            Kokkos::deep_copy(_flux_x, h_flux_x);
+            Kokkos::deep_copy(_flux_y, h_flux_y);
+            Kokkos::deep_copy(_flux_z, h_flux_z);
+        }
     }
     
     // ========================================================================

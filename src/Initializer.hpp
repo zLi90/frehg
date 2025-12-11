@@ -938,6 +938,40 @@ public:
         
         // Step 6: Create solvers
         create_solvers();
+        
+        // Step 7: Initialize scalar boundary values (apply BCs before first timestep)
+        initialize_scalar_boundary_values();
+    }
+    
+    // ========================================================================
+    // INITIALIZE SCALAR BOUNDARY VALUES
+    // ========================================================================
+    // This applies scalar BCs to boundary cells BEFORE the first timestep
+    // Critical for density-driven flows where initial concentration gradient
+    // is needed to drive circulation
+    void initialize_scalar_boundary_values() {
+        // Initialize groundwater scalar boundary values at t=0
+        // Critical for density-driven flows where initial concentration gradient
+        // is needed to drive circulation
+        for (auto& solver : gw_scalar_solvers_) {
+            if (solver) {
+                solver->enforce_boundary_conditions(0.0);  // Apply BCs at t=0
+            }
+        }
+        
+        // Initialize surface water scalar boundary values
+        for (auto& solver : sw_scalar_solvers_) {
+            if (solver) {
+                // SW solver may not have this method, but GW does
+            }
+        }
+        
+        // After setting scalar BCs, update density if baroclinic
+        if (config_.baroclinic && gw_solver_ && !gw_scalar_solvers_.empty()) {
+            auto& scalar_solver = gw_scalar_solvers_[0];
+            gw_solver_->update_density_viscosity_from_scalar(
+                scalar_solver->scalar_concentration);
+        }
     }
     
     // ========================================================================

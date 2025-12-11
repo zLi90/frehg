@@ -138,7 +138,52 @@ public:
         // Initialize OutputWriter
         output_writer_->initialize(dt_, n_scalar_);
         
+        // IMPORTANT: Initialize volume and volume_old for groundwater
+        // This is needed for scalar mass calculation (mass = concentration * volume)
+        if (sim_groundwater_) {
+            initialize_gw_volume();
+        }
+        
         std::cout << "[Driver] Initialization complete.\n" << std::endl;
+    }
+    
+    // ========================================================================
+    // Initialize groundwater volume from water content
+    // ========================================================================
+    void initialize_gw_volume() {
+        auto* gw_state = initializer_->get_gw_state();
+        auto* gw_domain = initializer_->get_gw_domain();
+        if (!gw_state || !gw_domain) return;
+        
+        auto _volume = gw_state->volume;
+        auto _volume_old = gw_state->volume_old;
+        auto _water_content = gw_state->water_content;
+        auto _active_mask_3d = gw_domain->active_mask_3d;
+        auto _layer_thickness = gw_domain->layer_thickness;
+        
+        Scalar dx = gw_domain->dx;
+        Scalar dy = gw_domain->dy;
+        Ordinal nx = gw_domain->nx;
+        Ordinal ny = gw_domain->ny;
+        Ordinal nz = gw_domain->nz;
+        
+        using RangePolicy = Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>;
+        Kokkos::parallel_for(RangePolicy(0, gw_domain->num_cells_3d_total),
+            KOKKOS_LAMBDA (const Ordinal idx) {
+                if (_active_mask_3d(idx) > 0) {
+                    // Compute layer k from 3D index
+                    Ordinal k = idx / (nx * ny);
+                    Scalar dz = _layer_thickness(k);
+                    Scalar cell_volume = dx * dy * dz;
+                    
+                    // Volume = water content * cell volume
+                    _volume(idx) = _water_content(idx) * cell_volume;
+                    _volume_old(idx) = _volume(idx);
+                }
+            });
+        Kokkos::fence();
+        
+        std::cout << "[Driver] Initialized GW volume from water content" << std::endl;
     }
 
     // ========================================================================

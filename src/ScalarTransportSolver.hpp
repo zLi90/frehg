@@ -9,6 +9,7 @@
 #include "SourceSinkTerms.hpp"
 #include <memory>
 #include <cmath>
+#include <limits>
 
 // Use classes from Frehg namespace
 using Frehg::SwScalarBoundaryConditionManager;
@@ -852,6 +853,13 @@ public:
     GwScalarBoundaryConditionManager* bc_manager_;  // Pointer to boundary condition manager
     Ordinal scalar_index_;                          // Index of this scalar species
     
+    // --- Boundary Concentrations for Advection ---
+    // Store boundary concentrations for each face direction
+    // bc_conc_xm/xp = boundary concentration for x-/x+ faces (NaN if no BC)
+    View1D<Scalar> bc_conc_xm, bc_conc_xp;  // X-direction boundary concentrations
+    View1D<Scalar> bc_conc_ym, bc_conc_yp;  // Y-direction boundary concentrations
+    View1D<Scalar> bc_conc_zm, bc_conc_zp;  // Z-direction boundary concentrations
+    
     // Constructor
     GwScalarTransportSolver(GwDomain& _domain,
                            ActiveCellMesh& _active_mesh,
@@ -889,6 +897,20 @@ public:
         Dzx = View1D<Scalar>("Dzx", num_cells_3d);
         Dzy = View1D<Scalar>("Dzy", num_cells_3d);
         Dzz = View1D<Scalar>("Dzz", num_cells_3d);
+        
+        // Allocate boundary concentration arrays and initialize to NaN (no BC)
+        bc_conc_xm = View1D<Scalar>("bc_conc_xm", num_cells_3d);
+        bc_conc_xp = View1D<Scalar>("bc_conc_xp", num_cells_3d);
+        bc_conc_ym = View1D<Scalar>("bc_conc_ym", num_cells_3d);
+        bc_conc_yp = View1D<Scalar>("bc_conc_yp", num_cells_3d);
+        bc_conc_zm = View1D<Scalar>("bc_conc_zm", num_cells_3d);
+        bc_conc_zp = View1D<Scalar>("bc_conc_zp", num_cells_3d);
+        Kokkos::deep_copy(bc_conc_xm, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_xp, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_ym, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_yp, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_zm, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_zp, std::numeric_limits<Scalar>::quiet_NaN());
     }
     
     // Set boundary condition manager
@@ -901,10 +923,13 @@ public:
         // Save old values
         Kokkos::deep_copy(scalar_old, scalar_concentration);
         
+        // Populate boundary concentrations for advection
+        populate_boundary_concentrations(current_time);
+        
         // Compute scalar mass from concentration
         compute_scalar_mass();
         
-        // Advective transport
+        // Advective transport (uses boundary concentrations for inflow)
         compute_advection();
         
         // Compute dispersion tensor
@@ -922,8 +947,71 @@ public:
         // Apply limiters (to be implemented later)
         // apply_scalar_limiters();
         
-        // Enforce boundary conditions
+        // Enforce boundary conditions (set prescribed values on boundary cells)
         enforce_boundary_conditions(current_time);
+    }
+    
+    // Populate boundary concentrations for advection
+    // This sets bc_conc_* arrays with boundary values for cells on domain boundaries
+    void populate_boundary_concentrations(Scalar current_time) {
+        if (!bc_manager_) return;
+        
+        // Reset to NaN (no BC)
+        Kokkos::deep_copy(bc_conc_xm, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_xp, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_ym, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_yp, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_zm, std::numeric_limits<Scalar>::quiet_NaN());
+        Kokkos::deep_copy(bc_conc_zp, std::numeric_limits<Scalar>::quiet_NaN());
+        
+        const auto& bcs = bc_manager_->get_boundary_conditions(scalar_index_);
+        
+        // Create host mirrors
+        auto h_bc_xm = Kokkos::create_mirror_view(bc_conc_xm);
+        auto h_bc_xp = Kokkos::create_mirror_view(bc_conc_xp);
+        auto h_bc_ym = Kokkos::create_mirror_view(bc_conc_ym);
+        auto h_bc_yp = Kokkos::create_mirror_view(bc_conc_yp);
+        auto h_bc_zm = Kokkos::create_mirror_view(bc_conc_zm);
+        auto h_bc_zp = Kokkos::create_mirror_view(bc_conc_zp);
+        
+        Kokkos::deep_copy(h_bc_xm, bc_conc_xm);
+        Kokkos::deep_copy(h_bc_xp, bc_conc_xp);
+        Kokkos::deep_copy(h_bc_ym, bc_conc_ym);
+        Kokkos::deep_copy(h_bc_yp, bc_conc_yp);
+        Kokkos::deep_copy(h_bc_zm, bc_conc_zm);
+        Kokkos::deep_copy(h_bc_zp, bc_conc_zp);
+        
+        for (const auto& bc : bcs) {
+            if (bc.type != ScalarBcType::PRESCRIBED_CONCENTRATION &&
+                bc.type != ScalarBcType::CAUCHY) continue;
+            
+            Scalar bc_value = bc.get_value(current_time);
+            
+            // Assign to appropriate face based on boundary face
+            for (Ordinal cell_idx : bc.cell_indices) {
+                if (bc.face == "x-") {
+                    h_bc_xm(cell_idx) = bc_value;
+                } else if (bc.face == "x+") {
+                    h_bc_xp(cell_idx) = bc_value;
+                } else if (bc.face == "y-") {
+                    h_bc_ym(cell_idx) = bc_value;
+                } else if (bc.face == "y+") {
+                    h_bc_yp(cell_idx) = bc_value;
+                } else if (bc.face == "z-") {
+                    h_bc_zm(cell_idx) = bc_value;
+                } else if (bc.face == "z+") {
+                    h_bc_zp(cell_idx) = bc_value;
+                }
+            }
+        }
+        
+        // Copy back to device
+        Kokkos::deep_copy(bc_conc_xm, h_bc_xm);
+        Kokkos::deep_copy(bc_conc_xp, h_bc_xp);
+        Kokkos::deep_copy(bc_conc_ym, h_bc_ym);
+        Kokkos::deep_copy(bc_conc_yp, h_bc_yp);
+        Kokkos::deep_copy(bc_conc_zm, h_bc_zm);
+        Kokkos::deep_copy(bc_conc_zp, h_bc_zp);
     }
     
     // ========================================================================
@@ -1107,6 +1195,14 @@ private:
         auto _active_mask_3d = domain.active_mask_3d;
         auto _dz_layers = domain.layer_thickness;
         
+        // Boundary concentrations for inflow handling
+        auto _bc_xm = bc_conc_xm;
+        auto _bc_xp = bc_conc_xp;
+        auto _bc_ym = bc_conc_ym;
+        auto _bc_yp = bc_conc_yp;
+        auto _bc_zm = bc_conc_zm;
+        auto _bc_zp = bc_conc_zp;
+        
         auto _neighbor_left = active_mesh.neighbor_left;
         auto _neighbor_right = active_mesh.neighbor_right;
         auto _neighbor_back = active_mesh.neighbor_back;
@@ -1148,64 +1244,78 @@ private:
                 Scalar Az = domain.dx * domain.dy;  // Z-face area
                 
                 // X-direction advection
+                // Flux convention: positive = flow INTO cell from x+ direction (from right)
                 Scalar sip = 0.0;  // Scalar at i+1/2 face
                 Scalar sim = 0.0;  // Scalar at i-1/2 face
                 
                 // i+1/2 face
                 Scalar flux_x_here = _flux_x(domain_idx);
                 if (flux_x_here > 0.0) {
-                    // Flow from left to right
-                    sip = _scalar_concentration(domain_idx);
-                    if (use_tvd && i_right >= 0 && i_left >= 0) {
-                        sip = tvd_superbee(_scalar_concentration(i_right), 
-                                          _scalar_concentration(domain_idx),
-                                          _scalar_concentration(i_left),
-                                          flux_x_here / Ax,
-                                          domain.dx, dt);
-                    }
-                } else if (flux_x_here < 0.0) {
-                    // Flow from right to left
+                    // Flow from right to left (inflow from x+ direction)
+                    // Use concentration from right neighbor (upwind)
                     if (i_right >= 0) {
                         sip = _scalar_concentration(i_right);
-                        if (use_tvd && i_right >= 0 && i_left >= 0) {
-                            // Get i+2 neighbor for TVD
-                            Ordinal i_right_right = -1;
-                            if (active_right >= 0) {
-                                Ordinal active_right_right = _neighbor_right(active_right);
-                                if (active_right_right >= 0) {
-                                    i_right_right = _active_to_domain(active_right_right);
-                                }
-                            }
-                            if (i_right_right >= 0) {
-                                sip = tvd_superbee(_scalar_concentration(domain_idx),
-                                                  _scalar_concentration(i_right),
-                                                  _scalar_concentration(i_right_right),
-                                                  flux_x_here / Ax,
-                                                  domain.dx, dt);
-                            } else {
-                                sip = _scalar_concentration(i_right);
-                            }
+                        if (use_tvd && i_left >= 0) {
+                            sip = tvd_superbee(_scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_right),
+                                              _scalar_concentration(i_left),
+                                              flux_x_here / Ax,
+                                              domain.dx, dt);
                         }
                     } else {
-                        sip = _scalar_concentration(domain_idx);
+                        // No right neighbor - check for boundary inflow concentration
+                        Scalar bc_val = _bc_xp(domain_idx);
+                        if (!Kokkos::isnan(bc_val)) {
+                            sip = bc_val;  // Use boundary concentration for inflow
+                        } else {
+                            sip = _scalar_concentration(domain_idx);  // Zero-gradient fallback
+                        }
+                    }
+                } else if (flux_x_here < 0.0) {
+                    // Flow from left to right (outflow to x+ direction)
+                    // Use concentration from current cell (upwind)
+                    sip = _scalar_concentration(domain_idx);
+                    if (use_tvd && i_right >= 0 && i_left >= 0) {
+                        // Get i+2 neighbor for TVD
+                        Ordinal i_right_right = -1;
+                        if (active_right >= 0) {
+                            Ordinal active_right_right = _neighbor_right(active_right);
+                            if (active_right_right >= 0) {
+                                i_right_right = _active_to_domain(active_right_right);
+                            }
+                        }
+                        if (i_right_right >= 0) {
+                            sip = tvd_superbee(_scalar_concentration(i_right),
+                                              _scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_right_right),
+                                              flux_x_here / Ax,
+                                              domain.dx, dt);
+                        } else {
+                            sip = _scalar_concentration(domain_idx);
+                        }
                     }
                 }
                 
-                // i-1/2 face
+                // i-1/2 face (flux_x(i_left) = flux at x+ face of left cell)
+                // This flux represents flow between left cell and current cell
+                // flux_x(i_left) > 0 means flow INTO left cell from current cell (outflow from current)
+                // flux_x(i_left) < 0 means flow INTO current cell from left cell (inflow to current)
                 if (i_left >= 0) {
                     Scalar flux_x_left = _flux_x(i_left);
                     if (flux_x_left > 0.0) {
-                        sim = _scalar_concentration(i_left);
-                        if (use_tvd && i_left >= 0 && i_right >= 0) {
-                            sim = tvd_superbee(_scalar_concentration(domain_idx),
-                                              _scalar_concentration(i_left),
+                        // Flow from current cell into left cell (outflow from current at i-1/2)
+                        sim = _scalar_concentration(domain_idx);
+                        if (use_tvd && i_right >= 0) {
+                            sim = tvd_superbee(_scalar_concentration(i_left),
+                                              _scalar_concentration(domain_idx),
                                               _scalar_concentration(i_right),
                                               flux_x_left / Ax,
                                               domain.dx, dt);
                         }
                     } else if (flux_x_left < 0.0) {
-                        sim = _scalar_concentration(domain_idx);
-                        if (use_tvd && i_left >= 0) {
+                        // Flow from left cell into current cell (inflow to current at i-1/2)
+                        sim = _scalar_concentration(i_left);
+                        if (use_tvd) {
                             // Get i-2 neighbor for TVD
                             Ordinal i_left_left = -1;
                             if (active_left >= 0) {
@@ -1215,77 +1325,96 @@ private:
                                 }
                             }
                             if (i_left_left >= 0) {
-                                sim = tvd_superbee(_scalar_concentration(i_left),
-                                                  _scalar_concentration(domain_idx),
+                                sim = tvd_superbee(_scalar_concentration(domain_idx),
+                                                  _scalar_concentration(i_left),
                                                   _scalar_concentration(i_left_left),
                                                   flux_x_left / Ax,
                                                   domain.dx, dt);
                             } else {
-                                sim = _scalar_concentration(domain_idx);
+                                sim = _scalar_concentration(i_left);
                             }
                         }
                     }
                 } else {
-                    sim = _scalar_concentration(domain_idx);
+                    // No left neighbor - this cell is on x- boundary
+                    // For x- boundary with prescribed concentration (e.g., freshwater flux BC)
+                    Scalar bc_val = _bc_xm(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        sim = bc_val;
+                    } else {
+                        sim = _scalar_concentration(domain_idx);  // Zero-gradient fallback
+                    }
                 }
                 
                 // Y-direction advection
                 Scalar sjp = 0.0;  // Scalar at j+1/2 face
                 Scalar sjm = 0.0;  // Scalar at j-1/2 face
                 
-                // j+1/2 face
+                // j+1/2 face (flux_y > 0 means inflow from y+ direction)
                 Scalar flux_y_here = _flux_y(domain_idx);
                 if (flux_y_here > 0.0) {
-                    sjp = _scalar_concentration(domain_idx);
-                    if (use_tvd && i_front >= 0 && i_back >= 0) {
-                        sjp = tvd_superbee(_scalar_concentration(i_front),
-                                          _scalar_concentration(domain_idx),
-                                          _scalar_concentration(i_back),
-                                          flux_y_here / Ay,
-                                          domain.dy, dt);
-                    }
-                } else if (flux_y_here < 0.0) {
+                    // Inflow from front neighbor
                     if (i_front >= 0) {
                         sjp = _scalar_concentration(i_front);
-                        if (use_tvd && i_front >= 0 && i_back >= 0) {
-                            // Get j+2 neighbor for TVD
-                            Ordinal i_front_front = -1;
-                            if (active_front >= 0) {
-                                Ordinal active_front_front = _neighbor_front(active_front);
-                                if (active_front_front >= 0) {
-                                    i_front_front = _active_to_domain(active_front_front);
-                                }
-                            }
-                            if (i_front_front >= 0) {
-                                sjp = tvd_superbee(_scalar_concentration(domain_idx),
-                                                  _scalar_concentration(i_front),
-                                                  _scalar_concentration(i_front_front),
-                                                  flux_y_here / Ay,
-                                                  domain.dy, dt);
-                            } else {
-                                sjp = _scalar_concentration(i_front);
-                            }
+                        if (use_tvd && i_back >= 0) {
+                            sjp = tvd_superbee(_scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_front),
+                                              _scalar_concentration(i_back),
+                                              flux_y_here / Ay,
+                                              domain.dy, dt);
                         }
                     } else {
-                        sjp = _scalar_concentration(domain_idx);
+                        // No front neighbor - boundary inflow from y+
+                        Scalar bc_val = _bc_yp(domain_idx);
+                        if (!Kokkos::isnan(bc_val)) {
+                            sjp = bc_val;
+                        } else {
+                            sjp = _scalar_concentration(domain_idx);
+                        }
+                    }
+                } else if (flux_y_here < 0.0) {
+                    // Outflow to front neighbor
+                    sjp = _scalar_concentration(domain_idx);
+                    if (use_tvd && i_front >= 0 && i_back >= 0) {
+                        // Get j+2 neighbor for TVD
+                        Ordinal i_front_front = -1;
+                        if (active_front >= 0) {
+                            Ordinal active_front_front = _neighbor_front(active_front);
+                            if (active_front_front >= 0) {
+                                i_front_front = _active_to_domain(active_front_front);
+                            }
+                        }
+                        if (i_front_front >= 0) {
+                            sjp = tvd_superbee(_scalar_concentration(i_front),
+                                              _scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_front_front),
+                                              flux_y_here / Ay,
+                                              domain.dy, dt);
+                        } else {
+                            sjp = _scalar_concentration(domain_idx);
+                        }
                     }
                 }
                 
-                // j-1/2 face
+                // j-1/2 face (flux_y(i_back) = flux at y+ face of back cell)
+                // flux_y(i_back) > 0 means inflow to back cell from current (outflow from current)
+                // flux_y(i_back) < 0 means inflow to current from back cell
                 if (i_back >= 0) {
                     Scalar flux_y_back = _flux_y(i_back);
                     if (flux_y_back > 0.0) {
-                        sjm = _scalar_concentration(i_back);
-                        if (use_tvd && i_back >= 0 && i_front >= 0) {
-                            sjm = tvd_superbee(_scalar_concentration(domain_idx),
-                                              _scalar_concentration(i_back),
+                        // Outflow from current to back cell
+                        sjm = _scalar_concentration(domain_idx);
+                        if (use_tvd && i_front >= 0) {
+                            sjm = tvd_superbee(_scalar_concentration(i_back),
+                                              _scalar_concentration(domain_idx),
                                               _scalar_concentration(i_front),
                                               flux_y_back / Ay,
                                               domain.dy, dt);
                         }
                     } else if (flux_y_back < 0.0) {
-                        sjm = _scalar_concentration(domain_idx);
-                        if (use_tvd && i_back >= 0) {
+                        // Inflow from back cell to current
+                        sjm = _scalar_concentration(i_back);
+                        if (use_tvd) {
                             // Get j-2 neighbor for TVD
                             Ordinal i_back_back = -1;
                             if (active_back >= 0) {
@@ -1295,77 +1424,95 @@ private:
                                 }
                             }
                             if (i_back_back >= 0) {
-                                sjm = tvd_superbee(_scalar_concentration(i_back),
-                                                  _scalar_concentration(domain_idx),
+                                sjm = tvd_superbee(_scalar_concentration(domain_idx),
+                                                  _scalar_concentration(i_back),
                                                   _scalar_concentration(i_back_back),
                                                   flux_y_back / Ay,
                                                   domain.dy, dt);
                             } else {
-                                sjm = _scalar_concentration(domain_idx);
+                                sjm = _scalar_concentration(i_back);
                             }
                         }
                     }
                 } else {
-                    sjm = _scalar_concentration(domain_idx);
+                    // No back neighbor - boundary on y- side
+                    Scalar bc_val = _bc_ym(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        sjm = bc_val;
+                    } else {
+                        sjm = _scalar_concentration(domain_idx);
+                    }
                 }
                 
                 // Z-direction advection
                 Scalar skp = 0.0;  // Scalar at k+1/2 face
                 Scalar skm = 0.0;  // Scalar at k-1/2 face
                 
-                // k+1/2 face
+                // k+1/2 face (flux_z > 0 means inflow from top, i.e., downward flow)
                 Scalar flux_z_here = _flux_z(domain_idx);
                 if (flux_z_here > 0.0) {
+                    // Flow downward (from top into current cell)
                     if (i_top >= 0) {
                         skp = _scalar_concentration(i_top);
-                        if (use_tvd && i_top >= 0 && i_bottom >= 0) {
-                            // Get k+2 neighbor for TVD
-                            Ordinal i_top_top = -1;
-                            if (active_top >= 0) {
-                                Ordinal active_top_top = _neighbor_top(active_top);
-                                if (active_top_top >= 0) {
-                                    i_top_top = _active_to_domain(active_top_top);
-                                }
-                            }
-                            if (i_top_top >= 0) {
-                                skp = tvd_superbee(_scalar_concentration(domain_idx),
-                                                  _scalar_concentration(i_top),
-                                                  _scalar_concentration(i_top_top),
-                                                  flux_z_here / Az,
-                                                  dz, dt);
-                            } else {
-                                skp = _scalar_concentration(i_top);
-                            }
+                        if (use_tvd && i_bottom >= 0) {
+                            skp = tvd_superbee(_scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_top),
+                                              _scalar_concentration(i_bottom),
+                                              flux_z_here / Az,
+                                              dz, dt);
                         }
                     } else {
-                        skp = _scalar_concentration(domain_idx);
+                        // No top neighbor - boundary on z+ side
+                        Scalar bc_val = _bc_zp(domain_idx);
+                        if (!Kokkos::isnan(bc_val)) {
+                            skp = bc_val;
+                        } else {
+                            skp = _scalar_concentration(domain_idx);
+                        }
                     }
                 } else if (flux_z_here < 0.0) {
+                    // Flow upward (from current cell to top)
                     skp = _scalar_concentration(domain_idx);
                     if (use_tvd && i_top >= 0 && i_bottom >= 0) {
-                        skp = tvd_superbee(_scalar_concentration(i_top),
-                                          _scalar_concentration(domain_idx),
-                                          _scalar_concentration(i_bottom),
-                                          flux_z_here / Az,
-                                          dz, dt);
+                        // Get k+2 neighbor for TVD
+                        Ordinal i_top_top = -1;
+                        if (active_top >= 0) {
+                            Ordinal active_top_top = _neighbor_top(active_top);
+                            if (active_top_top >= 0) {
+                                i_top_top = _active_to_domain(active_top_top);
+                            }
+                        }
+                        if (i_top_top >= 0) {
+                            skp = tvd_superbee(_scalar_concentration(i_top),
+                                              _scalar_concentration(domain_idx),
+                                              _scalar_concentration(i_top_top),
+                                              flux_z_here / Az,
+                                              dz, dt);
+                        } else {
+                            skp = _scalar_concentration(domain_idx);
+                        }
                     }
                 }
                 
-                // k-1/2 face
+                // k-1/2 face (flux_z(i_bottom) = flux at z+ face of bottom cell)
+                // flux_z(i_bottom) > 0 means inflow to bottom cell from current (downward from current)
+                // flux_z(i_bottom) < 0 means outflow from bottom cell to current (upward from bottom)
                 if (i_bottom >= 0) {
                     Scalar flux_z_bottom = _flux_z(i_bottom);
                     if (flux_z_bottom > 0.0) {
-                        skm = _scalar_concentration(i_bottom);
-                        if (use_tvd && i_bottom >= 0 && i_top >= 0) {
-                            skm = tvd_superbee(_scalar_concentration(domain_idx),
-                                              _scalar_concentration(i_bottom),
+                        // Downward flow from current to bottom
+                        skm = _scalar_concentration(domain_idx);
+                        if (use_tvd && i_top >= 0) {
+                            skm = tvd_superbee(_scalar_concentration(i_bottom),
+                                              _scalar_concentration(domain_idx),
                                               _scalar_concentration(i_top),
                                               flux_z_bottom / Az,
                                               dz, dt);
                         }
                     } else if (flux_z_bottom < 0.0) {
-                        skm = _scalar_concentration(domain_idx);
-                        if (use_tvd && i_bottom >= 0) {
+                        // Upward flow from bottom to current
+                        skm = _scalar_concentration(i_bottom);
+                        if (use_tvd) {
                             // Get k-2 neighbor for TVD
                             Ordinal i_bottom_bottom = -1;
                             if (active_bottom >= 0) {
@@ -1375,21 +1522,31 @@ private:
                                 }
                             }
                             if (i_bottom_bottom >= 0) {
-                                skm = tvd_superbee(_scalar_concentration(i_bottom),
-                                                  _scalar_concentration(domain_idx),
+                                skm = tvd_superbee(_scalar_concentration(domain_idx),
+                                                  _scalar_concentration(i_bottom),
                                                   _scalar_concentration(i_bottom_bottom),
                                                   flux_z_bottom / Az,
                                                   dz, dt);
                             } else {
-                                skm = _scalar_concentration(domain_idx);
+                                skm = _scalar_concentration(i_bottom);
                             }
                         }
                     }
                 } else {
-                    skm = _scalar_concentration(domain_idx);
+                    // No bottom neighbor - boundary on z- side
+                    Scalar bc_val = _bc_zm(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        skm = bc_val;
+                    } else {
+                        skm = _scalar_concentration(domain_idx);
+                    }
                 }
                 
-                // Update scalar mass from advection
+                // Update scalar mass from advection (legacy convention)
+                // flux_x(i) > 0 means flow INTO cell i from x+ direction
+                // Mass change = flux_x(i)*sip - flux_x(i-1)*sim
+                //   - flux_x(i)*sip: if positive (inflow from right), adds mass with concentration sip
+                //   - flux_x(i-1)*sim: outflow to left (=inflow to left cell), removes mass with concentration sim
                 Scalar fx = flux_x_here * sip - (i_left >= 0 ? _flux_x(i_left) : 0.0) * sim;
                 Scalar fy = flux_y_here * sjp - (i_back >= 0 ? _flux_y(i_back) : 0.0) * sjm;
                 Scalar fz = flux_z_here * skp - (i_bottom >= 0 ? _flux_z(i_bottom) : 0.0) * skm;
@@ -1522,6 +1679,14 @@ private:
         auto _active_to_domain = active_mesh.active_to_domain;
         auto _coord_k = active_mesh.coord_k;
         
+        // Boundary concentrations for dispersive flux at boundaries
+        auto _bc_xm = bc_conc_xm;
+        auto _bc_xp = bc_conc_xp;
+        auto _bc_ym = bc_conc_ym;
+        auto _bc_yp = bc_conc_yp;
+        auto _bc_zm = bc_conc_zm;
+        auto _bc_zp = bc_conc_zp;
+        
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
             KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
@@ -1564,11 +1729,21 @@ private:
                 Scalar jim_fx = 0.0, jim_fy = 0.0, jim_fz = 0.0;
                 
                 // i+1/2 face: fx term (Dxx - longitudinal)
-                if (i_right >= 0 && _conductivity_x(domain_idx) > 0.0 && 
-                    _active_mask_3d(i_right) > 0) {
-                    Scalar Dxx_face = 0.5 * (_Dxx(domain_idx) + _Dxx(i_right));
-                    jip_fx = Dxx_face * Ax * 
-                             (_scalar_concentration(i_right) - _scalar_concentration(domain_idx)) / dist_x;
+                if (_conductivity_x(domain_idx) > 0.0) {
+                    if (i_right >= 0 && _active_mask_3d(i_right) > 0) {
+                        // Interior face - flux with neighbor
+                        Scalar Dxx_face = 0.5 * (_Dxx(domain_idx) + _Dxx(i_right));
+                        jip_fx = Dxx_face * Ax * 
+                                 (_scalar_concentration(i_right) - _scalar_concentration(domain_idx)) / dist_x;
+                    } else {
+                        // Boundary face - use boundary concentration if available
+                        Scalar bc_val = _bc_xp(domain_idx);
+                        if (!Kokkos::isnan(bc_val)) {
+                            // Dispersive flux from boundary
+                            jip_fx = _Dxx(domain_idx) * Ax * 
+                                     (bc_val - _scalar_concentration(domain_idx)) / (0.5 * dist_x);
+                        }
+                    }
                 }
                 
                 // i+1/2 face: fy term (Dxy - cross term in y-direction)
@@ -1650,11 +1825,23 @@ private:
                 }
                 
                 // i-1/2 face: similar computation but from left neighbor's perspective
-                if (i_left >= 0 && _conductivity_x(i_left) > 0.0 && 
-                    _active_mask_3d(i_left) > 0) {
-                    // fx term (Dxx)
-                    jim_fx = _Dxx(i_left) * Ax * 
-                             (_scalar_concentration(domain_idx) - _scalar_concentration(i_left)) / dist_x;
+                if (_conductivity_x(domain_idx) > 0.0) {
+                    if (i_left >= 0 && _active_mask_3d(i_left) > 0) {
+                        // Interior face - flux from left
+                        jim_fx = _Dxx(i_left) * Ax * 
+                                 (_scalar_concentration(domain_idx) - _scalar_concentration(i_left)) / dist_x;
+                    } else {
+                        // Boundary face - use boundary concentration if available
+                        Scalar bc_val = _bc_xm(domain_idx);
+                        if (!Kokkos::isnan(bc_val)) {
+                            // Dispersive flux from left boundary
+                            jim_fx = _Dxx(domain_idx) * Ax * 
+                                     (_scalar_concentration(domain_idx) - bc_val) / (0.5 * dist_x);
+                        }
+                    }
+                }
+                // Cross-term fy for left boundary (inside the i_left check originally)
+                if (i_left >= 0 && _conductivity_x(i_left) > 0.0 && _active_mask_3d(i_left) > 0) {
                     
                     // fy term (Dxy) - cross term
                     if (i_front >= 0 && _active_mask_3d(i_front) > 0) {
@@ -2035,33 +2222,190 @@ private:
                 Scalar jkp = jkp_fx + jkp_fy + jkp_fz;
                 Scalar jkm = jkm_fx + jkm_fy + jkm_fz;
                 
-                // Update scalar mass from dispersive flux divergence
-                // Divergence = (jip - jim) + (jjp - jjm) + (jkp - jkm)
+                // Update scalar mass from dispersive flux
+                // Flux convention: j = D * A * (S_neighbor - S_here) / dx
+                //   - If S_neighbor > S_here: j > 0, flux INTO cell from neighbor direction
+                // Mass balance: dM/dt = sum of fluxes into cell
+                //   - jip is flux at i+1/2 face: positive means flux INTO cell from right
+                //   - jim is flux at i-1/2 face (from left cell's perspective): positive means flux OUT of left cell
+                // Correct form: mass_change = (flux_in_from_left - flux_out_to_right) = jim - jip
+                // But actually, let's reconsider:
+                //   - jip = D * (S_right - S_here) / dx at i+1/2 face
+                //   - jim = D * (S_here - S_left) / dx at i-1/2 face (computed from left cell)
+                // The diffusion equation: dS/dt = D * d²S/dx² = D * (S_{i+1} - 2*S_i + S_{i-1}) / dx²
+                // In FV: dM/dt = D*A/dx * (S_{i+1} - S_i) - D*A/dx * (S_i - S_{i-1})
+                //              = D*A/dx * (S_{i+1} - 2*S_i + S_{i-1})
+                // So: mass += dt * (jip - jim) where jip = D*A*(S_{i+1} - S_i)/dx, jim = D*A*(S_i - S_{i-1})/dx
+                // This is correct if jim is computed as (S_here - S_left), but looking at code...
+                // jim_fx = D * (S_here - S_left) / dx, so jip - jim = D*A/dx*(S_right - 2*S_here + S_left) ✓
                 _scalar_mass(domain_idx) += dt * ((jip - jim) + (jjp - jjm) + (jkp - jkm));
             });
     }
     
-    // Update concentration from mass
+    // Update concentration from mass with scalar limiter
+    // Prevents numerical overshoots by clamping to neighbor min/max values
     void update_concentration() {
         auto _scalar_concentration = scalar_concentration;
         auto _scalar_mass = scalar_mass;
+        auto _scalar_old = scalar_old;  // Old concentration for limiter bounds
         auto _volume = state.volume;
         auto _active_mask_3d = domain.active_mask_3d;
         
         auto _active_to_domain = active_mesh.active_to_domain;
+        auto _neighbor_left = active_mesh.neighbor_left;
+        auto _neighbor_right = active_mesh.neighbor_right;
+        auto _neighbor_back = active_mesh.neighbor_back;
+        auto _neighbor_front = active_mesh.neighbor_front;
+        auto _neighbor_bottom = active_mesh.neighbor_bottom;
+        auto _neighbor_top = active_mesh.neighbor_top;
+        
+        // Boundary concentrations for limiter bounds
+        auto _bc_xm = bc_conc_xm;
+        auto _bc_xp = bc_conc_xp;
+        auto _bc_ym = bc_conc_ym;
+        auto _bc_yp = bc_conc_yp;
+        auto _bc_zm = bc_conc_zm;
+        auto _bc_zp = bc_conc_zp;
+        
+        // Scalar limits for extreme value detection
+        constexpr Scalar s_lim_hi = 200.0;  // Max reasonable concentration
+        constexpr Scalar s_lim_lo = 0.0;    // Min reasonable concentration
         
         Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
             KOKKOS_LAMBDA (const Ordinal i) {
                 Ordinal domain_idx = _active_to_domain(i);
-                if (_active_mask_3d(domain_idx) > 0) {
-                    if (_volume(domain_idx) > 0.0) {
-                        _scalar_concentration(domain_idx) = _scalar_mass(domain_idx) / _volume(domain_idx);
-                    } else {
-                        _scalar_concentration(domain_idx) = 0.0;
+                if (_active_mask_3d(domain_idx) <= 0) {
+                    _scalar_concentration(domain_idx) = 0.0;
+                    return;
+                }
+                
+                // Compute new concentration from mass
+                Scalar s_new = 0.0;
+                if (_volume(domain_idx) > 0.0) {
+                    s_new = _scalar_mass(domain_idx) / _volume(domain_idx);
+                }
+                
+                // Compute min/max from neighbors and boundary values (using OLD concentrations)
+                // Start with current cell's old concentration
+                Scalar s_min = _scalar_old(domain_idx);
+                Scalar s_max = _scalar_old(domain_idx);
+                
+                // Check all neighbors
+                Ordinal active_left = _neighbor_left(i);
+                Ordinal active_right = _neighbor_right(i);
+                Ordinal active_back = _neighbor_back(i);
+                Ordinal active_front = _neighbor_front(i);
+                Ordinal active_bottom = _neighbor_bottom(i);
+                Ordinal active_top = _neighbor_top(i);
+                
+                // X- direction
+                if (active_left >= 0) {
+                    Ordinal idx_left = _active_to_domain(active_left);
+                    if (_active_mask_3d(idx_left) > 0) {
+                        if (_scalar_old(idx_left) > s_max) s_max = _scalar_old(idx_left);
+                        if (_scalar_old(idx_left) < s_min) s_min = _scalar_old(idx_left);
                     }
                 } else {
-                    _scalar_concentration(domain_idx) = 0.0;
+                    // Check boundary
+                    Scalar bc_val = _bc_xm(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
                 }
+                
+                // X+ direction
+                if (active_right >= 0) {
+                    Ordinal idx_right = _active_to_domain(active_right);
+                    if (_active_mask_3d(idx_right) > 0) {
+                        if (_scalar_old(idx_right) > s_max) s_max = _scalar_old(idx_right);
+                        if (_scalar_old(idx_right) < s_min) s_min = _scalar_old(idx_right);
+                    }
+                } else {
+                    // Check boundary
+                    Scalar bc_val = _bc_xp(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
+                }
+                
+                // Y- direction
+                if (active_back >= 0) {
+                    Ordinal idx_back = _active_to_domain(active_back);
+                    if (_active_mask_3d(idx_back) > 0) {
+                        if (_scalar_old(idx_back) > s_max) s_max = _scalar_old(idx_back);
+                        if (_scalar_old(idx_back) < s_min) s_min = _scalar_old(idx_back);
+                    }
+                } else {
+                    Scalar bc_val = _bc_ym(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
+                }
+                
+                // Y+ direction
+                if (active_front >= 0) {
+                    Ordinal idx_front = _active_to_domain(active_front);
+                    if (_active_mask_3d(idx_front) > 0) {
+                        if (_scalar_old(idx_front) > s_max) s_max = _scalar_old(idx_front);
+                        if (_scalar_old(idx_front) < s_min) s_min = _scalar_old(idx_front);
+                    }
+                } else {
+                    Scalar bc_val = _bc_yp(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
+                }
+                
+                // Z- direction
+                if (active_bottom >= 0) {
+                    Ordinal idx_bottom = _active_to_domain(active_bottom);
+                    if (_active_mask_3d(idx_bottom) > 0) {
+                        if (_scalar_old(idx_bottom) > s_max) s_max = _scalar_old(idx_bottom);
+                        if (_scalar_old(idx_bottom) < s_min) s_min = _scalar_old(idx_bottom);
+                    }
+                } else {
+                    Scalar bc_val = _bc_zm(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
+                }
+                
+                // Z+ direction
+                if (active_top >= 0) {
+                    Ordinal idx_top = _active_to_domain(active_top);
+                    if (_active_mask_3d(idx_top) > 0) {
+                        if (_scalar_old(idx_top) > s_max) s_max = _scalar_old(idx_top);
+                        if (_scalar_old(idx_top) < s_min) s_min = _scalar_old(idx_top);
+                    }
+                } else {
+                    Scalar bc_val = _bc_zp(domain_idx);
+                    if (!Kokkos::isnan(bc_val)) {
+                        if (bc_val > s_max) s_max = bc_val;
+                        if (bc_val < s_min) s_min = bc_val;
+                    }
+                }
+                
+                // Apply scalar limiter: clamp to [s_min, s_max]
+                // Only apply if bounds are reasonable (not at global limits)
+                if (s_new > s_max && s_max < s_lim_hi) {
+                    s_new = s_max;
+                } else if (s_new < s_min && s_min > s_lim_lo) {
+                    s_new = s_min;
+                }
+                
+                // Apply hard limits for extreme values
+                if (s_new > s_lim_hi) {
+                    s_new = s_lim_hi;
+                } else if (s_new < 0.0) {
+                    s_new = 0.0;
+                }
+                
+                _scalar_concentration(domain_idx) = s_new;
             });
     }
 };
