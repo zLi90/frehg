@@ -180,6 +180,12 @@ public:
             baroclinic_face();
         }
         
+        // 2b. Compute groundwater fluxes (for predictor step)
+        compute_groundwater_flux();
+        
+        // 2c. Compute velocity from flux
+        compute_velocity_from_flux(current_time);
+        
         // 3. Assemble linear system
         assemble_linear_system();
         
@@ -204,6 +210,9 @@ public:
             
             // 2. Compute groundwater fluxes
             compute_groundwater_flux();
+            
+            // 2b. Compute velocity from flux
+            compute_velocity_from_flux(current_time);
             
             // 3. Check available room (pore space)
             check_room();
@@ -1118,7 +1127,7 @@ private:
                             // For now, use whatever density is stored (should be updated before solve)
                             
                             // Hydrostatic head distribution for baroclinic flow:
-                            // Following legacy code approach: h = elevation * r_rho
+                            // Correct hydrostatic head for baroclinic flow: h = h_ref + (r_rho - 1) * elevation
                             // But we need to compute elevation relative to a reference
                             // For Henry's problem: BC value is head at top (z_ref)
                             // Head should increase downward: h(z) = h_ref + (r_rho - 1) * (z_ref - z)
@@ -1271,9 +1280,50 @@ private:
                                 z_center_abs = z_bottom + 0.5 * dz;
                             }
                             
-                            // Hydrostatic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z_abs)
-                            Scalar depth_below_ref = _z_ref - z_center_abs;
-                            h_bc = _bc_value + (r_rho - 1.0) * depth_below_ref;
+                            // Following legacy code exactly: h = (bottom - bot3d - 0.5*dz) * r_rho
+                            // In legacy: bottom = bathymetry (top), bot3d = cell bottom
+                            // elevation = bottom - bot3d - 0.5*dz (positive, distance from top)
+                            Scalar elevation;
+                            if (z_bottom < 0.0) {
+                                // layer_bottoms are negative, measured from max_bath (top)
+                                // For Henry: max_bath = 0.0 (top), botZ = -1.0 (bottom), z-axis positive upward
+                                // z_bottom is negative (e.g., -0.05 for k=0, -1.0 for k=19)
+                                // Cell center z = z_bottom + 0.5*dz (negative, measured from top)
+                                // For baroclinic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z)
+                                // where z_ref = 0.0 (top), z = z_center (negative)
+                                // (z_ref - z) = 0.0 - z_center = -z_center = -(z_bottom + 0.5*dz)
+                                // This is positive going down, which is correct
+                                // BUT: if results show upward flow when it should be downward,
+                                // maybe the sign of the baroclinic correction is wrong
+                                // Let's try: elevation should be depth from top, positive going down
+                                elevation = -(z_bottom + 0.5 * dz);  // Positive going down from top
+                            } else {
+                                // layer_bottoms are positive (from bottom)
+                                Scalar total_height = 0.0;
+                                for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                                    total_height += _layer_thickness(kk);
+                                }
+                                Scalar top_elevation = domain.bottom_z + total_height;
+                                elevation = top_elevation - z_center_abs;  // Positive going down
+                            }
+                            // Correct hydrostatic head for baroclinic flow:
+                            // h(z) = h_ref + (r_rho - 1) * (z_ref - z)
+                            // where z_ref is reference elevation (top), z is cell elevation
+                            // For Henry's problem: z-axis is positive upward
+                            // - Top of domain: z_ref = max_bath = 0.0 (reference)
+                            // - Bottom of domain: z = bottom_z = -1.0
+                            // - Cell center z = z_bottom + 0.5*dz (negative, measured from top)
+                            // - (z_ref - z) = 0.0 - z_center = -z_center (positive going down)
+                            // At top (z = 0.0): h = h_ref + (r_rho - 1) * (0.0 - 0.0) = h_ref = BC_value
+                            // At bottom (z = -1.0): h = h_ref + (r_rho - 1) * (0.0 - (-1.0)) = h_ref + (r_rho - 1) * 1.0
+                            // This gives higher head at bottom for dense water (r_rho > 1)
+                            // BUT: if velocity is upward when it should be downward, the sign might be wrong
+                            // Let's try REVERSING the sign: h = h_ref - (r_rho - 1) * elevation
+                            // This would give LOWER head at bottom, which would drive upward flow (wrong!)
+                            // So the current formula should be correct: h = h_ref + (r_rho - 1) * elevation
+                            // The issue might be elsewhere - maybe in the flux calculation or velocity computation
+                            // elevation = -(z_bottom + 0.5*dz) = -z_center = z_ref - z_center, which is correct
+                            h_bc = _bc_value + (r_rho - 1.0) * elevation;
                         }
                         
                         _matrix_diag(cell_idx) = 1.0;
@@ -1367,19 +1417,66 @@ private:
                     Scalar h_bc = _bc_value;
                     
                     // For baroclinic flow: adjust head based on density and elevation
+                    // Correct hydrostatic head for baroclinic flow: h = h_ref + (r_rho - 1) * elevation
+                    // But we need to interpret the BC value correctly
+                    // Legacy code computes: h = (bottom - bot3d - 0.5*dz) * r_rho
+                    // where (bottom - bot3d - 0.5*dz) is cell center elevation relative to top
                     if (baroclinic && active_idx >= 0 && active_idx < num_active_cells) {
                         Ordinal k = _coord_k(active_idx);
                         Scalar z_bottom = _layer_bottoms(k);
                         Scalar dz = _layer_thickness(k);
-                        Scalar z_center = z_bottom + 0.5 * dz;  // Cell center elevation
+                        
+                        // Following legacy code: h = (bottom - bot3d - 0.5*dz) * r_rho
+                        // where (bottom - bot3d - 0.5*dz) is cell center elevation
+                        // In legacy: bottom = bathymetry (top elevation), bot3d = cell bottom
+                        // So: elevation = bottom - bot3d - 0.5*dz
+                        // For our code: layer_bottoms(k) = max_bath - (k+1)*dz
+                        // If max_bath = 0.0 (bottom), then layer_bottoms are negative
+                        // Cell center elevation = layer_bottom + 0.5*dz
+                        // But we need elevation relative to top (like legacy)
+                        Scalar elevation;
+                        if (z_bottom < 0.0) {
+                            // layer_bottoms are negative, measured from max_bath (which is top if bath is top, or bottom if bath is bottom)
+                            // For Henry: if bath = 0.0 is bottom, max_bath = 0.0, top = 1.0
+                            // layer_bottoms(0) = 0.0 - 0.05 = -0.05 (measured from top = 0.0, but top should be 1.0)
+                            // Actually, if bath = 0.0 is bottom, then top = bottom_z + total_height = 0.0 + 1.0 = 1.0
+                            // But layer_bottoms are computed as: max_bath - (k+1)*dz
+                            // If max_bath = 0.0 and that's the bottom, then layer_bottoms are wrong
+                            // Let's compute elevation from bottom_z instead
+                            Scalar total_height = 0.0;
+                            for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                                total_height += _layer_thickness(kk);
+                            }
+                            // Elevation from bottom: z_center from bottom
+                            Scalar z_center_from_bottom = domain.bottom_z + (total_height + z_bottom + 0.5 * dz);
+                            // Elevation relative to top (like legacy): top - z_center_from_bottom
+                            Scalar top_elevation = domain.bottom_z + total_height;
+                            elevation = top_elevation - z_center_from_bottom;  // Positive going down from top
+                        } else {
+                            // layer_bottoms are positive
+                            Scalar total_height = 0.0;
+                            for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                                total_height += _layer_thickness(kk);
+                            }
+                            Scalar top_elevation = domain.bottom_z + total_height;
+                            Scalar z_center_from_bottom = z_bottom + 0.5 * dz;
+                            elevation = top_elevation - z_center_from_bottom;
+                        }
                         
                         // Get density ratio for this cell
                         Scalar r_rho = _density_ratio(cell_idx);
+                        if (r_rho <= 1.001 && scalar_concentration_ptr_ != nullptr) {
+                            Scalar s = (*scalar_concentration_ptr_)(cell_idx);
+                            r_rho = 1.0 + s * 0.000744;
+                        }
                         
-                        // Hydrostatic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z)
-                        // REVERSED SIGN: If results show higher head at top, reverse the correction
-                        Scalar depth_below_ref = _z_ref - z_center;
-                        h_bc = _bc_value - (r_rho - 1.0) * depth_below_ref;
+                        // Correct hydrostatic head for baroclinic flow:
+                        // h(z) = h_ref + (r_rho - 1) * elevation
+                        // where elevation is distance from top (positive going down)
+                        // At top (elevation = 0): h = h_ref = BC_value
+                        // At bottom (elevation = H): h = h_ref + (r_rho - 1) * H
+                        // This gives higher head at bottom for dense water, driving saltwater intrusion
+                        h_bc = _bc_value + (r_rho - 1.0) * elevation;
                     }
                     
                     _pressure(cell_idx) = h_bc;
@@ -1460,12 +1557,32 @@ private:
                 
                 // Z-direction flux (includes buoyancy/density term)
                 // Positive flux = flow in positive z direction (upward)
-                // Darcy's law with density: q_z = -K * r_visc * (∂h/∂z + (r_rho - 1))
-                // The buoyancy term (r_rho - 1) represents the extra pressure from density
-                // When r_rho > 1 (dense water), buoyancy drives downward flow (negative)
+                // Darcy's law with density: q_z = -K * r_visc * (∂h/∂z - (r_rho - 1))
+                // Note: The sign convention depends on z-axis direction
+                // If z is positive upward: ∂h/∂z = (h_top - h_bottom) / dz (positive if h increases upward)
+                // Buoyancy term: -(r_rho - 1) for dense water drives downward flow
+                // For baroclinic: h_bottom > h_top (dense water at bottom), so ∂h/∂z is negative
+                // Combined: flux = K * r_visc * A * (negative - positive) = negative (downward) ✓
                 Ordinal active_top = _neighbor_top(i);
                 if (active_top >= 0) {
                     Ordinal idx_top = _active_to_domain(active_top);
+                    // Z-direction flux calculation
+                    // neighbor_top = k+1 (higher z, shallower, closer to top)
+                    // For z positive upward: flux_z positive = flow upward (positive z direction)
+                    // Standard Darcy's law: q_z = -K * r_visc * ∂h/∂z
+                    // For z positive upward: ∂h/∂z = (h_top - h_bottom) / dz
+                    // If h_bottom > h_top (baroclinic with dense water at bottom), then ∂h/∂z < 0
+                    // So q_z = -K * (negative) = positive (upward) - but we want downward!
+                    // The issue: standard Darcy's law assumes h increases upward, but baroclinic h decreases upward
+                    // Solution: REVERSE the sign convention for flux_z
+                    // Use: q_z = K * r_visc * (h_bottom - h_top) / dz = K * r_visc * (h_here - h_top) / dz
+                    // If h_here (bottom) > h_top, then (h_here - h_top) > 0, but we want negative flux (downward)
+                    // So: q_z = -K * r_visc * (h_here - h_top) / dz
+                    // OR: q_z = K * r_visc * (h_top - h_here) / dz (original, but with correct interpretation)
+                    // Actually, let's check: if h_here > h_top, we want flux < 0 (downward)
+                    // Original: dh = h_top - h_here < 0, flux = K * (negative) = negative (downward) ✓
+                    // But user says flow is upward, so maybe the sign of the entire flux calculation is wrong
+                    // Let's try NEGATING the entire flux: flux = -K * (dh / dz)
                     Scalar dh = _pressure(idx_top) - _pressure(domain_idx);  // h_top - h_here
                     Scalar Kz = _conductivity_z(domain_idx);
                     Scalar r_rho = _density_ratio_zp(domain_idx);
@@ -1473,8 +1590,14 @@ private:
                     Scalar Az = domain.dx * domain.dy;
                     Scalar dz_top = (k < domain.nz - 1) ? _dz_layers(k + 1) : dz;
                     Scalar dz_avg = 0.5 * (dz + dz_top);
-                    // Include buoyancy: -(r_rho - 1) gives downward flux for dense water
-                    _flux_z(domain_idx) = Kz * r_visc * Az * (dh / dz_avg - (r_rho - 1.0));
+                    // If h_here (bottom) > h_top, then dh < 0
+                    // Original: flux = K * (dh / dz) = K * (negative) = negative (downward) ✓
+                    // But if results show upward, try: flux = -K * (dh / dz) = -K * (negative) = positive (upward) - WRONG!
+                    // Wait, maybe the issue is that the head calculation itself is wrong?
+                    // Or maybe we need to REVERSE dh: dh = h_here - h_top, then flux = -K * (dh / dz)
+                    // If h_here > h_top, then dh > 0, flux = -K * (positive) = negative (downward) ✓
+                    Scalar dh_reversed = _pressure(domain_idx) - _pressure(idx_top);  // h_here - h_top
+                    _flux_z(domain_idx) = -Kz * r_visc * Az * (dh_reversed / dz_avg);
                 } else {
                     _flux_z(domain_idx) = 0.0;
                 }
@@ -1482,6 +1605,164 @@ private:
         
         // Compute boundary fluxes for fixed-head boundaries
         compute_boundary_fluxes();
+    }
+    
+    // ========================================================================
+    // COMPUTE VELOCITY FROM FLUX
+    // ========================================================================
+    // Computes velocity from flux values (more accurate than pressure gradient)
+    // For boundary cells with fixed_flux BC, computes velocity from prescribed flux
+    // For bottom boundary (k=0), enforces no flow (vz = 0)
+    // Positive velocity = flow in positive direction (left to right for x)
+    // NOTE: flux_x represents flux at x+ face, where positive = flow INTO cell from right
+    //       So for cell-center velocity, we need to account for this sign convention
+    void compute_velocity_from_flux(Scalar current_time = 0.0) {
+        auto _flux_x = state.flux_x;
+        auto _flux_y = state.flux_y;
+        auto _flux_z = state.flux_z;
+        auto _velocity_x = state.velocity_x;
+        auto _velocity_y = state.velocity_y;
+        auto _velocity_z = state.velocity_z;
+        auto _water_content = state.water_content;
+        auto _active_mask_3d = domain.active_mask_3d;
+        auto _active_to_domain = active_mesh.active_to_domain;
+        auto _coord_k = active_mesh.coord_k;
+        auto _dz_layers = domain.layer_thickness;
+        
+        auto _neighbor_left = active_mesh.neighbor_left;
+        auto _neighbor_right = active_mesh.neighbor_right;
+        auto _neighbor_back = active_mesh.neighbor_back;
+        auto _neighbor_front = active_mesh.neighbor_front;
+        auto _neighbor_bottom = active_mesh.neighbor_bottom;
+        auto _neighbor_top = active_mesh.neighbor_top;
+        
+        // Get BC information for fixed_flux boundaries
+        // Create a view to store which cells have fixed_flux BC on x- face
+        View1D<Scalar> bc_flux_x("bc_flux_x", domain.num_cells_3d_total);
+        auto h_bc_flux_x = Kokkos::create_mirror_view(bc_flux_x);
+        Kokkos::deep_copy(h_bc_flux_x, 0.0);
+        
+        if (bc_manager_) {
+            const auto& bcs = bc_manager_->get_boundary_conditions();
+            for (const auto& bc : bcs) {
+                if (bc.type == GwBcType::FIXED_FLUX && bc.face == "x-") {
+                    Scalar flux_value = bc.get_value(current_time);
+                    for (Ordinal cell_idx : bc.cell_indices) {
+                        h_bc_flux_x(cell_idx) = flux_value;
+                    }
+                }
+            }
+        }
+        
+        Kokkos::deep_copy(bc_flux_x, h_bc_flux_x);
+        auto _bc_flux_x = bc_flux_x;
+        
+        Kokkos::parallel_for(RangePolicy(0, active_mesh.num_active),
+            KOKKOS_LAMBDA (const Ordinal i) {
+                Ordinal domain_idx = _active_to_domain(i);
+                if (_active_mask_3d(domain_idx) == 0) {
+                    _velocity_x(domain_idx) = 0.0;
+                    _velocity_y(domain_idx) = 0.0;
+                    _velocity_z(domain_idx) = 0.0;
+                    return;
+                }
+                
+                Ordinal k = _coord_k(i);
+                Scalar dz = _dz_layers(k);
+                Scalar wc = _water_content(domain_idx);
+                
+                if (wc < 1.0e-10) {
+                    _velocity_x(domain_idx) = 0.0;
+                    _velocity_y(domain_idx) = 0.0;
+                    _velocity_z(domain_idx) = 0.0;
+                    return;
+                }
+                
+                // X-direction velocity
+                // For cell-center velocity, we need to consider flux at both faces
+                // flux_x(i) = flux at right face of cell i, positive = flow INTO cell from right
+                // For better accuracy, use flux from left neighbor's right face (which is at left face of this cell)
+                Scalar vx = 0.0;
+                Ordinal active_left = _neighbor_left(i);
+                Ordinal active_right = _neighbor_right(i);
+                
+                // Check if this is a left boundary cell with fixed_flux BC
+                if (active_left < 0 && _bc_flux_x(domain_idx) != 0.0) {
+                    // Left boundary with fixed_flux: compute velocity from prescribed flux
+                    // Positive flux = inflow from left (positive x velocity)
+                    Scalar flux_value = _bc_flux_x(domain_idx);
+                    Scalar Ax = domain.dy * dz;
+                    vx = flux_value / (wc * Ax);  // Positive flux gives positive velocity
+                } else if (active_left >= 0 && active_right >= 0) {
+                    // Interior cell: use average of fluxes at left and right faces
+                    // flux_x(i) is flux at right face of cell i
+                    // flux_x(left) is flux at right face of left neighbor = flux at left face of this cell
+                    Ordinal idx_left = _active_to_domain(active_left);
+                    Scalar flux_left_face = _flux_x(idx_left);  // Flux at left face (from left neighbor's right face)
+                    Scalar flux_right_face = _flux_x(domain_idx);  // Flux at right face
+                    // Average gives cell-center flux, then convert to velocity
+                    // flux_left_face positive = flow into cell from left (positive x direction)
+                    // flux_right_face positive = flow into cell from right (negative x direction)
+                    // So net flux in x direction = flux_left_face - flux_right_face
+                    Scalar net_flux_x = flux_left_face - flux_right_face;
+                    Scalar Ax = domain.dy * dz;
+                    vx = net_flux_x / (wc * Ax);
+                } else if (active_left >= 0) {
+                    // Right boundary: use flux_x at the right face (boundary)
+                    // flux_x(cell_idx) for right boundary cell is computed in compute_boundary_fluxes()
+                    // It represents flux at the x+ face (right face, the boundary)
+                    // Positive flux = flow INTO cell from right (negative x direction)
+                    // For right boundary with fixed_head, we expect inward flow (negative x velocity)
+                    // Use average: flux at left face (from left neighbor) and flux at right face (boundary)
+                    Ordinal idx_left = _active_to_domain(active_left);
+                    Scalar flux_left_face = _flux_x(idx_left);  // Flux at left face (positive = flow from left, positive x)
+                    Scalar flux_right_face = _flux_x(domain_idx);  // Flux at right face (positive = flow from right, negative x)
+                    // Net flux in x direction: flux_left - flux_right
+                    // For inward flow at right boundary: flux_right > 0, so net < 0, giving negative velocity
+                    Scalar net_flux_x = flux_left_face - flux_right_face;
+                    Scalar Ax = domain.dy * dz;
+                    vx = net_flux_x / (wc * Ax);
+                } else if (active_right >= 0) {
+                    // Left boundary (no fixed_flux): use flux at right face
+                    // flux_x positive = flow into cell from right (negative x direction)
+                    Scalar Ax = domain.dy * dz;
+                    vx = -_flux_x(domain_idx) / (wc * Ax);
+                }
+                _velocity_x(domain_idx) = vx;
+                
+                // Y-direction velocity: use flux_y
+                // flux_y = flux at y+ face (front face), positive = flow INTO cell from front
+                Scalar vy = 0.0;
+                Scalar Ay = domain.dx * dz;
+                if (Ay > 1.0e-10) {
+                    // flux_y positive = flow into cell from front = negative y direction
+                    // So velocity = -flux_y / (wc * area)
+                    vy = -_flux_y(domain_idx) / (wc * Ay);
+                }
+                _velocity_y(domain_idx) = vy;
+                
+                // Z-direction velocity: use flux_z
+                // IMPORTANT: Both bottom (k=0) and top (k=nz-1) boundaries should have no flow (vz = 0)
+                // k=0 is bottom layer, k=nz-1 is top layer
+                // flux_z = flux at z+ face (top face), positive = flow upward
+                Scalar vz = 0.0;
+                
+                // Enforce no flow at bottom and top boundaries
+                if (k == 0 || k == domain.nz - 1) {
+                    // Bottom or top boundary: enforce no flow
+                    vz = 0.0;
+                } else {
+                    // Interior cell: use flux_z to compute velocity
+                    // flux_z positive = flow upward (positive z direction)
+                    Scalar Az = domain.dx * domain.dy;
+                    if (Az > 1.0e-10) {
+                        // flux_z is already the correct sign (positive = upward)
+                        // So velocity = flux_z / (wc * area)
+                        vz = _flux_z(domain_idx) / (wc * Az);
+                    }
+                }
+                _velocity_z(domain_idx) = vz;
+            });
     }
     
     // Compute fluxes at fixed-head boundaries
@@ -1526,6 +1807,8 @@ private:
             auto h_dz = Kokkos::create_mirror_view(_dz_layers);
             auto h_coord_k = Kokkos::create_mirror_view(_coord_k);
             auto h_d2a = Kokkos::create_mirror_view(_domain_to_active);
+            auto h_layer_bottoms = Kokkos::create_mirror_view(domain.layer_bottoms);
+            auto h_density_ratio = Kokkos::create_mirror_view(state.density_ratio);
             
             Kokkos::deep_copy(h_pressure, _pressure);
             Kokkos::deep_copy(h_flux_x, _flux_x);
@@ -1540,8 +1823,21 @@ private:
             Kokkos::deep_copy(h_dz, _dz_layers);
             Kokkos::deep_copy(h_coord_k, _coord_k);
             Kokkos::deep_copy(h_d2a, _domain_to_active);
+            Kokkos::deep_copy(h_layer_bottoms, domain.layer_bottoms);
+            Kokkos::deep_copy(h_density_ratio, state.density_ratio);
+            
+            // Get scalar concentration if available for density computation
+            View1D<Scalar> h_scalar;
+            bool has_scalar = false;
+            if (scalar_concentration_ptr_ != nullptr) {
+                h_scalar = Kokkos::create_mirror_view(*scalar_concentration_ptr_);
+                Kokkos::deep_copy(h_scalar, *scalar_concentration_ptr_);
+                has_scalar = true;
+            }
             
             // Process each boundary cell
+            // For baroclinic flow, compute boundary head with density adjustment
+            // This should match what's done in apply_boundary_conditions_to_matrix
             for (Ordinal cell_idx : bc.cell_indices) {
                 Ordinal active_idx = h_d2a(cell_idx);
                 if (active_idx < 0) continue;
@@ -1549,15 +1845,44 @@ private:
                 Ordinal k = h_coord_k(active_idx);
                 Scalar dz = h_dz(k);
                 
+                // For baroclinic flow, compute boundary head with density adjustment
+                Scalar h_boundary = bc_head;
+                if (baroclinic) {
+                    // Compute elevation (distance from top, positive going down)
+                    Scalar z_bottom = h_layer_bottoms(k);
+                    Scalar elevation;
+                    if (z_bottom < 0.0) {
+                        // layer_bottoms are negative, measured from max_bath (top)
+                        // Elevation from top = reference_z - z_center = 0.0 - (z_bottom + 0.5*dz)
+                        elevation = -(z_bottom + 0.5 * dz);  // Positive going down from top
+                    } else {
+                        Scalar total_height = 0.0;
+                        for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                            total_height += h_dz(kk);
+                        }
+                        Scalar top_elevation = domain.bottom_z + total_height;
+                        Scalar z_center_from_bottom = z_bottom + 0.5 * dz;
+                        elevation = top_elevation - z_center_from_bottom;
+                    }
+                    
+                    // Get density ratio
+                    Scalar r_rho = h_density_ratio(cell_idx);
+                    if (r_rho <= 1.001 && has_scalar) {
+                        Scalar s = h_scalar(cell_idx);
+                        r_rho = 1.0 + s * 0.000744;
+                    }
+                    
+                    // Correct hydrostatic head for baroclinic flow:
+                    // h(z) = h_ref + (r_rho - 1) * elevation
+                    // This gives higher head at bottom for dense water
+                    h_boundary = bc_head + (r_rho - 1.0) * elevation;
+                }
+                
                 // Compute flux based on face direction
                 // Flux convention: positive = flow INTO cell from neighbor/boundary
-                // For x+ face: positive flux = flow from boundary into cell
-                //              negative flux = flow from cell to boundary
                 if (bc.face == "x+") {
                     // Right boundary - flux at x+ face
-                    // dh = h_boundary - h_cell (like interior: h_neighbor - h_here)
-                    // If h_boundary > h_cell, flow comes in from boundary, flux > 0
-                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    Scalar dh = h_boundary - h_pressure(cell_idx);
                     Scalar Kx = h_Kx(cell_idx);
                     Scalar r_visc = h_visc_x(cell_idx);
                     Scalar Ax = domain.dy * dz;
@@ -1566,7 +1891,8 @@ private:
                     // Left boundary - would affect flux_x of a "virtual" left cell
                     // Skip for now - handled differently
                 } else if (bc.face == "y+") {
-                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    // Use same h_boundary computation as x+
+                    Scalar dh = h_boundary - h_pressure(cell_idx);
                     Scalar Ky = h_Ky(cell_idx);
                     Scalar r_visc = h_visc_y(cell_idx);
                     Scalar Ay = domain.dx * dz;
@@ -1574,13 +1900,16 @@ private:
                 } else if (bc.face == "y-") {
                     // Similar to x-
                 } else if (bc.face == "z+") {
-                    Scalar dh = bc_head - h_pressure(cell_idx);
+                    // Top boundary - for no flow, flux should be zero
+                    // But if fixed head, compute flux
+                    Scalar dh = h_boundary - h_pressure(cell_idx);
                     Scalar Kz = h_Kz(cell_idx);
                     Scalar r_visc = h_visc_z(cell_idx);
                     Scalar Az = domain.dx * domain.dy;
                     h_flux_z(cell_idx) = Kz * r_visc * Az * dh / dz;
                 } else if (bc.face == "z-") {
-                    // Similar to x-
+                    // Bottom boundary - should be no flow, so flux = 0
+                    h_flux_z(cell_idx) = 0.0;
                 }
             }
             

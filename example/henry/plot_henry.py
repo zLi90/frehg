@@ -81,6 +81,31 @@ def read_vtk_data(filepath):
                     i += 1
                 data[var_name] = np.array(values)
                 continue
+            elif line.startswith('VECTORS'):
+                parts = line.split()
+                var_name = parts[1]
+                # Read vector data (3 components per line)
+                values = []
+                i += 1
+                while i < len(lines) and len(values) < n_data * 3:
+                    val_line = lines[i].strip()
+                    if not val_line or val_line.startswith(('SCALARS', 'VECTORS', 'POINT_DATA', 'CELL_DATA')):
+                        break
+                    vals = val_line.split()
+                    try:
+                        values.extend([float(v) for v in vals])
+                    except ValueError:
+                        break
+                    i += 1
+                # Reshape to (n_data, 3) array
+                if len(values) >= n_data * 3:
+                    data[var_name] = np.array(values[:n_data * 3]).reshape((n_data, 3))
+                else:
+                    # If not enough values, pad with zeros
+                    padded = np.zeros(n_data * 3)
+                    padded[:len(values)] = values
+                    data[var_name] = padded.reshape((n_data, 3))
+                continue
             
             i += 1
         
@@ -164,8 +189,8 @@ def plot_salinity_distribution(salinity, title="Salinity Distribution"):
     
     return fig, ax
 
-def plot_pressure_distribution(pressure, title="Pressure Head Distribution"):
-    """Plot 2D pressure head distribution."""
+def plot_pressure_distribution(pressure, title="Pressure Head Distribution", velocity=None):
+    """Plot 2D pressure head distribution with optional velocity quiver plot."""
     fig, ax = plt.subplots(figsize=(12, 5))
     
     if pressure.ndim == 3:
@@ -179,6 +204,37 @@ def plot_pressure_distribution(pressure, title="Pressure Head Distribution"):
     
     cf = ax.contourf(X, Z, P, levels=20, cmap='viridis')
     cs = ax.contour(X, Z, P, levels=10, colors='white', linewidths=0.5, alpha=0.5)
+    
+    # Add velocity quiver plot if provided
+    if velocity is not None:
+        if velocity.ndim == 3:
+            # velocity is (NZ, NY, NX, 3) or (NZ, NX, 3)
+            if velocity.shape[1] == 1:
+                V = velocity[:, 0, :, :]  # (NZ, NX, 3)
+            else:
+                V = velocity[:, :, :]  # (NZ, NX, 3)
+        else:
+            # velocity is (n_cells, 3) - need to reshape
+            V = velocity.reshape((NZ, NX, 3))
+        
+        # Extract x and z components (y component is zero for 2D cross-section)
+        Vx = V[:, :, 0]  # x-component
+        Vz = V[:, :, 2]  # z-component (vertical)
+        
+        # Subsample for quiver plot (every nth point)
+        skip = max(1, NX // 20)  # Show ~20 arrows in x-direction
+        X_sub = X[::skip, ::skip]
+        Z_sub = Z[::skip, ::skip]
+        Vx_sub = Vx[::skip, ::skip]
+        Vz_sub = Vz[::skip, ::skip]
+        
+        # Scale velocity for visualization
+        vel_mag = np.sqrt(Vx_sub**2 + Vz_sub**2)
+        if np.max(vel_mag) > 0:
+            scale = 100.0 * dx / np.max(vel_mag)  # Scale to ~10% of cell size
+            ax.quiver(X_sub, Z_sub, Vx_sub * scale, Vz_sub * scale, 
+                     vel_mag, cmap='plasma', scale=1.0, scale_units='xy',
+                     angles='xy', width=0.003, alpha=0.7)
     
     plt.colorbar(cf, ax=ax, label='Pressure Head (m)')
     
@@ -290,12 +346,23 @@ def main():
     
     # Plot pressure head (check both 'pressure' and 'pressure_head' names)
     pressure_var = 'pressure_head' if 'pressure_head' in data else 'pressure'
+    velocity_data = None
+    if 'velocity' in data:
+        # velocity is already a (n_cells, 3) array from read_vtk_data
+        velocity_flat = data['velocity']
+        if velocity_flat is not None and velocity_flat.size > 0:
+            # Reshape to 3D: (NZ, NY, NX, 3)
+            if velocity_flat.ndim == 2 and velocity_flat.shape[1] == 3:
+                velocity_data = velocity_flat.reshape((NZ, NY, NX, 3))
+                print(f"Velocity range: {np.min(np.linalg.norm(velocity_data, axis=3)):.6e} to {np.max(np.linalg.norm(velocity_data, axis=3)):.6e} m/s")
+    
     if pressure_var in data:
         pressure = reshape_vtk_data(data, pressure_var)
         if pressure is not None and pressure.size > 0:
             print(f"Pressure range: {np.min(pressure):.4f} to {np.max(pressure):.4f} m")
             fig1, ax1 = plot_pressure_distribution(pressure, 
-                f"Henry's Problem - Pressure Head (step {time_step})")
+                f"Henry's Problem - Pressure Head (step {time_step})",
+                velocity=velocity_data)
             fig1.savefig(os.path.join(output_dir, f'henry_pressure_{time_step:06d}.png'), 
                         dpi=150, bbox_inches='tight')
             print(f"Saved: henry_pressure_{time_step:06d}.png")

@@ -453,6 +453,7 @@ private:
         auto h_water_content = Kokkos::create_mirror_view(gw_state_->water_content);
         auto h_velocity_x = Kokkos::create_mirror_view(gw_state_->velocity_x);
         auto h_velocity_y = Kokkos::create_mirror_view(gw_state_->velocity_y);
+        auto h_velocity_z = Kokkos::create_mirror_view(gw_state_->velocity_z);
         auto h_flux_x = Kokkos::create_mirror_view(gw_state_->flux_x);
         auto h_flux_y = Kokkos::create_mirror_view(gw_state_->flux_y);
         auto h_flux_z = Kokkos::create_mirror_view(gw_state_->flux_z);
@@ -462,6 +463,7 @@ private:
         Kokkos::deep_copy(h_water_content, gw_state_->water_content);
         Kokkos::deep_copy(h_velocity_x, gw_state_->velocity_x);
         Kokkos::deep_copy(h_velocity_y, gw_state_->velocity_y);
+        Kokkos::deep_copy(h_velocity_z, gw_state_->velocity_z);
         Kokkos::deep_copy(h_flux_x, gw_state_->flux_x);
         Kokkos::deep_copy(h_flux_y, gw_state_->flux_y);
         Kokkos::deep_copy(h_flux_z, gw_state_->flux_z);
@@ -526,20 +528,10 @@ private:
                 for (Ordinal i = 0; i < nx; ++i) {
                     Ordinal cell_idx = i + j * nx + k * nx * ny;
                     
-                    // Use stored velocity if available (may be computed in solver)
-                    // Otherwise, velocity is very small in groundwater
+                    // Use stored velocity (computed from flux)
                     Scalar vx = h_velocity_x(cell_idx);
                     Scalar vy = h_velocity_y(cell_idx);
-                    
-                    // For z-component, we can use flux_z as an approximation
-                    // In groundwater, velocity_z might not be explicitly stored
-                    // We'll use flux_z directly or set to a small value
-                    Scalar vz = 0.0;
-                    if (h_water_content(cell_idx) > 0.0) {
-                        // Approximate vertical velocity from vertical flux
-                        // This is a simplification; actual implementation may vary
-                        vz = h_flux_z(cell_idx) / (h_water_content(cell_idx) * dx * dy);
-                    }
+                    Scalar vz = h_velocity_z(cell_idx);
                     
                     vtk_file << vx << " " << vy << " " << vz << "\n";
                 }

@@ -221,7 +221,14 @@ public:
     View1D<Scalar> conductivity_sat_z; // Saturated Kz (Ksz)
     
     // --- Flux Variables (3D) ---
+    View1D<Scalar> flux_x;           // Flux in x-direction (qx)
+    View1D<Scalar> flux_y;           // Flux in y-direction (qy)
     View1D<Scalar> flux_z;           // Flux in z-direction (qz)
+    
+    // --- Velocity Variables (3D) ---
+    View1D<Scalar> velocity_x;       // Velocity in x-direction (vx)
+    View1D<Scalar> velocity_y;       // Velocity in y-direction (vy)
+    View1D<Scalar> velocity_z;       // Velocity in z-direction (vz)
     
     // --- Specific Storage ---
     View1D<Scalar> specific_storage; // Specific storage coefficient (ch)
@@ -292,7 +299,13 @@ public:
         conductivity_sat_y = View1D<Scalar>("conductivity_sat_y", num_cells);
         conductivity_sat_z = View1D<Scalar>("conductivity_sat_z", num_cells);
         
+        flux_x = View1D<Scalar>("flux_x", num_cells);
+        flux_y = View1D<Scalar>("flux_y", num_cells);
         flux_z = View1D<Scalar>("flux_z", num_cells);
+        
+        velocity_x = View1D<Scalar>("velocity_x", num_cells);
+        velocity_y = View1D<Scalar>("velocity_y", num_cells);
+        velocity_z = View1D<Scalar>("velocity_z", num_cells);
         
         specific_storage = View1D<Scalar>("specific_storage", num_cells);
         
