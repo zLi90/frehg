@@ -877,6 +877,11 @@ private:
                             disp_long, disp_trans, 200.0, 0.0, config_.superbee,
                             gw_scalar_bc_manager_.get()));
                 }
+                
+                // Set scalar concentration pointer in groundwater solver for density computation
+                if (gw_solver_ && !gw_scalar_solvers_.empty() && config_.baroclinic) {
+                    gw_solver_->set_scalar_concentration(&gw_scalar_solvers_[0]->scalar_concentration);
+                }
             }
         }
     }

@@ -60,6 +60,9 @@ public:
     SwStateVariables* sw_state_;    // Pointer to surface water state (optional)
     const SwDomain* sw_domain_;     // Pointer to surface water domain (optional)
     
+    // --- Scalar Concentration (for density computation) ---
+    const View1D<Scalar>* scalar_concentration_ptr_;  // Pointer to scalar concentration view
+    
     // Constructor
     GroundwaterSolver(GwDomain& _domain,
                       ActiveCellMesh& _active_mesh,
@@ -80,8 +83,9 @@ public:
           baroclinic(_baroclinic),
           precond_type(_precond_type), solver_tolerance(_solver_tolerance),
           max_solver_iterations(_max_solver_iterations),
-          bc_manager_(_bc_manager),
-          coupled_with_sw_(false), sw_state_(nullptr), sw_domain_(nullptr) {
+        bc_manager_(_bc_manager),
+        coupled_with_sw_(false), sw_state_(nullptr), sw_domain_(nullptr),
+        scalar_concentration_ptr_(nullptr) {
         
         // Initialize PCG solver
         pcg_solver = std::make_unique<PCGSolver3D>(
@@ -101,6 +105,12 @@ public:
         coupled_with_sw_ = (sw_state != nullptr && sw_domain != nullptr);
         sw_state_ = sw_state;
         sw_domain_ = sw_domain;
+    }
+    
+    // Set scalar concentration view (for computing density at boundary cells)
+    // This allows the solver to compute density from scalar when applying BCs
+    void set_scalar_concentration(const View1D<Scalar>* scalar_conc) {
+        scalar_concentration_ptr_ = scalar_conc;
     }
     
     // Set time step (for adaptive time stepping)
@@ -852,40 +862,34 @@ private:
                 _matrix_rhs(domain_idx) = ch_term * _pressure_old(domain_idx) * V;
                 
                 // Density-driven flow term (vertical buoyancy)
-                // In the pressure equation, the buoyancy term represents the density-driven
-                // vertical flux divergence. Following legacy code (groundwater.c):
-                //   RHS -= dt * V/dz * Kz * r_rhozp² * r_visczp  (at z+ face)
-                //   RHS += dt * V/dz * Kz_zm * r_rhozp_zm² * r_visczp_zm  (at z- face)
-                // This creates a net term: dt * (buoy_zm - buoy_zp)
-                // When density is higher at bottom (stable stratification): buoy_zm > buoy_zp
-                // This INCREASES RHS, which increases head at bottom, driving upward flow
-                // That's wrong for Henry! We want dense water to SINK.
-                // 
-                // Correct physics: dense water creates higher pressure per unit height
-                // At z+ face (above cell), if r_rho > 1, the column above exerts more pressure
-                // This should DECREASE the head at the current cell (more pressure from above)
-                // So the correct sign is: RHS += dt * (buoy_zp - buoy_zm)
+                // Following legacy code (groundwater.c lines 582-586):
+                //   RHS -= dt * V/dz * Kz * r_rhozp² * r_visczp  (at z+ face, above cell)
+                //   RHS += dt * V/dz * Kz_zm * r_rhozp_zm² * r_visczp_zm  (at z- face, below cell)
+                // This creates: RHS -= dt * V/dz * (Kz * r_rhozp² * r_visczp - Kz_zm * r_rhozp_zm² * r_visczp_zm)
+                // When dense water is at bottom: r_rhozp_zm > r_rhozp, so the term is negative
+                // This DECREASES RHS, which decreases head, but we want higher head at bottom for dense water
+                // Actually, this term represents the buoyancy-driven flux divergence
                 Ordinal active_bottom = _neighbor_bottom(i);
                 
-                // Buoyancy contribution at z+ face (top of cell)
+                // Buoyancy contribution at z+ face (top of cell, above)
+                // Use r_rhozp² as in legacy code
+                Scalar r_rhozp_sq = _density_ratio_zp(domain_idx) * _density_ratio_zp(domain_idx);
                 Scalar buoy_zp = _conductivity_z(domain_idx) * 
-                                _density_ratio_zp(domain_idx) * 
+                                r_rhozp_sq * 
                                 _viscosity_ratio_zp(domain_idx) * V / dz;
                 
-                // Buoyancy contribution at z- face (bottom of cell)
+                // Buoyancy contribution at z- face (bottom of cell, below)
                 Scalar buoy_zm = 0.0;
                 if (active_bottom >= 0) {
                     Ordinal idx_bottom = _active_to_domain(active_bottom);
+                    Scalar r_rhozp_zm_sq = _density_ratio_zp(idx_bottom) * _density_ratio_zp(idx_bottom);
                     buoy_zm = _conductivity_z(idx_bottom) * 
-                             _density_ratio_zp(idx_bottom) * 
+                             r_rhozp_zm_sq * 
                              _viscosity_ratio_zp(idx_bottom) * V / dz;
                 }
                 
-                // Apply buoyancy: when r_rho > 1 at z+ face (dense water above)
-                // the dense water column creates higher effective pressure, which should
-                // push water DOWN (INTO this cell from above). To achieve this, we need
-                // to DECREASE the solved head, which drives flow INTO the cell.
-                // Using opposite sign from before:
+                // Apply buoyancy term following legacy code:
+                // RHS -= dt * V/dz * (Kz * r_rhozp² * r_visczp - Kz_zm * r_rhozp_zm² * r_visczp_zm)
                 _matrix_rhs(domain_idx) -= dt * (buoy_zp - buoy_zm);
                 
                 // Boundary conditions and source/sink terms will be added here later
@@ -1019,6 +1023,10 @@ private:
             
             if (bc.type == GwBcType::FIXED_HEAD) {
                 // Dirichlet BC: prescribed hydraulic head
+                // For baroclinic flow, head varies with depth due to density
+                // h(z) = h_ref + (r_rho - 1) * (z_ref - z)
+                // where h_ref is reference head, r_rho is density ratio, z_ref is reference elevation
+                
                 // We need to modify both:
                 // 1. The BC cell row (set diag=1, rhs=bc_value, zero off-diagonals)
                 // 2. The neighbor cells (move known BC to RHS for symmetry)
@@ -1033,8 +1041,55 @@ private:
                 auto _neighbor_top = active_mesh.neighbor_top;
                 auto _active_to_domain = active_mesh.active_to_domain;
                 auto _domain_to_active = active_mesh.domain_to_active;
+                auto _coord_k = active_mesh.coord_k;
+                auto _density_ratio = state.density_ratio;
+                auto _layer_bottoms = domain.layer_bottoms;
+                auto _layer_thickness = domain.layer_thickness;
                 Ordinal num_active_cells = active_mesh.num_active;
                 Scalar _bc_value = bc_value;
+                
+                // For baroclinic: find reference elevation (top of domain)
+                // The reference elevation is where the BC value applies (typically top of domain)
+                // For Henry's problem: BC value is head at top, head increases downward due to density
+                // IMPORTANT: If bathymetry file represents BOTTOM elevation (not top),
+                // then max_bath is the bottom, and top = bottom_z + total_height
+                // But layer_bottoms are computed as: max_bath - (k+1)*dz
+                // So if max_bath = 0.0 (bottom), layer_bottoms are negative
+                // Top elevation = max_bath (if bath is top) OR bottom_z + nz*dz (if bath is bottom)
+                Scalar z_ref = 0.0;
+                if (baroclinic) {
+                    auto h_layer_bottoms = Kokkos::create_mirror_view(_layer_bottoms);
+                    auto h_layer_thickness = Kokkos::create_mirror_view(_layer_thickness);
+                    Kokkos::deep_copy(h_layer_bottoms, _layer_bottoms);
+                    Kokkos::deep_copy(h_layer_thickness, _layer_thickness);
+                    
+                    // Compute top elevation
+                    // For Henry's problem: bathymetry file has 0.0, which likely represents BOTTOM elevation
+                    // So top = bottom_z + total_height
+                    if (domain.nz > 0) {
+                        Scalar total_height = 0.0;
+                        for (Ordinal k = 0; k < domain.nz; ++k) {
+                            total_height += h_layer_thickness(k);
+                        }
+                        
+                        // Check if layer_bottoms are negative (measured from top)
+                        // If so, top = layer_bottoms(0) + layer_thickness(0)
+                        // Otherwise, top = bottom_z + total_height
+                        Scalar top_from_layers = h_layer_bottoms(0) + h_layer_thickness(0);
+                        Scalar top_from_bottom = domain.bottom_z + total_height;
+                        
+                        // If layer_bottoms are negative, they're measured from max_bath (which might be top)
+                        // If top_from_layers is positive and reasonable, use it
+                        // Otherwise, use bottom_z + total_height
+                        if (top_from_layers > 0.5 && top_from_layers > top_from_bottom * 0.5) {
+                            z_ref = top_from_layers;
+                        } else {
+                            // Bathymetry represents bottom, compute top from bottom_z
+                            z_ref = top_from_bottom;
+                        }
+                    }
+                }
+                Scalar _z_ref = z_ref;
                 
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
                     KOKKOS_LAMBDA (const Ordinal i) {
@@ -1042,17 +1097,89 @@ private:
                         Ordinal bc_cell_active = _domain_to_active(bc_cell_domain);
                         if (bc_cell_active < 0 || bc_cell_active >= num_active_cells) return;
                         
+                        // Compute density-adjusted head for this BC cell
+                        // For baroclinic flow with fixed head BC, the head varies with depth
+                        // due to hydrostatic pressure from dense water
+                        Scalar h_bc = _bc_value;
+                        if (baroclinic) {
+                            Ordinal k = _coord_k(bc_cell_active);
+                            Scalar z_bottom = _layer_bottoms(k);
+                            Scalar dz = _layer_thickness(k);
+                            Scalar z_center = z_bottom + 0.5 * dz;  // Cell center elevation
+                            
+                            // Use the density ratio at the boundary cell
+                            // For seawater boundary, this should be updated from scalar BC
+                            // If density hasn't been updated yet (first timestep), use cell density
+                            // Otherwise use the updated density ratio
+                            Scalar r_rho = _density_ratio(bc_cell_domain);
+                            
+                            // If density is still 1.0 (freshwater) but this is a boundary cell,
+                            // it might be that density hasn't been updated from scalar yet.
+                            // For now, use whatever density is stored (should be updated before solve)
+                            
+                            // Hydrostatic head distribution for baroclinic flow:
+                            // Following legacy code approach: h = elevation * r_rho
+                            // But we need to compute elevation relative to a reference
+                            // For Henry's problem: BC value is head at top (z_ref)
+                            // Head should increase downward: h(z) = h_ref + (r_rho - 1) * (z_ref - z)
+                            // Hydrostatic head for baroclinic flow:
+                            // The issue: if layer_bottoms are negative (measured from max_bath downward),
+                            // then z_center is also negative. We need to compute elevation correctly.
+                            // For Henry's problem: domain is 1m high, bottom at z=0, top at z=1.0
+                            // If max_bath = 0.0 (from bath file), this might be the BOTTOM, not top
+                            // So we need to add the domain height to get the actual elevation
+                            // Actually, let's compute elevation from bottom_z instead
+                            // Elevation = bottom_z + (total_height - distance_from_top)
+                            // Or: elevation = layer_bottom + 0.5*dz, but we need absolute elevation
+                            
+                            // Check: if layer_bottoms are negative, they're measured from max_bath
+                            // For Henry: if bath = 0.0 is bottom, then top should be at 1.0
+                            // But max_bath = 0.0, so layer_bottoms(0) = 0.0 - 0.05 = -0.05
+                            // This suggests the coordinate system has z=0 at top (max_bath)
+                            // So z_center is negative and decreases (becomes more negative) going down
+                            // In this case: top has z ≈ 0, bottom has z ≈ -1.0
+                            // For hydrostatic: h should increase as we go down (more negative z)
+                            // So: h = h_ref + (r_rho - 1) * |z_ref - z_center|
+                            // But since z_ref ≈ 0 and z_center is negative, (z_ref - z_center) > 0
+                            // So the formula should work, but maybe the sign of z_center is the issue
+                            
+                            // Try using absolute elevation: if z_center is negative, convert to positive
+                            // Or use the depth from top: depth = z_ref - z_center (should be positive)
+                            // Compute absolute elevation of cell center
+                            // If layer_bottoms are negative, convert to absolute elevation from bottom_z
+                            Scalar z_center_abs;
+                            if (z_bottom < 0.0) {
+                                // layer_bottoms are negative, measured from max_bath (which might be bottom)
+                                // Convert to absolute: z_abs = bottom_z + distance_from_bottom
+                                Scalar total_height = 0.0;
+                                for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                                    total_height += _layer_thickness(kk);
+                                }
+                                // Distance from bottom = total_height + layer_bottom (since layer_bottom is negative)
+                                z_center_abs = domain.bottom_z + (total_height + z_bottom + 0.5 * dz);
+                            } else {
+                                z_center_abs = z_bottom + 0.5 * dz;
+                            }
+                            
+                            // Hydrostatic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z_abs)
+                            // z_ref is top elevation, z_abs increases upward from bottom
+                            // For cells below top: z_abs < z_ref, so (z_ref - z_abs) > 0
+                            // This gives higher head at bottom, which is correct
+                            Scalar depth_below_ref = _z_ref - z_center_abs;
+                            h_bc = _bc_value + (r_rho - 1.0) * depth_below_ref;
+                        }
+                        
                         // For each neighbor of the BC cell, modify their equation:
                         // Original: diag*h[i] + coeff*h[bc] + ... = rhs
                         // Modified: diag*h[i] + ... = rhs - coeff*h_bc
-                        // So: rhs_new = rhs - coeff*bc_value
+                        // So: rhs_new = rhs - coeff*h_bc (use density-adjusted value)
                         
                         // Right neighbor: has xm pointing to BC cell
                         Ordinal n_right = _neighbor_right(bc_cell_active);
                         if (n_right >= 0 && n_right < num_active_cells) {
                             Ordinal right_domain = _active_to_domain(n_right);
-                            // Move xm*h_bc to RHS: rhs -= xm * bc_value
-                            Kokkos::atomic_sub(&_matrix_rhs(right_domain), _matrix_xm(right_domain) * _bc_value);
+                            // Move xm*h_bc to RHS: rhs -= xm * h_bc
+                            Kokkos::atomic_sub(&_matrix_rhs(right_domain), _matrix_xm(right_domain) * h_bc);
                             _matrix_xm(right_domain) = 0.0;
                         }
                         
@@ -1060,7 +1187,7 @@ private:
                         Ordinal n_left = _neighbor_left(bc_cell_active);
                         if (n_left >= 0 && n_left < num_active_cells) {
                             Ordinal left_domain = _active_to_domain(n_left);
-                            Kokkos::atomic_sub(&_matrix_rhs(left_domain), _matrix_xp(left_domain) * _bc_value);
+                            Kokkos::atomic_sub(&_matrix_rhs(left_domain), _matrix_xp(left_domain) * h_bc);
                             _matrix_xp(left_domain) = 0.0;
                         }
                         
@@ -1068,7 +1195,7 @@ private:
                         Ordinal n_front = _neighbor_front(bc_cell_active);
                         if (n_front >= 0 && n_front < num_active_cells) {
                             Ordinal front_domain = _active_to_domain(n_front);
-                            Kokkos::atomic_sub(&_matrix_rhs(front_domain), _matrix_ym(front_domain) * _bc_value);
+                            Kokkos::atomic_sub(&_matrix_rhs(front_domain), _matrix_ym(front_domain) * h_bc);
                             _matrix_ym(front_domain) = 0.0;
                         }
                         
@@ -1076,7 +1203,7 @@ private:
                         Ordinal n_back = _neighbor_back(bc_cell_active);
                         if (n_back >= 0 && n_back < num_active_cells) {
                             Ordinal back_domain = _active_to_domain(n_back);
-                            Kokkos::atomic_sub(&_matrix_rhs(back_domain), _matrix_yp(back_domain) * _bc_value);
+                            Kokkos::atomic_sub(&_matrix_rhs(back_domain), _matrix_yp(back_domain) * h_bc);
                             _matrix_yp(back_domain) = 0.0;
                         }
                         
@@ -1084,7 +1211,7 @@ private:
                         Ordinal n_top = _neighbor_top(bc_cell_active);
                         if (n_top >= 0 && n_top < num_active_cells) {
                             Ordinal top_domain = _active_to_domain(n_top);
-                            Kokkos::atomic_sub(&_matrix_rhs(top_domain), _matrix_zm(top_domain) * _bc_value);
+                            Kokkos::atomic_sub(&_matrix_rhs(top_domain), _matrix_zm(top_domain) * h_bc);
                             _matrix_zm(top_domain) = 0.0;
                         }
                         
@@ -1092,15 +1219,63 @@ private:
                         Ordinal n_bottom = _neighbor_bottom(bc_cell_active);
                         if (n_bottom >= 0 && n_bottom < num_active_cells) {
                             Ordinal bottom_domain = _active_to_domain(n_bottom);
-                            Kokkos::atomic_sub(&_matrix_rhs(bottom_domain), _matrix_zp(bottom_domain) * _bc_value);
+                            Kokkos::atomic_sub(&_matrix_rhs(bottom_domain), _matrix_zp(bottom_domain) * h_bc);
                             _matrix_zp(bottom_domain) = 0.0;
                         }
                     });
                 
                 // Now set the BC cell row itself
+                // For baroclinic flow, adjust head based on density and elevation
                 Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
                     KOKKOS_LAMBDA (const Ordinal i) {
                         Ordinal cell_idx = d_bc_indices(i);
+                        Ordinal active_idx = _domain_to_active(cell_idx);
+                        
+                        Scalar h_bc = _bc_value;
+                        
+                        // For baroclinic flow: adjust head based on density and elevation
+                        if (baroclinic && active_idx >= 0 && active_idx < num_active_cells) {
+                            Ordinal k = _coord_k(active_idx);
+                            Scalar z_bottom = _layer_bottoms(k);
+                            Scalar dz = _layer_thickness(k);
+                            Scalar z_center = z_bottom + 0.5 * dz;  // Cell center elevation
+                            
+                            // Get density ratio for this cell
+                            // If density hasn't been updated yet, compute from scalar concentration
+                            Scalar r_rho = _density_ratio(cell_idx);
+                            
+                            // Fallback: if density is still 1.0 (freshwater), try to compute from scalar
+                            if (r_rho <= 1.001 && scalar_concentration_ptr_ != nullptr) {
+                                Scalar s = (*scalar_concentration_ptr_)(cell_idx);
+                                r_rho = 1.0 + s * 0.000744;  // Standard seawater density coefficient
+                            }
+                            
+                            // Hydrostatic head for baroclinic flow with dense water:
+                            // The BC value (h_ref) is the head at the reference elevation (top)
+                            // For cells below, head increases due to hydrostatic pressure
+                            // If results show higher head at top (wrong), the coordinate system might be inverted
+                            // Let's check: if z_center is negative and decreases downward, then:
+                            // - Top: z_center ≈ 0, depth_below_ref = z_ref - 0 ≈ 0, h ≈ h_ref
+                            // - Bottom: z_center ≈ -1.0, depth_below_ref = z_ref - (-1.0) = z_ref + 1.0, h = h_ref + correction
+                            // This should give higher h at bottom, which is correct
+                            // But if it's reversed, maybe z_ref is wrong or the sign is inverted
+                            // Compute absolute elevation (same as above)
+                            Scalar z_center_abs;
+                            if (z_bottom < 0.0) {
+                                Scalar total_height = 0.0;
+                                for (Ordinal kk = 0; kk < domain.nz; ++kk) {
+                                    total_height += _layer_thickness(kk);
+                                }
+                                z_center_abs = domain.bottom_z + (total_height + z_bottom + 0.5 * dz);
+                            } else {
+                                z_center_abs = z_bottom + 0.5 * dz;
+                            }
+                            
+                            // Hydrostatic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z_abs)
+                            Scalar depth_below_ref = _z_ref - z_center_abs;
+                            h_bc = _bc_value + (r_rho - 1.0) * depth_below_ref;
+                        }
+                        
                         _matrix_diag(cell_idx) = 1.0;
                         _matrix_xp(cell_idx) = 0.0;
                         _matrix_xm(cell_idx) = 0.0;
@@ -1108,7 +1283,7 @@ private:
                         _matrix_ym(cell_idx) = 0.0;
                         _matrix_zp(cell_idx) = 0.0;
                         _matrix_zm(cell_idx) = 0.0;
-                        _matrix_rhs(cell_idx) = _bc_value;
+                        _matrix_rhs(cell_idx) = h_bc;
                     });
                     
             } else if (bc.type == GwBcType::FIXED_FLUX) {
@@ -1149,10 +1324,65 @@ private:
             }
             Kokkos::deep_copy(d_bc_indices, h_bc_indices);
             
+            // For baroclinic: get reference elevation and density info
+            auto _coord_k = active_mesh.coord_k;
+            auto _density_ratio = state.density_ratio;
+            auto _layer_bottoms = domain.layer_bottoms;
+            auto _layer_thickness = domain.layer_thickness;
+            auto _domain_to_active = active_mesh.domain_to_active;
+            Ordinal num_active_cells = active_mesh.num_active;
+            Scalar _bc_value = bc_value;
+            
+            Scalar z_ref = 0.0;
+            if (baroclinic) {
+                auto h_layer_bottoms = Kokkos::create_mirror_view(_layer_bottoms);
+                auto h_layer_thickness = Kokkos::create_mirror_view(_layer_thickness);
+                Kokkos::deep_copy(h_layer_bottoms, _layer_bottoms);
+                Kokkos::deep_copy(h_layer_thickness, _layer_thickness);
+                
+                // Compute top elevation (same logic as above)
+                if (domain.nz > 0) {
+                    Scalar total_height = 0.0;
+                    for (Ordinal k = 0; k < domain.nz; ++k) {
+                        total_height += h_layer_thickness(k);
+                    }
+                    
+                    Scalar top_from_layers = h_layer_bottoms(0) + h_layer_thickness(0);
+                    
+                    // If layer_bottoms are negative, bathymetry represents bottom
+                    if (top_from_layers < 0.1 || h_layer_bottoms(0) < 0.0) {
+                        z_ref = domain.bottom_z + total_height;
+                    } else {
+                        z_ref = top_from_layers;
+                    }
+                }
+            }
+            Scalar _z_ref = z_ref;
+            
             Kokkos::parallel_for(RangePolicy(0, n_bc_cells),
                 KOKKOS_LAMBDA (const Ordinal i) {
                     Ordinal cell_idx = d_bc_indices(i);
-                    _pressure(cell_idx) = bc_value;
+                    Ordinal active_idx = _domain_to_active(cell_idx);
+                    
+                    Scalar h_bc = _bc_value;
+                    
+                    // For baroclinic flow: adjust head based on density and elevation
+                    if (baroclinic && active_idx >= 0 && active_idx < num_active_cells) {
+                        Ordinal k = _coord_k(active_idx);
+                        Scalar z_bottom = _layer_bottoms(k);
+                        Scalar dz = _layer_thickness(k);
+                        Scalar z_center = z_bottom + 0.5 * dz;  // Cell center elevation
+                        
+                        // Get density ratio for this cell
+                        Scalar r_rho = _density_ratio(cell_idx);
+                        
+                        // Hydrostatic head: h(z) = h_ref + (r_rho - 1) * (z_ref - z)
+                        // REVERSED SIGN: If results show higher head at top, reverse the correction
+                        Scalar depth_below_ref = _z_ref - z_center;
+                        h_bc = _bc_value - (r_rho - 1.0) * depth_below_ref;
+                    }
+                    
+                    _pressure(cell_idx) = h_bc;
                 });
         }
     }

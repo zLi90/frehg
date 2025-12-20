@@ -289,7 +289,24 @@ public:
                 if (solver) solver->solve(current_time);
             }
             
-            // 2. Solve Groundwater (if enabled)
+            // 2. Enforce scalar BCs and update density/viscosity BEFORE groundwater solve
+            // This ensures boundary conditions use correct density
+            if (sim_groundwater_ && baroclinic_ && n_scalar_ > 0 && initializer_) {
+                const auto& gw_solvers = initializer_->get_gw_scalar_solvers();
+                if (!gw_solvers.empty() && gw_solvers[0]) {
+                    // First, enforce scalar BCs to ensure boundary cells have correct salinity
+                    gw_solvers[0]->enforce_boundary_conditions(current_time);
+                    
+                    // Then update density from scalar concentration (now with BCs applied)
+                    auto* gw_solver = initializer_->get_gw_solver();
+                    if (gw_solver) {
+                        gw_solver->update_density_viscosity_from_scalar(
+                            gw_solvers[0]->scalar_concentration, 0.000744, 0.0022);
+                    }
+                }
+            }
+            
+            // 3. Solve Groundwater (if enabled)
             if (sim_groundwater_ && initializer_) {
                 auto* solver = initializer_->get_gw_solver();
                 auto* sw_solver = (sim_shallowwater_) ? initializer_->get_sw_solver() : nullptr;
@@ -340,7 +357,7 @@ public:
                 if (solver) solver->update_velocity();
             }
             
-            // 5. Solve Scalar Transport (if enabled)
+            // 6. Solve Scalar Transport (if enabled)
             if (n_scalar_ > 0 && initializer_) {
                 // Surface water scalar transport
                 if (sim_shallowwater_) {
@@ -400,7 +417,7 @@ public:
                 }
             }
             
-            // 5. Write output at specified intervals
+            // 7. Write output at specified intervals
             if (output_writer_) {
                 // Write spatial fields if it's time
                 if (output_writer_->should_write_spatial(current_time, step)) {
