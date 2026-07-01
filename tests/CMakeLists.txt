@@ -1,0 +1,17 @@
+# Frehg2 test tree. Active suites are added as modules acquire content (mirrors src/).
+# Placeholder subdirectories carry a CMakeLists.txt now (P1.2.3).
+add_subdirectory(core)
+add_subdirectory(linear)
+add_subdirectory(io)
+add_subdirectory(swe)
+add_subdirectory(re)
+add_subdirectory(soil)
+add_subdirectory(ic)
+add_subdirectory(monitoring)
+add_subdirectory(solute)
+add_subdirectory(coupling)
+add_subdirectory(bc)
+add_subdirectory(integration)
+add_subdirectory(validation)
+add_subdirectory(perf)
+add_subdirectory(gpu)

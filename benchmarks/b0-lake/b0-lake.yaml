@@ -1,0 +1,64 @@
+schema_version: '2.0'
+simulation:
+  id: b0-lake
+  title: Lake at Rest Well-Balanced Test
+  mode: surface_water
+domain:
+  nx: 20
+  ny: 20
+  nz: 1
+  dx: 1.0
+  dy: 1.0
+  dz: 1.0
+  dz_incre: 1.0
+  botz: 0.0
+  follow_terrain: false
+  mpi:
+    enabled: false
+    nx: 1
+    ny: 1
+  bathymetry:
+    source: analytical   # z = 0.5*exp(-((x-10)^2 + (y-10)^2)/10)
+    from_file: false
+time:
+  dt: 1.0
+  t_end: 1000.0
+  max_steps: 1000
+  output_interval: 100.0
+  dt_checkpoint: 0.0
+  max_checkpoints: 2
+modules:
+  surface_water: true
+  groundwater: false
+  solute: false
+surface_water:
+  solver: semi_implicit
+  gravity: 9.81
+  manning: 0.02
+  min_depth: 1.0e-8
+  h_diffusion_ref: 0.1
+  waterfall_depth: 1.0e-8
+  viscosity:
+    x: 0.0
+    y: 0.0
+initial_conditions:
+  surface_water:
+    eta: 1.0
+    eta_from_file: false
+    uv_from_file: false
+boundary_conditions:
+  surface:
+  - type: fixed_water_level
+    value: 1.0
+    selector:
+      type: domain_edge
+  groundwater: []
+  solute: []
+output:
+  format: hdf5
+  filename: out/b0-lake.h5
+validation:
+  reference_type: analytical
+  well_balanced: true
+  max_velocity: 1.0e-10
+  max_eta_deviation: 1.0e-10

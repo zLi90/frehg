@@ -1,0 +1,98 @@
+# P19 Task 19.3.5 — unified validation in CI. Builds Frehg2 and runs the three-tier validation
+# harness on every push / PR. A FAIL tier (crash, non-finite state, broken trend, mass residual
+# over threshold, or b1-sw legacy L2 over the loose bound) fails the job and blocks the merge.
+# A REVIEW tier is surfaced as a warning the maintainer must acknowledge (the b3-b6 review
+# benchmarks normally land in REVIEW by design — see docs/benchmarks/).
+#
+# macOS runner: OpenMP backend, runs all 6 benchmarks + b0-lake. A Linux+CUDA runner (gpu-labeled
+# benchmarks) is added once a CUDA runner is available (none of b1-b6 are gpu-only today).
+#
+# P22 final CI gate: lint (clang-format) -> build -> full test suite (unit + integration; gpu
+# DISABLED on non-CUDA) -> unified validation (P19) -> perf smoke at small scale (P21, informational).
+
+name: validation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: clang-format check (.clang-format is authoritative)
+        run: |
+          files=$(find src include tests -name '*.hpp' -o -name '*.cpp')
+          clang-format --dry-run --Werror $files
+
+  validation-openmp:
+    name: Unified validation (OpenMP)
+    runs-on: ubuntu-latest
+    env:
+      LOCAL_PREFIX: ${{ github.workspace }}/local
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps for the harness
+        run: python -m pip install --upgrade pip h5py pyyaml
+
+      # NOTE: PETSc/Kokkos/HDF5/yaml-cpp must be discoverable under LOCAL_PREFIX (or via the
+      # system package manager). On the maintainer's machine these live in /Users/zhili/Codes/local;
+      # in CI provide them via a cache/setup step or a prebuilt container image. This job assumes
+      # they are installed; adjust the configure line to your runner's prefix.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${LOCAL_PREFIX}"
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Unit + integration tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Unified three-tier validation (FAIL blocks the merge)
+        # The harness exits non-zero only on a FAIL tier; its exit code becomes the step's.
+        run: python tools/run_validation.py --bin build/frehg2 --out build/validation
+
+      - name: Well-balanced lake-at-rest (separate 1e-12 check)
+        run: python tools/run_b0_lake.py --bin build/frehg2 --out build/validation/b0
+
+      - name: Perf smoke at small scale (P21; informational, not blocking)
+        # Full sweep is manual; CI runs only the --quick small-scale sweep.
+        run: python tools/perf_report.py --quick --bin build/frehg2 --out build/perf
+
+      - name: Annotate REVIEW tiers
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          p = "build/validation/validation_report.json"
+          if not os.path.exists(p):
+              print("no report"); raise SystemExit(0)
+          d = json.load(open(p))
+          for b in d.get("benchmarks", []):
+              if b["tier"] == "REVIEW":
+                  print(f"::warning title=Validation REVIEW::{b['id']} is REVIEW "
+                        f"(metric={b['metric']}) — maintainer sign-off required")
+          print(f"Overall: {d.get('overall')}")
+          PY
+
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report
+          path: |
+            build/validation/validation_report.md
+            build/validation/validation_report.json

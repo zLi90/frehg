@@ -1,0 +1,72 @@
+# b4-govindaraju — overland-flow plane (Govindaraju), review-tier Frehg2 port (P18).
+#
+# Source: SERGHEI test suite (legacy/benchmarks/b4-govindaraju). The legacy case is a
+# rainfall-driven overland-flow plane (200 x 10 cells, sloping DEM) with Chezy friction and a
+# polygon outflow at the downslope end; reference = ReferenceData/outflow.txt (outlet hydrograph).
+#
+# REVIEW-TIER APPROXIMATIONS (see docs/benchmarks/b4-govindaraju.md):
+#   * Frehg2 SWE uses MANNING friction; the SERGHEI case uses Chezy. We use a representative
+#     Manning n and gate on hydrograph TREND (rise/peak/recession + mass balance), not strict L2
+#     (the registry gates this case `review`, tolerance: null).
+#   * The outlet is modelled with a polygon `bc_critical` (critical-depth weir) over the last
+#     downslope column.
+schema_version: "2.0"
+simulation:
+  id: b4-govindaraju
+  title: Govindaraju overland-flow plane (SERGHEI; review-tier Manning port)
+  mode: surface_water
+domain:
+  nx: 200
+  ny: 10
+  nz: 1
+  dx: 0.109725
+  dy: 0.109725
+  dz: 0.1
+  botz: 0.0
+  x0: 0.0
+  y0: 0.0
+  bathymetry:
+    from_file: true
+    file: dem.asc
+    format: raster
+time:
+  dt: 0.05
+  t_end: 4800.0
+  max_steps: 0
+  output_interval: 120.0
+modules:
+  surface_water: true
+  groundwater: false
+  solute: false
+surface_water:
+  gravity: 9.81
+  manning: 0.03
+  # min_depth below the per-step rain increment so accumulation is not clamped to dry on this
+  # finely-celled plane (dx ~ 0.11 m, small dt). Review-tier overland flow.
+  min_depth: 1.0e-8
+  viscosity: {x: 0.0, y: 0.0}
+  h_diffusion_ref: 0.1
+  waterfall_depth: 1.0e-8
+initial_conditions:
+  surface_water:
+    eta: -0.01
+sources:
+  surface:
+    rainfall:
+      from_file: true
+      file: rain
+    evaporation:
+      rate: 0.0
+boundaries:
+  - name: outlet
+    type: bc_critical
+    vertices: [[21.845, -0.01], [21.945, -0.01], [21.945, 2.0], [21.845, 2.0]]
+output:
+  format: hdf5
+  filename: out/b4-govindaraju.h5
+  io_mode: serial_gather
+  variables: [water_depth, eta, uu, vv]
+validation:
+  reference_type: text_timeseries
+  reference_path: ../../legacy/benchmarks/b4-govindaraju/ReferenceData/outflow.txt
+  gate: review

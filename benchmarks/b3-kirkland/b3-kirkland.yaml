@@ -1,0 +1,130 @@
+# b3-kirkland — 2-D (x-z) layered-soil infiltration (Kirkland et al. 1992), SERGHEI suite.
+#
+# FULL 2-D port (P23+). The two original blockers are resolved:
+#   * 3-D Richards corrector (lateral x Darcy flux): groundwater.full_3d: true
+#   * fully heterogeneous per-cell soil (x AND z layering): soil.map.layers (30 z-layers)
+# The third piece — a partial-width top fixed-flux infiltration BC (legacy bctype_GW[5]==2 /
+# qtop, applied over the central polygontop) — is implemented as groundwater.recharge.
+#
+# Scheme: the sanctioned PCA predictor-corrector (iter_solve==0, use_corrector==1). The legacy
+# SERGHEI run used Picard (gw_scheme 2); Frehg2 does NOT implement Picard/Newton (user policy).
+# The reference is the digitized Kirkland h=0 / h=-400 head contours (see makeplot.py ref0/ref400);
+# the comparison lives in tests/integration/test_b3_kirkland.cpp.
+schema_version: "2.0"
+simulation:
+  id: b3-kirkland
+  title: Kirkland 2-D layered infiltration (SERGHEI; full 3-D RE + heterogeneous soil)
+  mode: groundwater
+domain:
+  nx: 50
+  ny: 1
+  nz: 30
+  dx: 0.1
+  dy: 0.1
+  dz: 0.1
+  dz_incre: 1.0
+  botz: -3.0
+  x0: 0.0
+  y0: 0.0
+  follow_terrain: false
+time:
+  dt: 0.01
+  t_end: 86400.0
+  max_steps: 0
+  output_interval: 7200.0
+modules:
+  surface_water: false
+  groundwater: true
+  solute: false
+groundwater:
+  solver: pca
+  full_3d: true
+  adaptive_dt: true
+  use_corrector: true
+  post_allocate: false
+  use_vg: true
+  use_mvg: false
+  air_entry_value: 0.0
+  dt_max: 10.0
+  dt_min: 0.01
+  co_max: 2.0
+  specific_storage: 1.0e-5
+  # z- (top) face = fixed flux (legacy bctype_GW[5]==2). All other faces no-flux (closed box).
+  bc_type_gw: [0, 0, 0, 0, 0, 2]
+  recharge:
+    # Legacy gwbc.input: fixedflux, direction 6 (top), bcvals -5.787e-6 m/s (downward) over
+    # polygontop.input (x in [0.99, 4.01], the central 30 columns). Negative = infiltration.
+    rate: -5.787e-6
+    polygon:
+      - [0.99, -0.01]
+      - [0.99, 0.11]
+      - [4.01, 0.11]
+      - [4.01, -0.01]
+soil:
+  # Class id == soilID.input value. Class 0 = permeable lens; class 1 = less permeable matrix
+  # (legacy vg.input: alpha 2.8;1.04, n 2.239;1.395, Ks 6.26e-5;1.52e-6, Phi 0.3658;0.4686,
+  # ThetaR 0.029;0.106). Isotropic Ks (lateral x needed for the 2-D spreading).
+  types:
+    - id: 0
+      theta_s: 0.3658
+      theta_r: 0.029
+      vg: {alpha: 2.8, n: 2.239}
+      k_sat: {x: 6.26e-5, y: 6.26e-5, z: 6.26e-5}
+    - id: 1
+      theta_s: 0.4686
+      theta_r: 0.106
+      vg: {alpha: 1.04, n: 1.395}
+      k_sat: {x: 1.52e-6, y: 1.52e-6, z: 1.52e-6}
+  map:
+    from_file: true
+    format: list
+    # One class raster per vertical layer, top (k=0) to bottom (k=nz-1); generated from the
+    # legacy soilID.input by gen_soil_layers.py.
+    layers:
+      - soil_layers/layer_00.txt
+      - soil_layers/layer_01.txt
+      - soil_layers/layer_02.txt
+      - soil_layers/layer_03.txt
+      - soil_layers/layer_04.txt
+      - soil_layers/layer_05.txt
+      - soil_layers/layer_06.txt
+      - soil_layers/layer_07.txt
+      - soil_layers/layer_08.txt
+      - soil_layers/layer_09.txt
+      - soil_layers/layer_10.txt
+      - soil_layers/layer_11.txt
+      - soil_layers/layer_12.txt
+      - soil_layers/layer_13.txt
+      - soil_layers/layer_14.txt
+      - soil_layers/layer_15.txt
+      - soil_layers/layer_16.txt
+      - soil_layers/layer_17.txt
+      - soil_layers/layer_18.txt
+      - soil_layers/layer_19.txt
+      - soil_layers/layer_20.txt
+      - soil_layers/layer_21.txt
+      - soil_layers/layer_22.txt
+      - soil_layers/layer_23.txt
+      - soil_layers/layer_24.txt
+      - soil_layers/layer_25.txt
+      - soil_layers/layer_26.txt
+      - soil_layers/layer_27.txt
+      - soil_layers/layer_28.txt
+      - soil_layers/layer_29.txt
+initial_conditions:
+  groundwater:
+    # Uniform initial pressure head -500 m (legacy head.input: all -500, initialMode 2 = file-h).
+    # A formula IC dispatches as a HEAD field (a bare scalar would be applied as water content).
+    h:
+      type: formula
+      formula: "-500"
+output:
+  format: hdf5
+  filename: out/b3-kirkland.h5
+  io_mode: serial_gather
+  variables: [head, water_content]
+validation:
+  reference_type: script_embedded_values
+  reference_path: ../../legacy/benchmarks/b3-kirkland/makeplot.py
+  gate: review
+  status: full_2d_pca

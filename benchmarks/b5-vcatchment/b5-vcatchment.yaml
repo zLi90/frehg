@@ -1,0 +1,71 @@
+# b5-vcatchment — V-catchment overland flow (Kollet et al.), review-tier Frehg2 port (P18).
+#
+# Source: SERGHEI test suite (legacy/benchmarks/b5-vcatchment). Real V-catchment DEM (101 x 55),
+# rainfall, polygon outlet BC. The legacy references are an INTER-MODEL comparison
+# (CATHY / HGS / ParFlow / cast3m), not a single legacy file (registry gate: review).
+#
+# REVIEW-TIER APPROXIMATIONS (see docs/benchmarks/b5-vcatchment.md):
+#   * Surface-water (overland-flow) only. The legacy case is a surface+subsurface coupling test;
+#     the subsurface leg is deferred (Frehg2 RE is vertical-only, no lateral coupling on a 2-D
+#     catchment yet). The V-catchment is runoff-dominated, so SW-only captures the hydrograph
+#     shape for a review-tier check.
+#   * Uniform Manning n (the legacy per-cell roughness file is not applied; single scalar here).
+#   * Outlet modelled with a polygon `bc_critical` over the channel outlet rows.
+schema_version: "2.0"
+simulation:
+  id: b5-vcatchment
+  title: V-catchment overland flow (SERGHEI/Kollet; review-tier SW-only port)
+  mode: surface_water
+domain:
+  nx: 101
+  ny: 55
+  nz: 1
+  dx: 1.0
+  dy: 1.0
+  dz: 0.1
+  botz: 0.0
+  x0: 0.0
+  y0: 0.0
+  bathymetry:
+    from_file: true
+    file: dem.asc
+    format: raster
+time:
+  dt: 1.0
+  t_end: 432000.0
+  max_steps: 0
+  output_interval: 36000.0
+modules:
+  surface_water: true
+  groundwater: false
+  solute: false
+surface_water:
+  gravity: 9.81
+  manning: 0.03
+  min_depth: 1.0e-6
+  viscosity: {x: 0.0, y: 0.0}
+  h_diffusion_ref: 0.1
+  waterfall_depth: 1.0e-6
+initial_conditions:
+  surface_water:
+    eta: -0.01
+sources:
+  surface:
+    rainfall:
+      from_file: true
+      file: rain
+    evaporation:
+      rate: 0.0
+boundaries:
+  - name: outlet
+    type: bc_critical
+    vertices: [[-0.1, 50.1], [0.9, 50.1], [0.9, 55.1], [-0.1, 55.1]]
+output:
+  format: hdf5
+  filename: out/b5-vcatchment.h5
+  io_mode: serial_gather
+  variables: [water_depth, eta, uu, vv]
+validation:
+  reference_type: multi_model_timeseries
+  reference_path: ../../legacy/benchmarks/b5-vcatchment/discharge
+  gate: review

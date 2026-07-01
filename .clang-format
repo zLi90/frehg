@@ -1,0 +1,26 @@
+# Frehg2 C++ formatting (Phase 22, docs/coding_standards.md).
+# Matches the existing src/ + include/ style: 2-space indent, 100-col, attached braces,
+# non-indented namespace bodies. Run: clang-format -i $(git ls-files '*.hpp' '*.cpp')
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+AccessModifierOffset: -1
+NamespaceIndentation: None
+FixNamespaceComments: true
+PointerAlignment: Left
+DerivePointerAlignment: false
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+SortIncludes: false
+SpaceAfterCStyleCast: false
+IncludeBlocks: Preserve
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+...

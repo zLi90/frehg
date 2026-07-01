@@ -1,0 +1,99 @@
+# b6-kuan — coupled surface-water / groundwater column (Kuan et al.), review-tier port (P18).
+#
+# Source: legacy Frehg benchmark (legacy/benchmarks/b6-kuan/input, FrehdC key=value format).
+# 1 x 68 surface column over a 10-layer subsurface; rainfall/tide-driven coupled SW-GW with a
+# salinity scalar. References: out-ss-syncV4 (steady) / out-td-syncV4 (transient).
+#
+# NAMING: this benchmark is `b6-kuan` (the 1D-2D hybrid Kuan et al. test case); the legacy
+# directory is legacy/benchmarks/b6-kuan.
+#
+# REVIEW-TIER APPROXIMATIONS (see docs/benchmarks/b6-kuan.md):
+#   * Groundwater uses the Frehg2 PCA predictor-corrector path (`solver: pca`,
+#     `use_corrector: true`). The legacy run used the iterative Newton solver (`iter_solve=1`),
+#     which Frehg2 does not implement; the PCA path is the sanctioned production GW scheme.
+#   * Solute/baroclinic transport is disabled (the legacy run has n_scalar=1, baroclinic=1).
+#     Frehg2 has a passive solute solver but no baroclinic SW-GW coupling; deferred.
+#   * Synchronous (sequential) coupling is used for the review run; the async pipeline
+#     (coupling.mode: async, single-rank) is available and numerically identical.
+#   * Gate is `review` (registry tolerance: null): we check coupled stability + conservation
+#     of the SW<->GW exchange, not strict legacy L2.
+schema_version: "2.0"
+simulation:
+  id: b6-kuan
+  title: Kuan coupled SW-GW column (legacy Frehg; review-tier PCA port)
+  mode: coupled
+domain:
+  nx: 1
+  ny: 68
+  nz: 10
+  dx: 1.0
+  dy: 0.05
+  dz: 0.04
+  dz_incre: 1.0
+  botz: -0.4
+  follow_terrain: true
+  bathymetry:
+    from_file: true
+    file: bath
+    format: list
+time:
+  dt: 0.05
+  t_end: 36000.0
+  max_steps: 0
+  output_interval: 600.0
+modules:
+  surface_water: true
+  groundwater: true
+  solute: false
+surface_water:
+  gravity: 9.81
+  manning: 0.04
+  min_depth: 1.0e-5
+  viscosity: {x: 1.0e-6, y: 1.0e-6}
+  h_diffusion_ref: 0.1
+  waterfall_depth: 5.0e-4
+groundwater:
+  solver: pca
+  full_3d: true
+  adaptive_dt: true
+  use_corrector: true
+  post_allocate: false
+  use_vg: true
+  use_mvg: false
+  air_entry_value: -0.02
+  dt_max: 0.5
+  dt_min: 0.05
+  co_max: 2.0
+  specific_storage: 1.0e-5
+  # GW boundary modes (legacy bctype_GW indices x-,x+,y-,y+,z+ bottom,z- top). The legacy input
+  # nominally tagged the lateral y faces as Dirichlet/fixed-flux, but supplied NO boundary head or
+  # flux value, so Frehg2 only ever treated them as (approximate) no-flux. Lateral Dirichlet/flux
+  # are not implemented (see docs/capabilities.md and the capability gate), so the lateral faces
+  # are declared as explicit no-flux here — which matches the realized behavior. The coupled top is
+  # driven by the SW<->GW exchange; bottom is no-flux.
+  bc_type_gw: [0, 0, 0, 0, 0, 2]
+coupling:
+  mode: sync
+  surface_dt: 0.05
+  groundwater_dt: 0.05
+soil:
+  types:
+    - id: 0
+      theta_s: 0.46
+      theta_r: 0.04
+      vg: {alpha: 5.9, n: 2.68}
+      k_sat: {x: 0.0, y: 0.00526, z: 0.00526}
+initial_conditions:
+  surface_water:
+    eta: 0.15
+  groundwater:
+    wc: 0.5
+output:
+  format: hdf5
+  filename: out/b6-kuan.h5
+  io_mode: serial_gather
+  variables: [water_depth, eta, water_content]
+validation:
+  reference_type: legacy_text_snapshots
+  reference_path: ../../legacy/benchmarks/b6-kuan/out-ss-syncV4
+  gate: review

@@ -1,0 +1,22 @@
+# Monitoring tests (P15).
+add_executable(test_probe_locator test_probe_locator.cpp)
+target_include_directories(test_probe_locator PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_probe_locator PRIVATE Frehg2::monitoring)
+apply_strict_warnings(test_probe_locator)
+add_test(NAME test_probe_locator COMMAND test_probe_locator)
+set_tests_properties(test_probe_locator PROPERTIES LABELS "cpu")
+
+add_executable(test_yaml_monitors test_yaml_monitors.cpp)
+target_include_directories(test_yaml_monitors PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_yaml_monitors PRIVATE Frehg2::monitoring)
+apply_strict_warnings(test_yaml_monitors)
+add_test(NAME test_yaml_monitors COMMAND test_yaml_monitors)
+set_tests_properties(test_yaml_monitors PROPERTIES LABELS "cpu")
+
+add_executable(test_monitor_writer test_monitor_writer.cpp)
+target_include_directories(test_monitor_writer PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(test_monitor_writer PRIVATE FREHG2_IO_TMP="${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(test_monitor_writer PRIVATE Frehg2::monitoring Frehg2::swe)
+apply_strict_warnings(test_monitor_writer)
+add_test(NAME test_monitor_writer COMMAND test_monitor_writer)
+set_tests_properties(test_monitor_writer PROPERTIES LABELS "cpu;regression")

@@ -1,0 +1,324 @@
+schema_version: '2.0'
+simulation:
+  id: b2-gw
+  title: Converted from legacy input (warri)
+  mode: groundwater
+  legacy_finput: b2-input/
+domain:
+  nx: 1
+  ny: 1
+  nz: 100
+  dx: 1.0
+  dy: 1.0
+  dz: 0.01
+  dz_incre: 1.0
+  botz: -1.0
+  follow_terrain: false
+  mpi:
+    enabled: false
+    nx: 1
+    ny: 1
+  bathymetry:
+    from_file: false
+  active_mask:
+    from_file: false
+time:
+  dt: 0.0001
+  t_end: 46800
+  max_steps: 100
+  output_interval: 11700
+  dt_checkpoint: null
+  max_checkpoints: null
+modules:
+  surface_water: false
+  groundwater: true
+  solute: false
+surface_water:
+  gravity: 9.81
+  manning: 0.01
+  min_depth: 0.0005
+  viscosity:
+    x: 1.0e-06
+    y: 1.0e-06
+  waterfall_depth: 0.0005
+  h_diffusion_ref: 0.1
+  rho_air: 1.225
+  rho_water: 998.0
+  diffusive_wave: false
+  bc_type_sw: &id001
+  - 0
+  - 0
+  - 0
+  - 0
+  wind:
+    enabled: false
+    from_file: false
+    data_len: 100000
+    init_speed: 0.0
+    init_dir: 0.0
+    cw: 0.0013
+    cw_t: 5.0
+    north_angle: 0.0
+  subgrid:
+    enabled: false
+    r_sub: 30
+    eta_min: 0.0
+    eta_max: 0.9
+    deta: 0.05
+groundwater:
+  solver: pca
+  full_3d: false
+  adaptive_dt: true
+  use_corrector: true
+  post_allocate: false
+  use_vg: true
+  use_mvg: false
+  air_entry_value: -0.02
+  dt_max: 2.0
+  dt_min: 0.0001
+  co_max: 2
+  specific_storage: 1.0e-05
+  bc_type_gw: &id004
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 1
+coupling:
+  mode: sync
+  surface_dt: 0.0001
+  groundwater_dt: 0.0001
+initial_conditions:
+  surface_water:
+    eta: 0.0
+    eta_from_file: false
+    uv_from_file: false
+  groundwater:
+    wc: 0.033
+    h: 1.0
+    wt_rel: 0.5
+    wt_abs: -0.75
+    h_from_file: false
+    wc_from_file: false
+  solute:
+    surface: 15.0
+    subsurface: 35.0
+boundary_conditions:
+  surface: []
+  groundwater:
+  - face: x+
+    legacy_code: 0
+    kind: no_flux
+  - face: x-
+    legacy_code: 0
+    kind: no_flux
+  - face: y+
+    legacy_code: 0
+    kind: no_flux
+  - face: y-
+    legacy_code: 0
+    kind: no_flux
+  - face: z+ (bottom)
+    legacy_code: 0
+    kind: no_flux
+  - face: z- (top)
+    legacy_code: 1
+    kind: dirichlet_head
+    head: 0.0
+  solute: []
+sources:
+  surface:
+    rainfall:
+      from_file: false
+      rate: 0.0
+      data_len: null
+    evaporation:
+      from_file: false
+      model: 0
+      rate: 0.0
+      data_len: null
+    inflow:
+      count: 0
+      loc_x: &id002
+      - 56
+      - 56
+      loc_y: &id003
+      - 1
+      - 1
+      from_file: false
+      rate: 0.0
+      data_len: 63
+soil:
+  map:
+    from_file: false
+  types:
+  - id: 0
+    theta_s: 0.33
+    theta_r: 0.0
+    vg:
+      alpha: 1.43
+      n: 1.56
+    k_sat:
+      x: 0.0
+      y: 0.0
+      z: 2.89e-06
+solute:
+  n_species: 0
+  baroclinic: false
+  advection_scheme: upwind
+  diffusion:
+    x: 1.0e-10
+    y: 1.0e-10
+    z: 1.0e-10
+  dispersivity:
+    longitudinal: 0.1
+    lateral: 0.01
+  io:
+    tide_file: true
+    tide_datlen: 732
+    inflow_file: false
+    inflow_datlen: 1
+    surf_file: true
+    subs_file: false
+monitoring:
+  points: []
+output:
+  format: hdf5
+  filename: out/b2-gw.h5
+  variables:
+  - head
+  - moisture
+  - qx
+  - qy
+  - qz
+  legacy_foutput: out/
+validation:
+  reference_type: warrick_analytical
+  tolerance: 0.01
+  variables:
+  - water_content
+legacy_raw:
+  sim_id: warri
+  finput: b2-input/
+  foutput: out/
+  NX: 1
+  NY: 1
+  botZ: -1.0
+  dx: 1.0
+  dy: 1.0
+  dz: 0.01
+  dz_incre: 1.0
+  use_mpi: 0
+  mpi_nx: 1
+  mpi_ny: 1
+  dt: 0.0001
+  Tend: 46800
+  NT: 100
+  dt_out: 11700
+  bath_file: 0
+  actv_file: 0
+  grav: 9.81
+  viscx: 1.0e-06
+  viscy: 1.0e-06
+  min_dept: 0.0005
+  manning: 0.01
+  wtfh: 0.0005
+  hD: 0.1
+  rhoa: 1.225
+  rhow: 998.0
+  sim_wind: 0
+  wind_file: 0
+  wind_dat_len: 100000
+  init_windspd: 0.0
+  init_winddir: 0.0
+  Cw: 0.0013
+  CwT: 5.0
+  north_angle: 0.0
+  sim_shallowwater: 0
+  difuwave: 0
+  init_eta: 0.0
+  eta_file: 0
+  uv_file: 0
+  bctype_SW: *id001
+  n_tide: 0
+  tide_file: 0
+  tide_dat_len: 732
+  tide_locX:
+  - 60
+  - 90
+  tide_locY:
+  - 219
+  - 219
+  init_tide: 0.53
+  evap_file: 0
+  evap_model: 0
+  q_evap: 0.0
+  rain_file: 0
+  q_rain: 0.0
+  inflow_locX: *id002
+  inflow_locY: *id003
+  n_inflow: 0
+  inflow_file: 0
+  init_inflow: 0.0
+  inflow_dat_len: 63
+  use_subgrid: 0
+  r_sub: 30
+  eta_sub_min: 0.0
+  eta_sub_max: 0.9
+  deta_sub: 0.05
+  sim_groundwater: 1
+  iter_solve: 0
+  use_full3d: 0
+  dt_adjust: 1
+  follow_terrain: 0
+  sync_coupling: 1
+  use_corrector: 1
+  post_allocate: 0
+  use_vg: 1
+  use_mvg: 0
+  aev: -0.02
+  dt_max: 2.0
+  dt_min: 0.0001
+  Co_max: 2
+  Ksx: 0.0
+  Ksy: 0.0
+  Ksz: 2.89e-06
+  Ss: 1.0e-05
+  soil_a: 1.43
+  soil_n: 1.56
+  wcs: 0.33
+  wcr: 0.0
+  init_wc: 0.033
+  init_h: 1.0
+  init_wt_rel: 0.5
+  init_wt_abs: -0.75
+  h_file: 0
+  wc_file: 0
+  qtop: 0.0
+  qbot: 0.0
+  htop: 0.0
+  hbot: 0.0
+  qyp: 0.0
+  qym: 0.0
+  bctype_GW: *id004
+  n_scalar: 0
+  baroclinic: 0
+  superbee: 0
+  scalar_tide_file: 1
+  scalar_tide_datlen: 732
+  scalar_inflow_file: 0
+  scalar_inflow_datlen: 1
+  scalar_surf_file: 1
+  scalar_subs_file: 0
+  init_s_surf: 15.0
+  init_s_subs: 35.0
+  s_tide: 35.0
+  s_inflow: 0.0
+  s_yp: 0.0
+  s_ym: 0.0
+  difux: 1.0e-10
+  difuy: 1.0e-10
+  difuz: 1.0e-10
+  disp_lon: 0.1
+  disp_lat: 0.01

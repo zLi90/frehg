@@ -1,0 +1,27 @@
+# P19 trend reference signatures (Task 19.3.3). The harness builds a per-benchmark scalar time
+# series from the HDF5 snapshots (total surface water volume for SW runs, total subsurface water
+# volume for GW-only runs) and compares its direction to `expected_trend` here.
+#
+# expected_trend: increasing | decreasing | flat | any
+#   A clear OPPOSITE observation is a FAIL; a soft mismatch (mixed/flat vs monotone) is a REVIEW
+#   note. These are coarse regression signals over short capped windows, not strict gates.
+
+benchmarks:
+  b1-sw:
+    series: surface_volume
+    expected_trend: any             # rain for 0-12000s then off -> rises then recedes (non-monotone)
+  b2-gw:
+    series: subsurface_volume
+    expected_trend: increasing      # top infiltration adds water to the column
+  b3-kirkland:
+    series: subsurface_volume
+    expected_trend: increasing      # surrogate: top infiltration adds water
+  b4-govindaraju:
+    series: surface_volume
+    expected_trend: any             # storage vs outlet drainage on a steep plane (non-monotone)
+  b5-vcatchment:
+    series: surface_volume
+    expected_trend: increasing      # rain accumulates faster than it drains early on
+  b6-kuan:
+    series: surface_volume
+    expected_trend: any             # coupled exchange + tidal forcing; direction not prescribed

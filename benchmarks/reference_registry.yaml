@@ -1,0 +1,128 @@
+# Benchmark reference registry (P0.0.5)
+# Authoritative source for benchmark inputs, reference artifacts, parsers, tolerances,
+# and gate types. References are NOT all CSV; see `reference_format` per case.
+# Gate types: strict (blocking), review (must be inspected/trend-checked), informational.
+
+schema_version: "1.0"
+
+benchmarks:
+  - id: b0-lake
+    name: lake-at-rest (still water equilibrium)
+    directory: null                       # synthetic; no legacy dir
+    input_format: analytical              # generated in-code (flat eta, zero velocity)
+    input_paths: []
+    reference_paths: []
+    reference_format: analytical          # eta == const, |u|,|v| ~ machine/round-off
+    variables: [eta, uu, vv]
+    parser: builtin_lake_at_rest
+    tolerance: 1.0e-12                     # closed-form: well-balanced check
+    gate: strict
+    notes: >
+      Well-balanced sanity test. Closed-form scalar expectation, so a tight tolerance is
+      appropriate (per default-tolerances guidance). Not a legacy benchmark.
+
+  - id: b1-sw
+    name: surface-water column (rainfall-driven depth)
+    directory: legacy/benchmarks/b1-sw
+    input_format: legacy_keyvalue
+    input_paths:
+      - legacy/benchmarks/b1-sw/input
+      - legacy/benchmarks/b1-sw/b1-input/bath
+      - legacy/benchmarks/b1-sw/b1-input/rain
+    reference_paths:
+      - legacy/benchmarks/b1-sw/reference/depth_*    # 0,1800,...,18000 (10 files)
+      - legacy/benchmarks/b1-sw/reference/inun_*
+    reference_format: legacy_text_snapshots          # one %6.6f value per line, N2CI lines
+    variables: [water_depth]
+    secondary_variables: [uu, vv, inun]
+    parser: scripts/compare_with_legacy.py::compare_b1_sw
+    grid: {nx: 1, ny: 10, nz: 0}
+    output_times_s: [0, 1800, 3600, 5400, 7200, 9000, 10800, 12600, 14400, 16200, 18000]
+    tolerance: 1.0e-6                       # L2 vs legacy time series
+    gate: strict
+    notes: Regenerated legacy run is byte-identical to reference (see legacy_build.md).
+
+  - id: b2-gw
+    name: groundwater 1-D infiltration column (Warrick)
+    directory: legacy/benchmarks/b2-gw
+    input_format: legacy_keyvalue
+    input_paths:
+      - legacy/benchmarks/b2-gw/input
+    reference_paths:
+      - legacy/benchmarks/b2-gw/reference/warrick_water_content_profile.csv
+    reference_format: csv                   # cols: time_s,water_content,z_percent,z_m (9 rows)
+    embedded_reference_source: legacy/benchmarks/b2-gw/script_plotex1.py   # lines 5-9, 36-37
+    variables: [water_content]
+    parser: scripts/compare_with_legacy.py::compare_b2_gw
+    grid: {nx: 1, ny: 1, nz: 100}
+    warrick:
+      times_s: [11700, 23400, 46800]
+      water_content: [0.0825, 0.165, 0.2475]
+    tolerance: 1.0e-2                        # Warrick is approximate analytical
+    gate: strict
+
+  - id: b3-kirkland
+    name: 2-D layered-soil infiltration (Kirkland et al. 1992)
+    directory: legacy/benchmarks/b3-kirkland
+    input_format: legacy_keyvalue
+    input_paths: [legacy/benchmarks/b3-kirkland/input]
+    reference_paths: []                     # reference dir empty
+    reference_format: script_embedded_values   # digitized in makeplot.py / scripts/
+    embedded_reference_source: legacy/benchmarks/b3-kirkland/makeplot.py
+    variables: [water_content]
+    parser: legacy/benchmarks/b3-kirkland/makeplot.py
+    tolerance: null                          # trend/visual check (contour RMS, review-tier)
+    gate: review
+    notes: >
+      SERGHEI suite. FULL 2-D (x-z) layered port (P23 3-D Richards + per-cell soil + fixed-flux
+      top BC, PCA scheme). Simulated h=0 / h=-400 head contours match the digitized Kirkland
+      ref0/ref400 to ~0.25-0.29 m RMS in a 3 m domain; recharge mass conserved to 99.6%. Gated by
+      tests/integration/test_b3_kirkland.cpp. PCA (not Picard) => approximate, not bit-exact.
+
+  - id: b4-govindaraju
+    name: overland-flow outflow hydrograph (Govindaraju)
+    directory: legacy/benchmarks/b4-govindaraju
+    input_format: legacy_keyvalue
+    input_paths: [legacy/benchmarks/b4-govindaraju/input]
+    reference_paths: [legacy/benchmarks/b4-govindaraju/ReferenceData/outflow.txt]
+    reference_format: text_timeseries
+    variables: [outflow_discharge]
+    parser: legacy/benchmarks/b4-govindaraju/plot_discharge.py
+    tolerance: null
+    gate: review
+
+  - id: b5-vcatchment
+    name: V-catchment overland flow
+    directory: legacy/benchmarks/b5-vcatchment
+    input_format: legacy_keyvalue
+    input_paths: [legacy/benchmarks/b5-vcatchment/input]
+    reference_paths:
+      - legacy/benchmarks/b5-vcatchment/discharge
+      - legacy/benchmarks/b5-vcatchment/ponding
+    reference_format: multi_file_timeseries
+    variables: [discharge, ponding_depth]
+    parser:
+      - legacy/benchmarks/b5-vcatchment/plot_discharge.py
+      - legacy/benchmarks/b5-vcatchment/plot_ponding.py
+    tolerance: null
+    gate: review
+
+  - id: b6-kuan
+    name: coupled SW-GW (Kuan; steady + transient, async)
+    directory: legacy/benchmarks/b6-kuan
+    input_format: legacy_keyvalue
+    input_paths:
+      - legacy/benchmarks/b6-kuan/input
+      - legacy/benchmarks/b6-kuan/ex3_kuan_input
+    reference_paths:
+      - legacy/benchmarks/b6-kuan/out-ss-syncV4     # steady state
+      - legacy/benchmarks/b6-kuan/out-td-syncV4     # transient
+    reference_format: legacy_text_snapshots
+    variables: [head, seepage, r_async]
+    parser:
+      - legacy/benchmarks/b6-kuan/script_plotex3.py
+      - legacy/benchmarks/b6-kuan/script_rasync.py
+      - legacy/benchmarks/b6-kuan/script_rasync2.py
+    tolerance: null
+    gate: review
+    notes: Exercises async coupling (P11). Reference finalized at P18/P21.

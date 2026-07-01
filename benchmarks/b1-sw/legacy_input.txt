@@ -1,0 +1,168 @@
+# This is the user input file of FrehdC, ZhiLi20181211
+
+# --------------------------------------------------------------------------
+# --------------------------- Simulation Control ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Paths <<<<<
+sim_id = MAXP1
+finput = b1-input/
+foutput = out/
+
+# >>>>> Domain <<<<<
+NX = 1
+NY = 10
+botZ = -3.0
+dx = 80.0
+dy = 80.0
+dz = 0.1
+dz_incre = 1.0
+use_mpi = 0
+mpi_nx = 1
+mpi_ny = 1
+
+# >>>>> Time <<<<<
+dt = 5.0
+Tend = 18000.0
+NT = 100
+dt_out = 1800
+n_monitor = 1
+monitor_locX = 0
+monitor_locY = 4
+
+# >>>>> Bathymetry <<<<<
+bath_file = 1
+
+# >>>>> Parameters <<<<<
+grav = 9.81
+viscx = 0.000001
+viscy = 0.000001
+min_dept = 0.00000001
+manning = 0.019
+wtfh = 0.00000001
+hD = 0.1
+rhoa = 1.225
+rhow = 998.0
+
+# >>>>> Wind model <<<<<
+sim_wind = 0
+wind_file = 0
+wind_dat_len = 100000
+init_windspd = 0.0
+init_winddir = 0.0
+Cw = 0.0013
+CwT = 5.0
+north_angle = 0.0
+
+# --------------------------------------------------------------------------
+# -------------------------- Shallow water solver --------------------------
+# --------------------------------------------------------------------------
+# >>>>> Shallow water solver <<<<<
+sim_shallowwater = 1
+difuwave = 0
+#   >> Shallowwater IC <<
+init_eta = -2.0
+eta_file = 0
+uv_file = 0
+#   >> Shallowwater BC <<
+bctype_SW = 0,0,0,0
+n_tide = 0
+tide_file = 0
+tide_dat_len = 732
+tide_locX = 0,1
+tide_locY = 9,9
+init_tide = -0.15
+
+evap_file = 0
+evap_model = 0
+q_evap = 0.0
+evap_dat_len = 20000
+rain_file = 1
+q_rain = 0.0
+rain_dat_len = 4
+
+inflow_locX = 56,56
+inflow_locY = 1,1
+n_inflow = 0
+inflow_file = 0
+init_inflow = 0.0
+inflow_dat_len = 63
+
+# >>>>> Subgrid model <<<<<
+use_subgrid = 0
+r_sub = 30
+eta_sub_min = 0.0
+eta_sub_max = 0.9
+deta_sub = 0.05
+
+# --------------------------------------------------------------------------
+# --------------------------- Groundwater solver ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Groundwater solver <<<<<
+sim_groundwater = 0
+iter_solve = 0
+follow_terrain = 1
+sync_coupling = 1
+use_full3d = 1
+dt_adjust = 1
+use_corrector = 1
+post_allocate = 0
+use_vg = 1
+use_mvg = 0
+aev = -0.02
+dt_max = 20.0
+dt_min = 0.01
+Co_max = 2
+Ksx = 0.0000
+Ksy = 0.000000116
+Ksz = 0.000000116
+Ss = 0.00001
+soil_a = 1.0
+soil_n = 2.0
+wcs = 0.4
+wcr = 0.08
+#   >> Groundwater IC <<
+init_wc = 0.5
+init_h = 1.0
+init_wt_rel = 1.0
+init_wt_abs = -0.75
+h_file = 0
+wc_file = 0
+qtop = 0.0
+qbot = 0.0
+htop = 0.0
+hbot = 0.0
+qyp = 0.0
+qym = 0.0
+#   >> Groundwater BC <<
+bctype_GW = 0,0,0,0,0,0
+
+# --------------------------------------------------------------------------
+# ---------------------------  Scalar transport  ---------------------------
+# --------------------------------------------------------------------------
+# >>>>> Scalar IC <<<<<
+n_scalar = 0
+baroclinic = 0
+superbee = 0
+
+scalar_tide_file = 1
+scalar_tide_datlen = 732
+scalar_inflow_file = 0
+scalar_inflow_datlen = 1
+scalar_surf_file = 1
+scalar_subs_file = 0
+
+init_s_surf = 15.0
+init_s_subs = 35.0
+s_tide = 35.0
+s_inflow = 0.0
+s_yp = 0.0
+s_ym = 0.0
+difux = 0.0000000001
+difuy = 0.0000000001
+difuz = 0.0000000001
+disp_lon = 0.1
+disp_lat = 0.01
+
+
+
+# END

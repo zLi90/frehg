@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use Frehg2 in academic work, please cite it as below."
+title: "Frehg2: a production-grade surface-water–groundwater–solute coupled numerical model"
+abstract: >-
+  Frehg2 is a production-grade, general-purpose, GPU-capable C++20 / Kokkos / MPI / CMake / PETSc
+  surface-water (shallow-water equations) — groundwater (Richards equation) — solute-transport
+  coupled numerical model. It is the modern successor to the legacy serial C / MPI / LASPack Frehg
+  code, rebuilt without losing algorithmic fidelity.
+type: software
+version: "1.0.0"
+date-released: "2026-06-30"
+license: BSD-3-Clause
+repository-code: "https://github.com/frehg2/frehg2"
+url: "https://github.com/frehg2/frehg2"
+authors:
+  - name: "The Frehg2 Development Team"
+keywords:
+  - hydrology
+  - shallow-water equations
+  - Richards equation
+  - solute transport
+  - surface-subsurface coupling
+  - Kokkos
+  - PETSc
+  - high-performance computing
